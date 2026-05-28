@@ -60,10 +60,10 @@ Users install a skill. Their agent handles everything else — initializing docs
 | Principle | What it means |
 |:--|:--|
 | **File-first** | Repository files are project memory. No external databases, no cloud services. Everything is plain files in the repo. |
-| **SQLite is derived** | The `.harnesskit/` index is built from docs. Delete it anytime — rebuild with one command. |
+| **SQLite is derived** | `.harnesskit/state` is built from docs and can be rebuilt. `.harnesskit/history` is local checkpoint state; deleting it discards local doc snapshots. |
 | **Built for agents** | The CLI is a tool surface that agents call. Users talk to their agent in natural language; the agent picks the right command. |
 | **Not a runtime** | HarnessKit does not run models, manage conversations, or execute tools. It's the engineering harness, not the agent harness. |
-| **Lightweight** | Single Rust binary. No daemons. No MCP servers. No background processes. Install and forget. |
+| **Lightweight** | Rust CLI, no daemons, no MCP servers, no background processes. Alpha fact-store commands require the system `sqlite3` CLI. |
 
 ## Quick Start
 
@@ -97,6 +97,7 @@ scripts/install-codex-skill.sh         # Codex
 Alpha notes:
 
 - The public binary release currently supports Linux x86_64.
+- Fact-store-backed commands currently require `sqlite3` on `PATH`: `index`, `query`, `check`, `context`, `graph`, `inspect`, `refs`, `rank`, and `list-docs`.
 - The installer writes the Codex skill directly; Codex plugin packaging is optional.
 - The installer can be rerun with a newer `--version` tag to upgrade.
 - After alpha.2, `harnesskit update` can update the CLI and already-installed skills from GitHub releases.
@@ -109,6 +110,8 @@ Alpha notes:
 
 The agent runs `harnesskit init`, reads the entrypoint, and starts managing your project docs. That's it.
 
+By default, init uses **local mode**: generated docs are added to `.git/info/exclude` so a trial does not change `git status`. For team-visible or open-source project memory, use `harnesskit init --tracked`. To inspect what would be written first, use `harnesskit init --preview`.
+
 **Step 3** — Work naturally:
 
 ```
@@ -119,6 +122,37 @@ The agent runs `harnesskit init`, reads the entrypoint, and starts managing your
 ```
 
 The agent calls the CLI behind the scenes. You never need to.
+
+## 30-Second Demo
+
+When an agent needs project context, it should not scan every doc. It asks HarnessKit for a context packet:
+
+```bash
+harnesskit context auth --json
+```
+
+Shape of the answer:
+
+```json
+{
+  "anchor": {"path": "docs/design-docs/auth.md"},
+  "incoming": [
+    {"src_path": "docs/decisions/0003-auth-boundary.md"}
+  ],
+  "outgoing": [
+    {"dst_path": "ARCHITECTURE.md"},
+    {"dst_path": "docs/product-specs/login.md"}
+  ],
+  "recommended_reading_order": [
+    "ARCHITECTURE.md",
+    "docs/product-specs/login.md",
+    "docs/design-docs/auth.md",
+    "docs/decisions/0003-auth-boundary.md"
+  ]
+}
+```
+
+The output is the smallest useful reading path for the task: architecture, product context, the focused design doc, and the decision record that constrains it.
 
 ## What Init Creates
 
@@ -140,7 +174,9 @@ your-repo/
 │   ├── generated/               # Auto-generated documentation
 │   ├── references/              # External reference material
 │   └── templates/               # Templates for new docs
-└── .harnesskit/                 # Internal state (SQLite index, history)
+└── .harnesskit/                 # Internal state
+    ├── state/                   # Derived index/fact store; safe to rebuild
+    └── history/                 # Local doc checkpoints; do not delete as cache
 ```
 
 Agents navigate this through **progressive disclosure**: entrypoint → architecture → manifest → collection index → the smallest doc that answers the task. They never bulk-read everything.
@@ -153,10 +189,10 @@ Agents navigate this through **progressive disclosure**: entrypoint → architec
 #### Initialization
 
 ```bash
-harnesskit init [target_dir] [--schema <path>] [--docs-root <path>] [--force]
+harnesskit init [target_dir] [--schema <path>] [--docs-root <path>] [--force] [--local|--tracked] [--preview]
 ```
 
-Creates the docs scaffold. Existing files are skipped unless `--force` is passed. Automatically adds managed paths to `.git/info/exclude` for local isolation.
+Creates the docs scaffold. Existing files are skipped unless `--force` is passed. Default `--local` mode adds managed paths to `.git/info/exclude` for local isolation. Use `--tracked` to leave generated docs visible to git status, or `--preview` to print the plan without writing files.
 
 #### Indexing
 
@@ -195,6 +231,14 @@ harnesskit check [--json] [--strict] [--rules <rule-list>]
 ```
 
 Validates all managed docs — missing required files, broken links, stale anchors, duplicate content, frontmatter issues, and more.
+
+#### Environment Diagnostics
+
+```bash
+harnesskit doctor [--json]
+```
+
+Checks the CLI, `sqlite3`, git, target path, `.harnesskit/state`, `.harnesskit/history`, installed agent skills, and PATH status. Use this when first installing or when a sandboxed environment reports a read-only fact store.
 
 #### Local History
 
@@ -239,6 +283,17 @@ agent-surfaces/    Shared agent skill + Codex / Claude Code packaging
 scripts/           Install, uninstall, sync, and release scripts
 examples/          Example initialized repos
 docs/              Internal development docs
+```
+
+## Examples
+
+- `examples/web-app-with-auth/` shows a small auth documentation graph with a product spec, design doc, decision record, and sample context packet shape.
+
+Try it after building or installing HarnessKit:
+
+```bash
+harnesskit index examples/web-app-with-auth
+harnesskit context auth examples/web-app-with-auth --json
 ```
 
 ## What HarnessKit Is Not

@@ -1,0 +1,13 @@
+{
+  "command": "harnesskit context auth --json",
+  "purpose": "Example shape of an agent context packet for auth work.",
+  "recommended_reading_order": [
+    "docs/design-docs/auth.md",
+    "docs/decisions/0001-auth-boundary.md",
+    "docs/product-specs/login.md"
+  ],
+  "notes": [
+    "This checked-in example is illustrative. Regenerate with the current CLI when exact scores and relation ordering matter.",
+    "Agents should use this shape to understand why HarnessKit is a context harness, not a generic docs template."
+  ]
+}

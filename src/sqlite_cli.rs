@@ -1,7 +1,7 @@
 use crate::Result;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::io::Write;
+use std::io::{ErrorKind, Write};
 use std::process::{Command, Stdio};
 
 const COLUMN_SEPARATOR: &str = "\u{001f}";
@@ -71,7 +71,18 @@ impl SqliteConnection {
                 .arg(NULL_MARKER);
         }
 
-        let mut child = command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
+        let mut child = command
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|err| {
+                if err.kind() == ErrorKind::NotFound {
+                    "sqlite3 CLI not found on PATH. HarnessKit alpha currently requires the system `sqlite3` command for index/query/check/context and other fact-store-backed commands. Install sqlite3 and retry, or run `harnesskit doctor` for environment diagnostics.".to_string()
+                } else {
+                    format!("failed to start sqlite3 CLI for {}: {}", self.db_path.display(), err)
+                }
+            })?;
         if let Some(mut stdin) = child.stdin.take() {
             stdin.write_all(sql.as_bytes())?;
         }

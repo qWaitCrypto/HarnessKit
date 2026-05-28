@@ -261,9 +261,21 @@ echo
 if [[ ":${PATH}:" != *":${prefix}/bin:"* ]]; then
   echo "Add HarnessKit to PATH for this shell:"
   echo "  export PATH=\"${prefix}/bin:\$PATH\""
+  echo
 fi
+echo "HarnessKit installed successfully."
+echo
 echo "Verify:"
 echo "  ${prefix}/bin/harnesskit --version"
+echo "  ${prefix}/bin/harnesskit doctor"
+echo
+echo "Next in a repository, ask your coding agent:"
+echo "  Initialize HarnessKit project docs for this repository."
+echo
+echo "Manual fallback:"
+echo "  harnesskit init"
+echo "  harnesskit index"
+echo "  harnesskit check"
 if [[ "${install_codex_plugin}" -eq 1 ]]; then
   echo
   echo "For optional Codex plugin mode, install the plugin after this script:"

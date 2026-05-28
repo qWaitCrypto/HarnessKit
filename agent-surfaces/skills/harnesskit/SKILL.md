@@ -49,13 +49,30 @@ Do not initialize a repository merely because this skill was triggered. Treat in
 ### Running Init
 
 ```bash
-harnesskit init [target_dir] [--schema <path>] [--docs-root <path>] [--force]
+harnesskit init [target_dir] [--schema <path>] [--docs-root <path>] [--force] [--local|--tracked] [--preview]
 ```
 
-Most common case — init in the current repo root with defaults:
+Choose the init mode from the user's intent:
+- Use `--tracked` when the user says the docs should be committed, shared with the team, used in an open-source repo, or become repo-visible project memory.
+- Use `--local` when the user says they are only trying HarnessKit locally, do not want to affect git status, or do not want to commit generated docs yet.
+- If intent is unclear, briefly explain local versus tracked and use the conservative default `--local`.
+
+Most common local trial:
 
 ```bash
-harnesskit init
+harnesskit init --local
+```
+
+Team-visible project memory:
+
+```bash
+harnesskit init --tracked
+```
+
+Preview without writing files:
+
+```bash
+harnesskit init --preview
 ```
 
 Init creates a managed docs scaffold based on the schema:
@@ -69,10 +86,12 @@ Files that already exist are skipped unless `--force` is passed.
 
 ### Git Exclude
 
-If the repo is a Git repository, init automatically adds HarnessKit-managed paths (`docs/`, `AGENTS.md`, `CLAUDE.md`, `ARCHITECTURE.md`, `.harnesskit/`) to `.git/info/exclude` for local isolation.
+In local mode, init adds HarnessKit-managed paths (`docs/`, `AGENTS.md`, `CLAUDE.md`, `ARCHITECTURE.md`, `.harnesskit/`) to `.git/info/exclude` for local isolation.
+
+In tracked mode, init does not write `.git/info/exclude`. Generated docs remain visible to `git status` and can be committed.
 
 When init reports this, explain to the user:
-> HarnessKit added its managed paths to your local git exclude (`.git/info/exclude`). This keeps them out of git status locally without modifying `.gitignore`. If you want these paths tracked by git, you can remove the entries from `.git/info/exclude` and commit the files normally.
+> HarnessKit local mode added its managed paths to your local git exclude (`.git/info/exclude`). This keeps them out of git status locally without modifying `.gitignore`. If you want these paths tracked by git, rerun or initialize with `harnesskit init --tracked` in a clean target and commit the files normally.
 
 Do not write `.gitignore` entries unless the user explicitly asks.
 
@@ -105,9 +124,21 @@ When entering a repo that already has `.harnesskit/` or `AGENTS.md` / `CLAUDE.md
 2. Follow the progressive disclosure path described above
 3. Use `harnesskit query` or `harnesskit context` to find relevant docs before browsing manually
 
-### CLI Reference
+### Target Directory Discipline
 
 All commands accept optional `[target_dir]`, `[--schema <path>]`, `[--docs-root <path>]` arguments. Defaults: target_dir = `.`, schema = bundled `file-first-v0.yaml`.
+
+In normal local shells, the default `.` is fine. In agent sandboxes, WSL/DrvFs mounts, or repositories whose path casing differs between the shell and the sandbox writable root, prefer passing the explicit project path:
+
+```bash
+harnesskit check /absolute/project/path --json
+harnesskit index /absolute/project/path
+harnesskit context "auth" /absolute/project/path --json
+```
+
+Do this especially when a command reports `.harnesskit/state` as read-only or unable to open, while the project is expected to be writable. Some sandboxes bind-mount only the lexical project path as writable; a bare `.` can resolve through a differently cased or canonical path that is read-only. Do not fix this by deleting history. Retry with the explicit writable target path first.
+
+### CLI Reference
 
 #### Indexing
 

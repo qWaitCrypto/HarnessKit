@@ -93,6 +93,12 @@ struct InitStats {
     skipped_files: usize,
 }
 
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum InitMode {
+    Local,
+    Tracked,
+}
+
 enum WriteOutcome {
     Created,
     Skipped,
@@ -201,6 +207,45 @@ struct IndexCheck {
 struct EngineContext {
     target_dir: PathBuf,
     schema: Schema,
+}
+
+struct PathDiagnostics {
+    target_dir: String,
+    current_dir: String,
+    pwd: Option<String>,
+    state_dir: String,
+    facts_path: String,
+}
+
+struct CommandCheck {
+    present: bool,
+    version: Option<String>,
+    error: Option<String>,
+}
+
+struct DoctorReport {
+    cli_version: String,
+    os: String,
+    arch: String,
+    target_dir: String,
+    current_dir: String,
+    pwd: Option<String>,
+    pwd_differs_from_current_dir: bool,
+    sqlite3: CommandCheck,
+    git: CommandCheck,
+    inside_git_repo: Option<bool>,
+    git_repo_error: Option<String>,
+    state_exists: bool,
+    state_writable: bool,
+    state_error: Option<String>,
+    history_exists: bool,
+    schema_exists: bool,
+    claude_skill_path: String,
+    claude_skill_installed: bool,
+    codex_skill_path: String,
+    codex_skill_installed: bool,
+    path_contains_cli_dir: bool,
+    current_exe: Option<String>,
 }
 
 #[derive(Clone, Default)]
@@ -315,6 +360,7 @@ fn main() -> Result<()> {
         "graph" => run_graph(&args[2..])?,
         "context" => run_context(&args[2..])?,
         "history" => run_history(&args[2..])?,
+        "doctor" => run_doctor(&args[2..])?,
         "update" => run_update(&args[2..])?,
         "help" | "--help" | "-h" => usage(),
         "--version" | "-V" => println!("harnesskit {}", env!("CARGO_PKG_VERSION")),
@@ -328,7 +374,7 @@ fn main() -> Result<()> {
 }
 
 fn usage() {
-    eprintln!("harnesskit init [target_dir] [--schema <path>] [--docs-root <path>] [--force]");
+    eprintln!("harnesskit init [target_dir] [--schema <path>] [--docs-root <path>] [--force] [--local|--tracked] [--preview]");
     eprintln!("harnesskit index [target_dir] [--schema <path>] [--docs-root <path>]");
     eprintln!("harnesskit rank [target_dir] [--schema <path>] [--docs-root <path>]");
     eprintln!("harnesskit list-docs [target_dir] [--schema <path>] [--docs-root <path>]");
@@ -344,6 +390,7 @@ fn usage() {
     eprintln!("harnesskit history diff <snapshot-id|latest> [target_dir] [--schema <path>] [--docs-root <path>]");
     eprintln!("harnesskit history diff <a> <b> [target_dir] [--schema <path>] [--docs-root <path>]");
     eprintln!("harnesskit history restore <snapshot-id|latest> [target_dir] [--apply] [--force] [--schema <path>] [--docs-root <path>]");
+    eprintln!("harnesskit doctor [target_dir] [--json]");
     eprintln!("harnesskit update [--version <tag>] [--repo <owner/name>] [--asset-base-url <url>]");
     eprintln!("harnesskit --version");
 }
@@ -353,8 +400,13 @@ fn run_init(args: &[String]) -> Result<()> {
     let docs_root_override = option_value(args, "--docs-root");
     let schema_arg = option_value(args, "--schema").unwrap_or_else(|| BUNDLED_SCHEMA_PATH.to_string());
     let force = has_flag(args, "--force");
-
-    ensure_dir(&target_dir)?;
+    let preview = has_flag(args, "--preview");
+    let local = has_flag(args, "--local");
+    let tracked = has_flag(args, "--tracked");
+    if local && tracked {
+        return Err("harnesskit init accepts only one of --local or --tracked".into());
+    }
+    let mode = if tracked { InitMode::Tracked } else { InitMode::Local };
 
     let schema_path = resolve_schema_path(&target_dir, &schema_arg)?;
     let raw_schema_text = fs::read_to_string(&schema_path)?;
@@ -366,8 +418,19 @@ fn run_init(args: &[String]) -> Result<()> {
     }
     let schema_copy_text = render_schema_copy(&schema);
 
+    if preview {
+        print_init_preview(&target_dir, &schema, &schema_path, mode, force);
+        return Ok(());
+    }
+
+    ensure_dir(&target_dir)?;
+
     let stats = materialize_from_schema(&target_dir, &schema, &schema_copy_text, force)?;
-    let exclude_stats = ensure_host_git_exclude(&target_dir, &schema)?;
+    let exclude_stats = if mode == InitMode::Local {
+        ensure_host_git_exclude(&target_dir, &schema)?
+    } else {
+        None
+    };
 
     println!(
         "Initialized HarnessKit scaffold at {} using schema {} (created {}, skipped {})",
@@ -376,13 +439,7 @@ fn run_init(args: &[String]) -> Result<()> {
         stats.created_files,
         stats.skipped_files
     );
-    match exclude_stats {
-        Some((added, existing)) => println!(
-            "Updated host git local exclude for HarnessKit paths (added {}, already present {})",
-            added, existing
-        ),
-        None => println!("Host git repo not found; skipped .git/info/exclude update"),
-    }
+    print_init_summary(&target_dir, &schema, mode, exclude_stats);
     Ok(())
 }
 
@@ -468,6 +525,19 @@ fn run_check(args: &[String]) -> Result<()> {
         std::process::exit(1);
     }
 
+    Ok(())
+}
+
+fn run_doctor(args: &[String]) -> Result<()> {
+    let target_dir = PathBuf::from(positional_or_default(args, 0, "."));
+    let json = has_flag(args, "--json");
+    let report = build_doctor_report(&target_dir);
+
+    if json {
+        println!("{}", render_doctor_json(&report));
+    } else {
+        print_doctor_report(&report);
+    }
     Ok(())
 }
 
@@ -1028,6 +1098,125 @@ fn push_unique_string(values: &mut Vec<String>, value: String) {
     if !value.is_empty() && !values.contains(&value) {
         values.push(value);
     }
+}
+
+fn init_mode_label(mode: InitMode) -> &'static str {
+    match mode {
+        InitMode::Local => "local",
+        InitMode::Tracked => "tracked",
+    }
+}
+
+fn init_plan_paths(schema: &Schema) -> Vec<String> {
+    let mut paths = Vec::new();
+    if let Some(path) = &schema.entrypoints.agents {
+        push_unique_string(&mut paths, path.clone());
+    }
+    if let Some(path) = &schema.entrypoints.claude {
+        push_unique_string(&mut paths, path.clone());
+    }
+    if let Some(path) = &schema.entrypoints.architecture {
+        push_unique_string(&mut paths, path.clone());
+    }
+    for spec in &schema.core_files {
+        if let Some(root_path) = &spec.root_path {
+            push_unique_string(&mut paths, root_path.clone());
+        } else {
+            push_unique_string(
+                &mut paths,
+                format!("{}/{}", schema.managed_root.trim_end_matches('/'), spec.path.trim_start_matches('/')),
+            );
+        }
+    }
+    for spec in &schema.doc_collections {
+        push_unique_string(
+            &mut paths,
+            format!(
+                "{}/{}/index.md",
+                schema.managed_root.trim_end_matches('/'),
+                spec.path.trim_matches('/')
+            ),
+        );
+    }
+    push_unique_string(&mut paths, format!("{}/templates/", schema.managed_root.trim_end_matches('/')));
+    push_unique_string(&mut paths, ".harnesskit/schema.yaml".to_string());
+    push_unique_string(&mut paths, ".harnesskit/state/".to_string());
+    push_unique_string(&mut paths, ".harnesskit/history/".to_string());
+    paths
+}
+
+fn print_init_preview(target_dir: &Path, schema: &Schema, schema_path: &Path, mode: InitMode, force: bool) {
+    println!("HarnessKit init preview");
+    println!("Target: {}", target_dir.display());
+    println!("Schema: {}", schema_path.display());
+    println!("Mode: {}", init_mode_label(mode));
+    println!("Docs root: {}", schema.managed_root);
+    println!("Force overwrite: {}", yes_no_bool(force));
+    println!();
+    println!("Would create or update:");
+    for path in init_plan_paths(schema) {
+        let abs = target_dir.join(&path);
+        let status = if abs.exists() { "skip existing" } else { "create" };
+        println!("- {} ({})", path, status);
+    }
+    println!();
+    match mode {
+        InitMode::Local => {
+            println!("Git exclude: would add HarnessKit-managed paths to .git/info/exclude when a git repo is present.");
+            println!("Local mode keeps generated docs out of git status. Use --tracked for team-visible repo memory.");
+        }
+        InitMode::Tracked => {
+            println!("Git exclude: would not write HarnessKit-managed paths to .git/info/exclude.");
+            println!("Tracked mode leaves generated docs visible to git status so they can be committed.");
+        }
+    }
+    println!();
+    println!("Preview only: no files were written.");
+}
+
+fn print_init_summary(
+    target_dir: &Path,
+    schema: &Schema,
+    mode: InitMode,
+    exclude_stats: Option<(usize, usize)>,
+) {
+    println!("Mode: {}", init_mode_label(mode));
+    println!("Docs root: {}", schema.managed_root);
+    println!("Entrypoints:");
+    if let Some(path) = &schema.entrypoints.agents {
+        println!("- {}", path);
+    }
+    if let Some(path) = &schema.entrypoints.claude {
+        println!("- {}", path);
+    }
+    if let Some(path) = &schema.entrypoints.architecture {
+        println!("- {}", path);
+    }
+    println!(".harnesskit/state: derived fact/index layer; safe to rebuild with `harnesskit index`.");
+    println!(".harnesskit/history: local doc checkpoints; do not delete as cache.");
+
+    match mode {
+        InitMode::Local => match exclude_stats {
+            Some((added, existing)) => {
+                println!(
+                    "Git visibility: local mode updated .git/info/exclude (added {}, already present {}).",
+                    added, existing
+                );
+                println!("Generated docs are local project memory and will not appear in git status. Use `harnesskit init --tracked` for team-visible docs.");
+            }
+            None => println!("Git visibility: local mode selected, but no host git repo was found; skipped .git/info/exclude update."),
+        },
+        InitMode::Tracked => {
+            println!("Git visibility: tracked mode selected; .git/info/exclude was not changed.");
+            println!("Generated docs will appear in git status and can be committed as team-visible context harness files.");
+        }
+    }
+
+    println!("Next steps:");
+    println!("- Agent-first: ask your agent to read `AGENTS.md` or `CLAUDE.md` and follow the reading path.");
+    println!("- Manual: `harnesskit index {}`", target_dir.display());
+    println!("- Manual: `harnesskit doctor {}`", target_dir.display());
+    println!("- Manual: `harnesskit check {} --json`", target_dir.display());
 }
 
 fn ensure_host_git_exclude(target_dir: &Path, schema: &Schema) -> Result<Option<(usize, usize)>> {
@@ -1625,10 +1814,10 @@ fn positional_args(args: &[String]) -> Vec<String> {
             continue;
         }
         match arg.as_str() {
-            "--schema" | "--docs-root" | "--rules" | "--message" | "-m" => {
+            "--schema" | "--docs-root" | "--rules" | "--message" | "-m" | "--version" | "--repo" | "--asset-base-url" => {
                 skip_next = true;
             }
-            "--force" | "--json" | "--strict" | "--no-strict" | "--apply" => {}
+            "--force" | "--json" | "--strict" | "--no-strict" | "--apply" | "--cli-only" | "--no-claude" | "--no-codex" | "--with-codex-plugin" | "--local" | "--tracked" | "--preview" => {}
             _ if arg.starts_with("--") => {}
             _ if arg.starts_with('-') => {}
             _ => values.push(arg.clone()),
@@ -1677,7 +1866,7 @@ fn ensure_dir(path: &Path) -> Result<()> {
 fn ensure_writable_dir(path: &Path, purpose: &str) -> Result<()> {
     fs::create_dir_all(path).map_err(|err| {
         format!(
-            "cannot create {} directory at {}: {}. If derived state is corrupted, remove it with `rm -rf .harnesskit/state` and rebuild with `harnesskit index`.",
+            "cannot create {} directory at {}: {}.",
             purpose,
             path.display(),
             err
@@ -1691,13 +1880,316 @@ fn ensure_writable_dir(path: &Path, purpose: &str) -> Result<()> {
             Ok(())
         }
         Err(err) => Err(format!(
-            "cannot write {} directory at {}: {}. Check directory permissions or run HarnessKit from a writable project path. If derived state is corrupted, remove it with `rm -rf .harnesskit/state` and rebuild with `harnesskit index`.",
+            "cannot write {} directory at {}: {}. Check directory permissions or run HarnessKit from a writable project path.",
             purpose,
             path.display(),
             err
         )
         .into()),
     }
+}
+
+fn ensure_writable_fact_store_dir(target_dir: &Path, state_dir: &Path, purpose: &str) -> Result<()> {
+    ensure_writable_dir(state_dir, purpose).map_err(|err| {
+        format!(
+            "{}\n\n{}",
+            err,
+            fact_store_path_hint(target_dir, Some(state_dir), None)
+        )
+        .into()
+    })
+}
+
+fn fact_store_path_hint(target_dir: &Path, state_dir: Option<&Path>, facts_path: Option<&Path>) -> String {
+    let diagnostics = path_diagnostics(target_dir, state_dir, facts_path);
+    let mut out = String::new();
+    out.push_str("HarnessKit path diagnostics:\n");
+    out.push_str(&format!("- target_dir: {}\n", diagnostics.target_dir));
+    out.push_str(&format!("- current_dir: {}\n", diagnostics.current_dir));
+    out.push_str(&format!(
+        "- PWD: {}\n",
+        diagnostics.pwd.as_deref().unwrap_or("(not set)")
+    ));
+    out.push_str(&format!("- state_dir: {}\n", diagnostics.state_dir));
+    out.push_str(&format!("- facts_path: {}\n", diagnostics.facts_path));
+    out.push_str("Hint: in WSL, Codex sandbox, or path-casing/bind-mount environments, a bare `.` can resolve to a read-only view. Retry with an explicit writable absolute target path, for example `harnesskit check /path/to/repo --json` or `harnesskit index /path/to/repo`.\n");
+    out.push_str("Do not delete `.harnesskit/history` unless you intentionally want to discard local doc checkpoints.");
+    out
+}
+
+fn path_diagnostics(target_dir: &Path, state_dir: Option<&Path>, facts_path: Option<&Path>) -> PathDiagnostics {
+    let state = state_dir
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| target_dir.join(".harnesskit").join("state"));
+    let facts = facts_path.map(Path::to_path_buf).unwrap_or_else(|| state.join("facts.sqlite"));
+    PathDiagnostics {
+        target_dir: absolute_display_path(target_dir),
+        current_dir: env::current_dir()
+            .map(|path| absolute_display_path(&path))
+            .unwrap_or_else(|err| format!("(unavailable: {})", err)),
+        pwd: env::var("PWD").ok(),
+        state_dir: absolute_display_path(&state),
+        facts_path: absolute_display_path(&facts),
+    }
+}
+
+fn build_doctor_report(target_dir: &Path) -> DoctorReport {
+    let current_dir = env::current_dir().ok();
+    let current_dir_display = current_dir
+        .as_ref()
+        .map(|path| absolute_display_path(path))
+        .unwrap_or_else(|| "(unavailable)".to_string());
+    let pwd = env::var("PWD").ok();
+    let pwd_differs_from_current_dir = pwd
+        .as_ref()
+        .map(|pwd| pwd != &current_dir_display)
+        .unwrap_or(false);
+    let sqlite3 = command_check("sqlite3", &["--version"]);
+    let git = command_check("git", &["--version"]);
+    let (inside_git_repo, git_repo_error) = git_repo_check(target_dir);
+    let state_dir = target_dir.join(".harnesskit").join("state");
+    let history_dir = target_dir.join(".harnesskit").join("history");
+    let schema_path = target_dir.join(".harnesskit").join("schema.yaml");
+    let (state_writable, state_error) = state_writable_check(target_dir, &state_dir);
+    let home = env::var("HOME").unwrap_or_default();
+    let claude_skill = PathBuf::from(&home).join(".claude").join("skills").join("harnesskit").join("SKILL.md");
+    let codex_home = env::var("CODEX_HOME").unwrap_or_else(|_| {
+        PathBuf::from(&home)
+            .join(".codex")
+            .to_string_lossy()
+            .to_string()
+    });
+    let codex_skill = PathBuf::from(codex_home).join("skills").join("harnesskit").join("SKILL.md");
+    let current_exe = env::current_exe().ok();
+    let path_contains_cli_dir = current_exe
+        .as_ref()
+        .and_then(|path| path.parent())
+        .map(path_contains_dir)
+        .unwrap_or(false);
+
+    DoctorReport {
+        cli_version: env!("CARGO_PKG_VERSION").to_string(),
+        os: env::consts::OS.to_string(),
+        arch: env::consts::ARCH.to_string(),
+        target_dir: absolute_display_path(target_dir),
+        current_dir: current_dir_display,
+        pwd,
+        pwd_differs_from_current_dir,
+        sqlite3,
+        git,
+        inside_git_repo,
+        git_repo_error,
+        state_exists: state_dir.exists(),
+        state_writable,
+        state_error,
+        history_exists: history_dir.exists(),
+        schema_exists: schema_path.exists(),
+        claude_skill_path: absolute_display_path(&claude_skill),
+        claude_skill_installed: claude_skill.exists(),
+        codex_skill_path: absolute_display_path(&codex_skill),
+        codex_skill_installed: codex_skill.exists(),
+        path_contains_cli_dir,
+        current_exe: current_exe.as_ref().map(|path| absolute_display_path(path)),
+    }
+}
+
+fn command_check(name: &str, args: &[&str]) -> CommandCheck {
+    match Command::new(name).args(args).output() {
+        Ok(output) if output.status.success() => {
+            let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            CommandCheck {
+                present: true,
+                version: Some(if stdout.is_empty() { stderr } else { stdout }),
+                error: None,
+            }
+        }
+        Ok(output) => CommandCheck {
+            present: true,
+            version: None,
+            error: Some(render_command_output_error(name, &output)),
+        },
+        Err(err) => CommandCheck {
+            present: false,
+            version: None,
+            error: Some(err.to_string()),
+        },
+    }
+}
+
+fn render_command_output_error(name: &str, output: &std::process::Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if !stderr.is_empty() {
+        format!("{} exited with {}: {}", name, output.status, stderr)
+    } else if !stdout.is_empty() {
+        format!("{} exited with {}: {}", name, output.status, stdout)
+    } else {
+        format!("{} exited with {}", name, output.status)
+    }
+}
+
+fn git_repo_check(target_dir: &Path) -> (Option<bool>, Option<String>) {
+    match Command::new("git")
+        .arg("rev-parse")
+        .arg("--is-inside-work-tree")
+        .current_dir(target_dir)
+        .output()
+    {
+        Ok(output) if output.status.success() => {
+            let value = String::from_utf8_lossy(&output.stdout).trim() == "true";
+            (Some(value), None)
+        }
+        Ok(output) => (Some(false), Some(render_command_output_error("git", &output))),
+        Err(err) => (None, Some(err.to_string())),
+    }
+}
+
+fn state_writable_check(target_dir: &Path, state_dir: &Path) -> (bool, Option<String>) {
+    let harnesskit_dir = target_dir.join(".harnesskit");
+    let probe_dir = if state_dir.exists() {
+        state_dir.to_path_buf()
+    } else if harnesskit_dir.exists() {
+        harnesskit_dir
+    } else if target_dir.exists() {
+        target_dir.to_path_buf()
+    } else {
+        match nearest_existing_parent(target_dir) {
+            Some(path) => path,
+            None => return (false, Some("target dir and parents do not exist".to_string())),
+        }
+    };
+    let probe = probe_dir.join(format!(".harnesskit-doctor-write-test-{}-{}", std::process::id(), now_unix()));
+    match fs::write(&probe, b"ok") {
+        Ok(()) => {
+            let _ = fs::remove_file(&probe);
+            (true, None)
+        }
+        Err(err) => (false, Some(format!("cannot write probe at {}: {}", probe.display(), err))),
+    }
+}
+
+fn nearest_existing_parent(path: &Path) -> Option<PathBuf> {
+    let mut current = path;
+    loop {
+        if current.exists() {
+            return Some(current.to_path_buf());
+        }
+        current = current.parent()?;
+    }
+}
+
+fn path_contains_dir(dir: &Path) -> bool {
+    let Some(path_value) = env::var_os("PATH") else {
+        return false;
+    };
+    env::split_paths(&path_value).any(|entry| entry == dir)
+}
+
+fn print_doctor_report(report: &DoctorReport) {
+    println!("HarnessKit doctor");
+    println!("CLI version: {}", report.cli_version);
+    println!("Platform: {} {}", report.os, report.arch);
+    println!("Target dir: {}", report.target_dir);
+    println!("Current dir: {}", report.current_dir);
+    println!("PWD: {}", report.pwd.as_deref().unwrap_or("(not set)"));
+    println!("PWD differs from current_dir: {}", yes_no_bool(report.pwd_differs_from_current_dir));
+    println!("sqlite3: {}", command_check_label(&report.sqlite3));
+    println!("git: {}", command_check_label(&report.git));
+    println!(
+        "Inside git repo: {}",
+        report
+            .inside_git_repo
+            .map(yes_no_bool)
+            .unwrap_or("unknown")
+    );
+    if let Some(error) = &report.git_repo_error {
+        println!("Git repo check: {}", error);
+    }
+    println!(".harnesskit/state exists: {}", yes_no_bool(report.state_exists));
+    println!(".harnesskit/state writable or creatable: {}", yes_no_bool(report.state_writable));
+    if let Some(error) = &report.state_error {
+        println!("State write check: {}", error);
+        println!("Hint: in WSL/Codex sandbox/path-casing bind mounts, retry HarnessKit commands with an explicit writable absolute target path.");
+    }
+    println!(".harnesskit/history exists: {}", yes_no_bool(report.history_exists));
+    println!(".harnesskit/schema.yaml exists: {}", yes_no_bool(report.schema_exists));
+    println!("Claude skill: {} ({})", installed_label(report.claude_skill_installed), report.claude_skill_path);
+    println!("Codex skill: {} ({})", installed_label(report.codex_skill_installed), report.codex_skill_path);
+    println!("Current executable: {}", report.current_exe.as_deref().unwrap_or("(unknown)"));
+    println!("Current executable directory on PATH: {}", yes_no_bool(report.path_contains_cli_dir));
+    if !report.sqlite3.present {
+        println!("Hint: HarnessKit alpha requires sqlite3 CLI on PATH for fact-store-backed commands such as index, query, check, context, graph, inspect, refs, rank, and list-docs.");
+    }
+    println!("Note: `.harnesskit/state` is derived and rebuildable; `.harnesskit/history` stores local doc checkpoints.");
+}
+
+fn command_check_label(check: &CommandCheck) -> String {
+    if check.present {
+        match (&check.version, &check.error) {
+            (Some(version), _) if !version.is_empty() => format!("ok ({})", version),
+            (_, Some(error)) => format!("present but failed ({})", error),
+            _ => "ok".to_string(),
+        }
+    } else {
+        format!("missing ({})", check.error.as_deref().unwrap_or("not found"))
+    }
+}
+
+fn installed_label(installed: bool) -> &'static str {
+    if installed { "installed" } else { "missing" }
+}
+
+fn render_doctor_json(report: &DoctorReport) -> String {
+    let mut out = String::new();
+    out.push_str("{\n");
+    out.push_str(&format!("  \"cli_version\": {},\n", json_string(&report.cli_version)));
+    out.push_str(&format!("  \"os\": {},\n", json_string(&report.os)));
+    out.push_str(&format!("  \"arch\": {},\n", json_string(&report.arch)));
+    out.push_str(&format!("  \"target_dir\": {},\n", json_string(&report.target_dir)));
+    out.push_str(&format!("  \"current_dir\": {},\n", json_string(&report.current_dir)));
+    out.push_str(&format!("  \"pwd\": {},\n", json_opt_string(report.pwd.as_deref())));
+    out.push_str(&format!(
+        "  \"pwd_differs_from_current_dir\": {},\n",
+        json_bool(report.pwd_differs_from_current_dir)
+    ));
+    out.push_str(&format!("  \"sqlite3\": {},\n", render_command_check_json(&report.sqlite3)));
+    out.push_str(&format!("  \"git\": {},\n", render_command_check_json(&report.git)));
+    out.push_str(&format!(
+        "  \"inside_git_repo\": {},\n",
+        report
+            .inside_git_repo
+            .map(json_bool)
+            .unwrap_or("null")
+    ));
+    out.push_str(&format!("  \"git_repo_error\": {},\n", json_opt_string(report.git_repo_error.as_deref())));
+    out.push_str(&format!("  \"state_exists\": {},\n", json_bool(report.state_exists)));
+    out.push_str(&format!("  \"state_writable\": {},\n", json_bool(report.state_writable)));
+    out.push_str(&format!("  \"state_error\": {},\n", json_opt_string(report.state_error.as_deref())));
+    out.push_str(&format!("  \"history_exists\": {},\n", json_bool(report.history_exists)));
+    out.push_str(&format!("  \"schema_exists\": {},\n", json_bool(report.schema_exists)));
+    out.push_str(&format!("  \"claude_skill_path\": {},\n", json_string(&report.claude_skill_path)));
+    out.push_str(&format!("  \"claude_skill_installed\": {},\n", json_bool(report.claude_skill_installed)));
+    out.push_str(&format!("  \"codex_skill_path\": {},\n", json_string(&report.codex_skill_path)));
+    out.push_str(&format!("  \"codex_skill_installed\": {},\n", json_bool(report.codex_skill_installed)));
+    out.push_str(&format!("  \"current_exe\": {},\n", json_opt_string(report.current_exe.as_deref())));
+    out.push_str(&format!("  \"path_contains_cli_dir\": {},\n", json_bool(report.path_contains_cli_dir)));
+    out.push_str("  \"notes\": [\n");
+    out.push_str("    \"HarnessKit alpha requires sqlite3 CLI on PATH for fact-store-backed commands.\",\n");
+    out.push_str("    \".harnesskit/state is derived and rebuildable; .harnesskit/history stores local doc checkpoints.\",\n");
+    out.push_str("    \"In WSL/Codex sandbox/path-casing bind mounts, retry commands with an explicit writable absolute target path if . reports read-only.\"\n");
+    out.push_str("  ]\n");
+    out.push_str("}");
+    out
+}
+
+fn render_command_check_json(check: &CommandCheck) -> String {
+    format!(
+        "{{\"present\":{},\"version\":{},\"error\":{}}}",
+        json_bool(check.present),
+        json_opt_string(check.version.as_deref()),
+        json_opt_string(check.error.as_deref())
+    )
 }
 
 fn load_engine_context(args: &[String], positional_index: usize) -> Result<EngineContext> {
@@ -2366,19 +2858,38 @@ fn build_index_artifact(target_dir: &Path, schema: &Schema) -> Result<IndexArtif
 
 fn write_index_artifact(target_dir: &Path, artifact: &IndexArtifact) -> Result<()> {
     let state_dir = target_dir.join(".harnesskit").join("state");
-    ensure_writable_dir(&state_dir, "HarnessKit state")?;
-    fs::write(state_dir.join("doc-index.json"), render_index_json(artifact))?;
-    fs::write(state_dir.join("doc-index-summary.md"), render_index_summary(artifact))?;
+    ensure_writable_fact_store_dir(target_dir, &state_dir, "HarnessKit state")?;
+    fs::write(state_dir.join("doc-index.json"), render_index_json(artifact)).map_err(|err| {
+        format!(
+            "cannot write HarnessKit index artifact: {}\n\n{}",
+            err,
+            fact_store_path_hint(target_dir, Some(&state_dir), None)
+        )
+    })?;
+    fs::write(state_dir.join("doc-index-summary.md"), render_index_summary(artifact)).map_err(|err| {
+        format!(
+            "cannot write HarnessKit index summary: {}\n\n{}",
+            err,
+            fact_store_path_hint(target_dir, Some(&state_dir), None)
+        )
+    })?;
     Ok(())
 }
 
 fn write_fact_store(target_dir: &Path, artifact: &IndexArtifact) -> Result<()> {
     let state_dir = target_dir.join(".harnesskit").join("state");
-    ensure_writable_dir(&state_dir, "HarnessKit fact store")?;
+    ensure_writable_fact_store_dir(target_dir, &state_dir, "HarnessKit fact store")?;
     let db_path = state_dir.join("facts.sqlite");
     let tmp_path = state_dir.join(format!("facts.sqlite.rebuild-{}-{}", std::process::id(), now_unix()));
     let _ = fs::remove_file(&tmp_path);
-    let db = SqliteConnection::open(&tmp_path)?;
+    let db = SqliteConnection::open(&tmp_path).map_err(|err| {
+        format!(
+            "cannot create HarnessKit fact store at {}: {}\n\n{}",
+            tmp_path.display(),
+            err,
+            fact_store_path_hint(target_dir, Some(&state_dir), Some(&db_path))
+        )
+    })?;
     initialize_fact_store(&db)?;
     replace_fact_store_contents(&db, artifact)?;
     db.exec("PRAGMA wal_checkpoint(TRUNCATE);")?;
@@ -2392,29 +2903,57 @@ fn replace_fact_store_file(db_path: &Path, tmp_path: &Path) -> Result<()> {
         let _ = fs::remove_file(PathBuf::from(format!("{}{}", tmp_path.display(), suffix)));
         let _ = fs::remove_file(PathBuf::from(format!("{}{}", db_path.display(), suffix)));
     }
-    fs::rename(tmp_path, db_path)?;
+    fs::rename(tmp_path, db_path).map_err(|err| {
+        let target_dir = db_path
+            .parent()
+            .and_then(|state| state.parent())
+            .and_then(|harnesskit| harnesskit.parent())
+            .unwrap_or_else(|| Path::new("."));
+        format!(
+            "cannot replace HarnessKit fact store at {}: {}\n\n{}",
+            db_path.display(),
+            err,
+            fact_store_path_hint(target_dir, db_path.parent(), Some(db_path))
+        )
+    })?;
     Ok(())
 }
 
 fn open_fact_store(target_dir: &Path) -> Result<SqliteConnection> {
     let state_dir = target_dir.join(".harnesskit").join("state");
-    ensure_writable_dir(&state_dir, "HarnessKit fact store")?;
+    ensure_writable_fact_store_dir(target_dir, &state_dir, "HarnessKit fact store")?;
     let db_path = state_dir.join("facts.sqlite");
     if !db_path.exists() {
         return Err(format!(
-            "fact store not found at {}. Run `harnesskit index` first.",
-            db_path.display()
+            "fact store not found at {}. Run `harnesskit index` first.\n\n{}",
+            db_path.display(),
+            fact_store_path_hint(target_dir, Some(&state_dir), Some(&db_path))
         )
         .into());
     }
     SqliteConnection::open(&db_path).map_err(|err| {
+        let err_text = err.to_string();
+        if err_text.contains("sqlite3 CLI not found") {
+            return format!(
+                "cannot open HarnessKit fact store at {} because sqlite3 is unavailable: {}\n\n{}",
+                db_path.display(),
+                trim_trailing_period(&err_text),
+                fact_store_path_hint(target_dir, Some(&state_dir), Some(&db_path))
+            )
+            .into();
+        }
         format!(
-            "cannot open HarnessKit fact store at {}: {}. Check that the project path and .harnesskit/state are writable. If derived state is corrupted, remove it with `rm -rf .harnesskit/state` and rebuild with `harnesskit index`.",
+            "cannot open HarnessKit fact store at {}: {}. Check that the project path and `.harnesskit/state` are writable.\n\n{}",
             db_path.display(),
-            err
+            err_text,
+            fact_store_path_hint(target_dir, Some(&state_dir), Some(&db_path))
         )
         .into()
     })
+}
+
+fn trim_trailing_period(value: &str) -> &str {
+    value.strip_suffix('.').unwrap_or(value)
 }
 
 fn scalar_count(db: &SqliteConnection, sql: &str) -> Result<usize> {
@@ -6771,7 +7310,12 @@ rules:
 
         assert!(err.contains("HarnessKit fact store"));
         assert!(err.contains(".harnesskit"));
-        assert!(err.contains("rm -rf .harnesskit/state"));
+        assert!(err.contains("target_dir:"));
+        assert!(err.contains("current_dir:"));
+        assert!(err.contains("PWD:"));
+        assert!(err.contains("facts_path:"));
+        assert!(err.contains("explicit writable absolute target path"));
+        assert!(err.contains("Do not delete `.harnesskit/history`"));
 
         fs::remove_dir_all(target).unwrap();
     }
@@ -7619,6 +8163,41 @@ suppressions:
         assert!(target.join(".harnesskit/history/refs").is_dir());
 
         fs::remove_dir_all(target).unwrap();
+    }
+
+    #[test]
+    fn init_tracked_mode_leaves_git_exclude_unchanged() {
+        let target = unique_temp_dir("git-tracked");
+        fs::create_dir_all(target.join(".git/info")).unwrap();
+        fs::write(target.join(".git/info/exclude"), "# local excludes\n").unwrap();
+        let schema = bundled_schema();
+        let schema_copy = render_schema_copy(&schema);
+
+        materialize_from_schema(&target, &schema, &schema_copy, false).unwrap();
+
+        let exclude = fs::read_to_string(target.join(".git/info/exclude")).unwrap();
+        assert_eq!(exclude, "# local excludes\n");
+        assert!(target.join("AGENTS.md").exists());
+        assert!(target.join("docs/index.md").exists());
+
+        fs::remove_dir_all(target).unwrap();
+    }
+
+    #[test]
+    fn init_preview_paths_do_not_write_files() {
+        let parent = unique_temp_dir("init-preview-plan");
+        let target = parent.join("preview-target");
+        let schema = bundled_schema();
+        let paths = init_plan_paths(&schema);
+
+        assert!(paths.contains(&"AGENTS.md".to_string()));
+        assert!(paths.contains(&"CLAUDE.md".to_string()));
+        assert!(paths.contains(&"ARCHITECTURE.md".to_string()));
+        assert!(paths.contains(&"docs/index.md".to_string()));
+        assert!(paths.contains(&".harnesskit/state/".to_string()));
+        assert!(paths.contains(&".harnesskit/history/".to_string()));
+        assert!(!target.exists());
+        fs::remove_dir_all(parent).unwrap();
     }
 
     #[test]
