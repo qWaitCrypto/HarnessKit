@@ -1,0 +1,31 @@
+{
+  "name": "harnesskit",
+  "version": "0.1.0",
+  "description": "Use HarnessKit's file-first project memory workflow through a lightweight Codex skill and the local harnesskit CLI.",
+  "author": {
+    "name": "HarnessKit contributors"
+  },
+  "license": "MIT",
+  "keywords": [
+    "harness",
+    "docs",
+    "agent",
+    "project-memory"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "HarnessKit",
+    "shortDescription": "File-first project memory for coding agents",
+    "longDescription": "HarnessKit gives Codex a lightweight project-level harness: initialize managed docs, read progressively from AGENTS.md and docs/index.md, query the local fact store, and keep durable decisions in repository files.",
+    "developerName": "HarnessKit contributors",
+    "category": "Coding",
+    "capabilities": [
+      "Interactive",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Use HarnessKit to initialize, read, query, or maintain this project's managed docs"
+    ],
+    "brandColor": "#334155"
+  }
+}
