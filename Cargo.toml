@@ -1,10 +1,10 @@
 [package]
 name = "harnesskit"
-version = "0.1.0"
+version = "0.1.0-alpha.2"
 edition = "2021"
 description = "A lightweight file-first repo context harness for coding agents."
 license = "MIT"
-repository = "https://github.com/qwait/harnesskit"
+repository = "https://github.com/qWaitCrypto/HarnessKit"
 publish = false
 
 [dependencies]

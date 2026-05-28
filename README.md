@@ -71,7 +71,13 @@ Users install a skill. Their agent handles everything else — initializing docs
 
 ```bash
 # Public alpha install
-curl -fsSL https://raw.githubusercontent.com/qWaitCrypto/HarnessKit/main/install.sh | bash -s -- --version v0.1.0-alpha.1
+curl -fsSL https://raw.githubusercontent.com/qWaitCrypto/HarnessKit/main/install.sh | bash
+```
+
+For reproducible installs, pin a release tag:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/qWaitCrypto/HarnessKit/main/install.sh | bash -s -- --version v0.1.0-alpha.2
 ```
 
 If `~/.local/bin` is not on your `PATH`, add it:
@@ -80,26 +86,20 @@ If `~/.local/bin` is not on your `PATH`, add it:
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-For Codex, enable the local plugin after install:
-
-```bash
-codex plugin list | grep harnesskit
-codex plugin add harnesskit@personal
-```
-
 For local development from this repository:
 
 ```bash
 scripts/install-local-cli.sh
 scripts/install-claude-skill.sh        # Claude Code
-scripts/install-codex-plugin-local.sh  # Codex
+scripts/install-codex-skill.sh         # Codex
 ```
 
 Alpha notes:
 
 - The public binary release currently supports Linux x86_64.
-- Codex plugin activation requires a recent Codex CLI with `codex plugin list` and `codex plugin add`.
+- The installer writes the Codex skill directly; Codex plugin packaging is optional.
 - The installer can be rerun with a newer `--version` tag to upgrade.
+- After alpha.2, `harnesskit update` can update the CLI and already-installed skills from GitHub releases.
 
 **Step 2** — Ask your agent to set up project docs:
 
@@ -208,6 +208,13 @@ harnesskit history restore <snapshot-id> [--apply] # Preview or restore a snapsh
 ```
 
 Lightweight local versioning for docs — not a replacement for git, but useful for doc-level checkpoints during complex tasks.
+
+#### Update
+
+```bash
+harnesskit update                         # Update to the latest release
+harnesskit update --version <release-tag> # Update to a pinned release
+```
 
 </details>
 

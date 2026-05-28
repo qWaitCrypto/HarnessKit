@@ -3,6 +3,7 @@ set -euo pipefail
 
 home_dir="${HOME}"
 prefix=""
+remove_codex_plugin=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -13,6 +14,10 @@ while [[ $# -gt 0 ]]; do
     --prefix)
       prefix="$2"
       shift 2
+      ;;
+    --with-codex-plugin)
+      remove_codex_plugin=1
+      shift
       ;;
     *)
       echo "unknown argument: $1" >&2
@@ -27,12 +32,16 @@ fi
 
 rm -f "${prefix}/bin/harnesskit"
 rm -rf "${home_dir}/.claude/skills/harnesskit"
-rm -rf "${home_dir}/plugins/harnesskit"
-rm -rf "${home_dir}/.agents/plugins/plugins/harnesskit"
+codex_home="${CODEX_HOME:-${home_dir}/.codex}"
+rm -rf "${codex_home}/skills/harnesskit"
 
-marketplace_path="${home_dir}/.agents/plugins/marketplace.json"
-if [[ -f "${marketplace_path}" ]]; then
-  MARKETPLACE_PATH="${marketplace_path}" python3 - <<'PY'
+if [[ "${remove_codex_plugin}" -eq 1 ]]; then
+  rm -rf "${home_dir}/plugins/harnesskit"
+  rm -rf "${home_dir}/.agents/plugins/plugins/harnesskit"
+
+  marketplace_path="${home_dir}/.agents/plugins/marketplace.json"
+  if [[ -f "${marketplace_path}" ]]; then
+    MARKETPLACE_PATH="${marketplace_path}" python3 - <<'PY'
 import json
 import os
 from pathlib import Path
@@ -52,7 +61,10 @@ if isinstance(plugins, list):
         data["plugins"] = next_plugins
         path.write_text(json.dumps(data, indent=2) + "\n")
 PY
+  fi
 fi
 
-echo "Removed local HarnessKit CLI, Claude skill, and Codex local plugin package."
-echo "Removed harnesskit entry from ${home_dir}/.agents/plugins/marketplace.json if it existed."
+echo "Removed local HarnessKit CLI, Claude skill, and Codex skill."
+if [[ "${remove_codex_plugin}" -eq 1 ]]; then
+  echo "Removed optional Codex local plugin package and marketplace entry if they existed."
+fi

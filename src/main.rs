@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -315,6 +315,7 @@ fn main() -> Result<()> {
         "graph" => run_graph(&args[2..])?,
         "context" => run_context(&args[2..])?,
         "history" => run_history(&args[2..])?,
+        "update" => run_update(&args[2..])?,
         "help" | "--help" | "-h" => usage(),
         "--version" | "-V" => println!("harnesskit {}", env!("CARGO_PKG_VERSION")),
         _ => {
@@ -343,6 +344,7 @@ fn usage() {
     eprintln!("harnesskit history diff <snapshot-id|latest> [target_dir] [--schema <path>] [--docs-root <path>]");
     eprintln!("harnesskit history diff <a> <b> [target_dir] [--schema <path>] [--docs-root <path>]");
     eprintln!("harnesskit history restore <snapshot-id|latest> [target_dir] [--apply] [--force] [--schema <path>] [--docs-root <path>]");
+    eprintln!("harnesskit update [--version <tag>] [--repo <owner/name>] [--asset-base-url <url>]");
     eprintln!("harnesskit --version");
 }
 
@@ -466,6 +468,222 @@ fn run_check(args: &[String]) -> Result<()> {
         std::process::exit(1);
     }
 
+    Ok(())
+}
+
+fn run_update(args: &[String]) -> Result<()> {
+    let version = option_value(args, "--version").unwrap_or_else(|| "latest".to_string());
+    let repo = option_value(args, "--repo").unwrap_or_else(|| "qWaitCrypto/HarnessKit".to_string());
+    let asset_base_url_arg = option_value(args, "--asset-base-url");
+    if !repo.contains('/') {
+        return Err("--repo must use owner/name format".into());
+    }
+
+    let target = detect_release_target()?;
+    let package = format!("harnesskit-{}", target);
+    let archive = format!("{}.tar.gz", package);
+    let asset_base_url = asset_base_url_arg.unwrap_or_else(|| {
+        if version == "latest" {
+            format!("https://github.com/{}/releases/latest/download", repo)
+        } else {
+            format!("https://github.com/{}/releases/download/{}", repo, version)
+        }
+    });
+
+    let current_exe = env::current_exe()?;
+    let tmp_dir = env::temp_dir().join(format!("harnesskit-update-{}-{}", std::process::id(), now_unix()));
+    fs::create_dir_all(&tmp_dir)?;
+    let result = update_from_release(&asset_base_url, &archive, &package, &tmp_dir, &current_exe, &version, &target);
+    let _ = fs::remove_dir_all(&tmp_dir);
+    result
+}
+
+fn detect_release_target() -> Result<String> {
+    let os = env::consts::OS;
+    let arch = env::consts::ARCH;
+    match (os, arch) {
+        ("linux", "x86_64") => Ok("x86_64-unknown-linux-gnu".to_string()),
+        _ => Err(format!(
+            "unsupported platform: {} {}. This alpha updater currently supports Linux x86_64 only.",
+            os, arch
+        )
+        .into()),
+    }
+}
+
+fn update_from_release(
+    asset_base_url: &str,
+    archive: &str,
+    package: &str,
+    tmp_dir: &Path,
+    current_exe: &Path,
+    version: &str,
+    target: &str,
+) -> Result<()> {
+    let archive_path = tmp_dir.join(archive);
+    let sums_path = tmp_dir.join("SHA256SUMS");
+    println!("Downloading HarnessKit {} for {}...", version, target);
+    download_to_file(&format!("{}/{}", asset_base_url.trim_end_matches('/'), archive), &archive_path)?;
+    download_to_file(&format!("{}/SHA256SUMS", asset_base_url.trim_end_matches('/')), &sums_path)?;
+    verify_sha256(tmp_dir, "SHA256SUMS")?;
+    run_command(
+        Command::new("tar")
+            .arg("-xzf")
+            .arg(&archive_path)
+            .arg("-C")
+            .arg(tmp_dir),
+        "tar extract failed",
+    )?;
+
+    let package_dir = tmp_dir.join(package);
+    let next_binary = package_dir.join("harnesskit");
+    if !next_binary.is_file() {
+        return Err(format!("release archive did not contain {}", next_binary.display()).into());
+    }
+
+    let replacement = current_exe.with_file_name(format!(
+        ".harnesskit-update-{}-{}",
+        std::process::id(),
+        now_unix()
+    ));
+    fs::copy(&next_binary, &replacement)?;
+    make_executable(&replacement)?;
+    fs::rename(&replacement, current_exe).map_err(|err| {
+        let _ = fs::remove_file(&replacement);
+        format!(
+            "failed to replace current binary at {}: {}",
+            current_exe.display(),
+            err
+        )
+    })?;
+    println!("Updated CLI: {}", current_exe.display());
+
+    sync_existing_installed_skills(&package_dir)?;
+    Ok(())
+}
+
+fn download_to_file(url: &str, out: &Path) -> Result<()> {
+    if command_exists("curl") {
+        let status = Command::new("curl")
+            .arg("-fsSL")
+            .arg("--retry")
+            .arg("3")
+            .arg("--retry-delay")
+            .arg("2")
+            .arg("--connect-timeout")
+            .arg("20")
+            .arg("--max-time")
+            .arg("120")
+            .arg(url)
+            .arg("-o")
+            .arg(out)
+            .status()?;
+        if status.success() {
+            return Ok(());
+        }
+    } else if command_exists("wget") {
+        let status = Command::new("wget")
+            .arg("-q")
+            .arg("--tries=3")
+            .arg("--timeout=120")
+            .arg(url)
+            .arg("-O")
+            .arg(out)
+            .status()?;
+        if status.success() {
+            return Ok(());
+        }
+    } else {
+        return Err("missing required command: curl or wget".into());
+    }
+
+    Err(format!(
+        "download failed: {}. If you are behind a proxy, set http_proxy, https_proxy, or all_proxy and retry.",
+        url
+    )
+    .into())
+}
+
+fn verify_sha256(dir: &Path, sums_file: &str) -> Result<()> {
+    run_command(
+        Command::new("sha256sum")
+            .arg("-c")
+            .arg(sums_file)
+            .current_dir(dir),
+        "sha256 verification failed",
+    )
+}
+
+fn run_command(command: &mut Command, message: &str) -> Result<()> {
+    let output = command.output()?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let detail = if !stderr.is_empty() {
+        stderr
+    } else if !stdout.is_empty() {
+        stdout
+    } else {
+        output.status.to_string()
+    };
+    Err(format!("{}: {}", message, detail).into())
+}
+
+fn command_exists(name: &str) -> bool {
+    Command::new(name)
+        .arg("--version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok()
+}
+
+fn make_executable(path: &Path) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = fs::metadata(path)?.permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(path, permissions)?;
+    }
+    Ok(())
+}
+
+fn sync_existing_installed_skills(package_dir: &Path) -> Result<()> {
+    let source_skill = package_dir.join("agent-surfaces").join("skills").join("harnesskit").join("SKILL.md");
+    if !source_skill.is_file() {
+        return Ok(());
+    }
+
+    if let Some(home) = home_dir() {
+        let claude_skill = home.join(".claude").join("skills").join("harnesskit").join("SKILL.md");
+        if claude_skill.exists() {
+            copy_skill(&source_skill, &claude_skill)?;
+            println!("Updated Claude Code skill: {}", claude_skill.display());
+        }
+
+        let codex_home = env::var_os("CODEX_HOME").map(PathBuf::from).unwrap_or_else(|| home.join(".codex"));
+        let codex_skill = codex_home.join("skills").join("harnesskit").join("SKILL.md");
+        if codex_skill.exists() {
+            copy_skill(&source_skill, &codex_skill)?;
+            println!("Updated Codex skill: {}", codex_skill.display());
+        }
+    }
+
+    Ok(())
+}
+
+fn home_dir() -> Option<PathBuf> {
+    env::var_os("HOME").map(PathBuf::from)
+}
+
+fn copy_skill(source: &Path, target: &Path) -> Result<()> {
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::copy(source, target)?;
     Ok(())
 }
 
@@ -1456,6 +1674,32 @@ fn ensure_dir(path: &Path) -> Result<()> {
     Ok(())
 }
 
+fn ensure_writable_dir(path: &Path, purpose: &str) -> Result<()> {
+    fs::create_dir_all(path).map_err(|err| {
+        format!(
+            "cannot create {} directory at {}: {}. If derived state is corrupted, remove it with `rm -rf .harnesskit/state` and rebuild with `harnesskit index`.",
+            purpose,
+            path.display(),
+            err
+        )
+    })?;
+
+    let probe = path.join(format!(".harnesskit-write-test-{}-{}", std::process::id(), now_unix()));
+    match fs::write(&probe, b"ok") {
+        Ok(()) => {
+            let _ = fs::remove_file(&probe);
+            Ok(())
+        }
+        Err(err) => Err(format!(
+            "cannot write {} directory at {}: {}. Check directory permissions or run HarnessKit from a writable project path. If derived state is corrupted, remove it with `rm -rf .harnesskit/state` and rebuild with `harnesskit index`.",
+            purpose,
+            path.display(),
+            err
+        )
+        .into()),
+    }
+}
+
 fn load_engine_context(args: &[String], positional_index: usize) -> Result<EngineContext> {
     let target_dir = PathBuf::from(positional_or_default(args, positional_index, "."));
     let docs_root_override = option_value(args, "--docs-root");
@@ -2122,7 +2366,7 @@ fn build_index_artifact(target_dir: &Path, schema: &Schema) -> Result<IndexArtif
 
 fn write_index_artifact(target_dir: &Path, artifact: &IndexArtifact) -> Result<()> {
     let state_dir = target_dir.join(".harnesskit").join("state");
-    fs::create_dir_all(&state_dir)?;
+    ensure_writable_dir(&state_dir, "HarnessKit state")?;
     fs::write(state_dir.join("doc-index.json"), render_index_json(artifact))?;
     fs::write(state_dir.join("doc-index-summary.md"), render_index_summary(artifact))?;
     Ok(())
@@ -2130,7 +2374,7 @@ fn write_index_artifact(target_dir: &Path, artifact: &IndexArtifact) -> Result<(
 
 fn write_fact_store(target_dir: &Path, artifact: &IndexArtifact) -> Result<()> {
     let state_dir = target_dir.join(".harnesskit").join("state");
-    fs::create_dir_all(&state_dir)?;
+    ensure_writable_dir(&state_dir, "HarnessKit fact store")?;
     let db_path = state_dir.join("facts.sqlite");
     let tmp_path = state_dir.join(format!("facts.sqlite.rebuild-{}-{}", std::process::id(), now_unix()));
     let _ = fs::remove_file(&tmp_path);
@@ -2153,7 +2397,9 @@ fn replace_fact_store_file(db_path: &Path, tmp_path: &Path) -> Result<()> {
 }
 
 fn open_fact_store(target_dir: &Path) -> Result<SqliteConnection> {
-    let db_path = target_dir.join(".harnesskit").join("state").join("facts.sqlite");
+    let state_dir = target_dir.join(".harnesskit").join("state");
+    ensure_writable_dir(&state_dir, "HarnessKit fact store")?;
+    let db_path = state_dir.join("facts.sqlite");
     if !db_path.exists() {
         return Err(format!(
             "fact store not found at {}. Run `harnesskit index` first.",
@@ -2161,7 +2407,14 @@ fn open_fact_store(target_dir: &Path) -> Result<SqliteConnection> {
         )
         .into());
     }
-    SqliteConnection::open(&db_path)
+    SqliteConnection::open(&db_path).map_err(|err| {
+        format!(
+            "cannot open HarnessKit fact store at {}: {}. Check that the project path and .harnesskit/state are writable. If derived state is corrupted, remove it with `rm -rf .harnesskit/state` and rebuild with `harnesskit index`.",
+            db_path.display(),
+            err
+        )
+        .into()
+    })
 }
 
 fn scalar_count(db: &SqliteConnection, sql: &str) -> Result<usize> {
@@ -6501,6 +6754,24 @@ rules:
             .unwrap();
 
         assert_eq!(project.mtime_ns, 1234567890123456789);
+
+        fs::remove_dir_all(target).unwrap();
+    }
+
+    #[test]
+    fn fact_store_state_path_errors_include_recovery_hint() {
+        let target = unique_temp_dir("fact-store-state-path-error");
+        fs::create_dir_all(target.join(".harnesskit")).unwrap();
+        fs::write(target.join(".harnesskit/state"), "not a directory").unwrap();
+
+        let err = match open_fact_store(&target) {
+            Ok(_) => panic!("expected fact store open to fail"),
+            Err(err) => err.to_string(),
+        };
+
+        assert!(err.contains("HarnessKit fact store"));
+        assert!(err.contains(".harnesskit"));
+        assert!(err.contains("rm -rf .harnesskit/state"));
 
         fs::remove_dir_all(target).unwrap();
     }

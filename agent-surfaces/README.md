@@ -9,7 +9,8 @@ This directory is runtime-facing packaging material, not product discussion note
 ```text
 harnesskit CLI
 + one shared HarnessKit skill
-+ thin Codex packaging
++ direct Codex skill installation
++ optional thin Codex plugin packaging
 + thin Claude Code installation path
 ```
 
@@ -17,8 +18,9 @@ HarnessKit does not provide an MCP server, daemon, tool wrapper, or large slash-
 
 ## Expected Install Model
 
-- Plugin install: installs the `harnesskit` CLI and installs the agent skill.
+- Public install: installs the `harnesskit` CLI and installs the agent skill for Claude Code and Codex.
 - Manual skill install: installs only the skill; the CLI must be installed separately.
+- Optional Codex plugin install: packages the same skill for Codex marketplace/plugin testing.
 
 The exact installer can evolve later. The surface contract should stay small: the skill assumes `harnesskit` is available on `PATH`, and otherwise reports that deterministic actions require the CLI.
 
@@ -28,9 +30,21 @@ The skill content is shared at:
 agent-surfaces/skills/harnesskit/SKILL.md
 ```
 
-Codex and Claude Code should both package or copy this same skill. Do not maintain separate duplicated skill bodies for each agent.
+Codex and Claude Code should both install or package this same skill. Do not maintain separate duplicated skill bodies for each agent.
 
-For Codex plugin packaging, generate a copy of the shared skill into the plugin package as:
+For Codex direct skill installation, copy the shared skill to:
+
+```text
+$CODEX_HOME/skills/harnesskit/SKILL.md
+```
+
+or, when `CODEX_HOME` is unset:
+
+```text
+~/.codex/skills/harnesskit/SKILL.md
+```
+
+For optional Codex plugin packaging, generate a copy of the shared skill into the plugin package as:
 
 ```text
 agent-surfaces/codex/skills/harnesskit/SKILL.md

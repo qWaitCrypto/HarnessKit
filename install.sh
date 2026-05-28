@@ -6,6 +6,7 @@ version="latest"
 prefix="${HOME}/.local"
 install_claude=1
 install_codex=1
+install_codex_plugin=0
 tmp_dir=""
 asset_base_url=""
 
@@ -17,13 +18,15 @@ Usage:
   install.sh [options]
 
 Options:
-  --version <tag>       Release tag to install, e.g. v0.1.0-alpha.1 (default: latest)
+  --version <tag>       Release tag to install, e.g. v0.1.0-alpha.2 (default: latest)
   --prefix <path>       Install prefix for the CLI (default: ~/.local)
   --repo <owner/name>   GitHub repository (default: qWaitCrypto/HarnessKit)
   --asset-base-url <url>
                         Override release asset base URL, mainly for testing
+  --cli-only            Install only the harnesskit CLI
   --no-claude           Do not install Claude Code skill
-  --no-codex            Do not install Codex local plugin package
+  --no-codex            Do not install Codex skill
+  --with-codex-plugin   Also install optional Codex local plugin package
   -h, --help            Show this help
 EOF
 }
@@ -32,7 +35,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --version)
       if [[ $# -lt 2 || "${2:-}" == -* ]]; then
-        echo "--version requires a release tag, e.g. v0.1.0-alpha.1" >&2
+        echo "--version requires a release tag, e.g. v0.1.0-alpha.2" >&2
         exit 2
       fi
       version="$2"
@@ -62,12 +65,23 @@ while [[ $# -gt 0 ]]; do
       asset_base_url="${2%/}"
       shift 2
       ;;
+    --cli-only)
+      install_claude=0
+      install_codex=0
+      install_codex_plugin=0
+      shift
+      ;;
     --no-claude)
       install_claude=0
       shift
       ;;
     --no-codex)
       install_codex=0
+      install_codex_plugin=0
+      shift
+      ;;
+    --with-codex-plugin)
+      install_codex_plugin=1
       shift
       ;;
     -h|--help)
@@ -109,9 +123,17 @@ download() {
   local url="$1"
   local out="$2"
   if command -v curl >/dev/null 2>&1; then
-    curl -fsSL --retry 3 --retry-delay 2 --connect-timeout 20 --max-time 120 "$url" -o "$out"
+    if ! curl -fsSL --retry 3 --retry-delay 2 --connect-timeout 20 --max-time 120 "$url" -o "$out"; then
+      echo "download failed: ${url}" >&2
+      echo "If you are behind a proxy, set http_proxy, https_proxy, or all_proxy and retry." >&2
+      exit 1
+    fi
   elif command -v wget >/dev/null 2>&1; then
-    wget -q --tries=3 --timeout=120 "$url" -O "$out"
+    if ! wget -q --tries=3 --timeout=120 "$url" -O "$out"; then
+      echo "download failed: ${url}" >&2
+      echo "If you are behind a proxy, set http_proxy, https_proxy, or all_proxy and retry." >&2
+      exit 1
+    fi
   else
     echo "missing required command: curl or wget" >&2
     exit 1
@@ -157,7 +179,9 @@ PY
 
 need_cmd tar
 need_cmd sha256sum
-need_cmd python3
+if [[ "${install_codex_plugin}" -eq 1 ]]; then
+  need_cmd python3
+fi
 
 case "${repo}" in
   */*) ;;
@@ -183,6 +207,17 @@ tmp_dir="$(mktemp -d)"
 trap 'rm -rf "${tmp_dir}"' EXIT
 
 echo "Downloading HarnessKit ${version} for ${target}..."
+echo "Install prefix: ${prefix}"
+if [[ "${install_claude}" -eq 1 ]]; then
+  echo "Claude skill: ${HOME}/.claude/skills/harnesskit/SKILL.md"
+fi
+if [[ "${install_codex}" -eq 1 ]]; then
+  codex_home="${CODEX_HOME:-${HOME}/.codex}"
+  echo "Codex skill: ${codex_home}/skills/harnesskit/SKILL.md"
+fi
+if [[ "${install_codex_plugin}" -eq 1 ]]; then
+  echo "Optional Codex plugin package: ${HOME}/plugins/harnesskit"
+fi
 download "${asset_base_url}/${archive}" "${tmp_dir}/${archive}"
 download "${asset_base_url}/SHA256SUMS" "${tmp_dir}/SHA256SUMS"
 
@@ -206,6 +241,13 @@ if [[ "${install_claude}" -eq 1 ]]; then
 fi
 
 if [[ "${install_codex}" -eq 1 ]]; then
+  codex_home="${CODEX_HOME:-${HOME}/.codex}"
+  mkdir -p "${codex_home}/skills/harnesskit"
+  cp "${package_dir}/agent-surfaces/skills/harnesskit/SKILL.md" "${codex_home}/skills/harnesskit/SKILL.md"
+  echo "Installed Codex skill: ${codex_home}/skills/harnesskit/SKILL.md"
+fi
+
+if [[ "${install_codex_plugin}" -eq 1 ]]; then
   mkdir -p "${HOME}/plugins/harnesskit/.codex-plugin"
   mkdir -p "${HOME}/plugins/harnesskit/skills/harnesskit"
   cp "${package_dir}/agent-surfaces/codex/.codex-plugin/plugin.json" "${HOME}/plugins/harnesskit/.codex-plugin/plugin.json"
@@ -222,9 +264,9 @@ if [[ ":${PATH}:" != *":${prefix}/bin:"* ]]; then
 fi
 echo "Verify:"
 echo "  ${prefix}/bin/harnesskit --version"
-if [[ "${install_codex}" -eq 1 ]]; then
+if [[ "${install_codex_plugin}" -eq 1 ]]; then
   echo
-  echo "For Codex, install the plugin after this script:"
+  echo "For optional Codex plugin mode, install the plugin after this script:"
   echo "  codex plugin list | grep harnesskit"
   echo "  codex plugin add harnesskit@personal"
 fi
