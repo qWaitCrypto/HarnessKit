@@ -18,7 +18,7 @@ Usage:
   install.sh [options]
 
 Options:
-  --version <tag>       Release tag to install, e.g. v0.1.0-alpha.2 (default: latest)
+  --version <tag>       Release tag to install, e.g. v0.1.0-alpha.3 (default: latest)
   --prefix <path>       Install prefix for the CLI (default: ~/.local)
   --repo <owner/name>   GitHub repository (default: qWaitCrypto/HarnessKit)
   --asset-base-url <url>
@@ -35,7 +35,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --version)
       if [[ $# -lt 2 || "${2:-}" == -* ]]; then
-        echo "--version requires a release tag, e.g. v0.1.0-alpha.2" >&2
+        echo "--version requires a release tag, e.g. v0.1.0-alpha.3" >&2
         exit 2
       fi
       version="$2"

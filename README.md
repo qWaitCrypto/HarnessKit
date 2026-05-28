@@ -74,11 +74,7 @@ Users install a skill. Their agent handles everything else — initializing docs
 curl -fsSL https://raw.githubusercontent.com/qWaitCrypto/HarnessKit/main/install.sh | bash
 ```
 
-For reproducible installs, pin a release tag:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/qWaitCrypto/HarnessKit/main/install.sh | bash -s -- --version v0.1.0-alpha.2
-```
+This installs the latest public release by default. Use `--version <tag>` only when you intentionally need a pinned release.
 
 If `~/.local/bin` is not on your `PATH`, add it:
 

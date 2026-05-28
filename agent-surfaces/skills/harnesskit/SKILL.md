@@ -19,7 +19,7 @@ HarnessKit is a lightweight repo-level project harness, not an agent runtime. It
 
 Key concepts:
 - **Repository files are memory.** AGENTS.md, CLAUDE.md, ARCHITECTURE.md, docs/ — these are the persistent knowledge layer, not chat history or external databases.
-- **SQLite is a derived index.** The `.harnesskit/` directory contains an incremental fact store (SQLite + content-addressed history). It can be deleted and rebuilt from docs at any time. Never treat it as primary data.
+- **SQLite is a derived index.** `.harnesskit/state` contains the incremental fact store and can be rebuilt from docs. `.harnesskit/history` stores local doc checkpoints; do not delete it as cache.
 - **CLI is the deterministic action boundary.** The `harnesskit` CLI handles indexing, querying, checking, and history — operations that require consistency guarantees. Normal doc edits are done by the agent directly.
 
 This architecture is permanent: skill defines workflow, CLI executes deterministic actions, agent reads and edits files. Do not build MCP servers, daemons, tool wrappers, or large command menus around HarnessKit.
