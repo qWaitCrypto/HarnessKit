@@ -380,15 +380,21 @@ fn usage() {
     eprintln!("harnesskit list-docs [target_dir] [--schema <path>] [--docs-root <path>]");
     eprintln!("harnesskit inspect <doc_path> [target_dir] [--schema <path>] [--docs-root <path>]");
     eprintln!("harnesskit refs <doc_path> [target_dir] [--schema <path>] [--docs-root <path>]");
-    eprintln!("harnesskit query <terms> [target_dir] [--schema <path>] [--docs-root <path>] [--json]");
-    eprintln!("harnesskit graph <doc_path> [target_dir] [--schema <path>] [--docs-root <path>] [--json]");
+    eprintln!(
+        "harnesskit query <terms> [target_dir] [--schema <path>] [--docs-root <path>] [--json]"
+    );
+    eprintln!(
+        "harnesskit graph <doc_path> [target_dir] [--schema <path>] [--docs-root <path>] [--json]"
+    );
     eprintln!("harnesskit context <terms-or-doc-path> [target_dir] [--schema <path>] [--docs-root <path>] [--json]");
     eprintln!("harnesskit check [target_dir] [--schema <path>] [--docs-root <path>] [--rules <list>] [--strict|--no-strict] [--json]");
     eprintln!("harnesskit history snapshot -m <message> [target_dir] [--schema <path>] [--docs-root <path>]");
     eprintln!("harnesskit history list [target_dir] [--schema <path>] [--docs-root <path>]");
     eprintln!("harnesskit history status [target_dir] [--schema <path>] [--docs-root <path>]");
     eprintln!("harnesskit history diff <snapshot-id|latest> [target_dir] [--schema <path>] [--docs-root <path>]");
-    eprintln!("harnesskit history diff <a> <b> [target_dir] [--schema <path>] [--docs-root <path>]");
+    eprintln!(
+        "harnesskit history diff <a> <b> [target_dir] [--schema <path>] [--docs-root <path>]"
+    );
     eprintln!("harnesskit history restore <snapshot-id|latest> [target_dir] [--apply] [--force] [--schema <path>] [--docs-root <path>]");
     eprintln!("harnesskit doctor [target_dir] [--json]");
     eprintln!("harnesskit update [--version <tag>] [--repo <owner/name>] [--asset-base-url <url>]");
@@ -398,7 +404,8 @@ fn usage() {
 fn run_init(args: &[String]) -> Result<()> {
     let target_dir = PathBuf::from(positional_or_default(args, 0, "."));
     let docs_root_override = option_value(args, "--docs-root");
-    let schema_arg = option_value(args, "--schema").unwrap_or_else(|| BUNDLED_SCHEMA_PATH.to_string());
+    let schema_arg =
+        option_value(args, "--schema").unwrap_or_else(|| BUNDLED_SCHEMA_PATH.to_string());
     let force = has_flag(args, "--force");
     let preview = has_flag(args, "--preview");
     let local = has_flag(args, "--local");
@@ -406,7 +413,11 @@ fn run_init(args: &[String]) -> Result<()> {
     if local && tracked {
         return Err("harnesskit init accepts only one of --local or --tracked".into());
     }
-    let mode = if tracked { InitMode::Tracked } else { InitMode::Local };
+    let mode = if tracked {
+        InitMode::Tracked
+    } else {
+        InitMode::Local
+    };
 
     let schema_path = resolve_schema_path(&target_dir, &schema_arg)?;
     let raw_schema_text = fs::read_to_string(&schema_path)?;
@@ -475,13 +486,25 @@ fn run_check(args: &[String]) -> Result<()> {
             rule_id ASC;",
     )?;
     let checks = filter_and_suppress_checks(&check_rows, &context.schema, &options);
-    let warning_count = checks.iter().filter(|check| !check.suppressed && check.severity == "warning").count();
-    let error_count = checks.iter().filter(|check| !check.suppressed && check.severity == "error").count();
-    let info_count = checks.iter().filter(|check| !check.suppressed && check.severity == "info").count();
+    let warning_count = checks
+        .iter()
+        .filter(|check| !check.suppressed && check.severity == "warning")
+        .count();
+    let error_count = checks
+        .iter()
+        .filter(|check| !check.suppressed && check.severity == "error")
+        .count();
+    let info_count = checks
+        .iter()
+        .filter(|check| !check.suppressed && check.severity == "info")
+        .count();
     let active_count = checks.iter().filter(|check| !check.suppressed).count();
 
     if options.json {
-        println!("{}", render_check_json(&target_dir, docs_count, relation_count, &checks));
+        println!(
+            "{}",
+            render_check_json(&target_dir, docs_count, relation_count, &checks)
+        );
         if error_count > 0 || (options.strict && warning_count > 0) {
             std::process::exit(1);
         }
@@ -515,7 +538,10 @@ fn run_check(args: &[String]) -> Result<()> {
             );
             continue;
         }
-        println!("[{}] {} {} - {}", check.severity, check.rule_id, check.subject_path, check.message);
+        println!(
+            "[{}] {} {} - {}",
+            check.severity, check.rule_id, check.subject_path, check.message
+        );
         if !check.evidence_json.is_empty() && check.evidence_json != "{}" {
             println!("  evidence: {}", check.evidence_json);
         }
@@ -561,7 +587,11 @@ fn run_update(args: &[String]) -> Result<()> {
     });
 
     let current_exe = env::current_exe()?;
-    let tmp_dir = env::temp_dir().join(format!("harnesskit-update-{}-{}", std::process::id(), now_unix()));
+    let tmp_dir = env::temp_dir().join(format!(
+        "harnesskit-update-{}-{}",
+        std::process::id(),
+        now_unix()
+    ));
     fs::create_dir_all(&tmp_dir)?;
     let result = update_from_release(
         &asset_base_url,
@@ -607,7 +637,10 @@ fn update_from_release(
         &format!("{}/{}", asset_base_url.trim_end_matches('/'), archive),
         &archive_path,
     )?;
-    download_to_file(&format!("{}/SHA256SUMS", asset_base_url.trim_end_matches('/')), &sums_path)?;
+    download_to_file(
+        &format!("{}/SHA256SUMS", asset_base_url.trim_end_matches('/')),
+        &sums_path,
+    )?;
     verify_sha256(tmp_dir, "SHA256SUMS")?;
     run_command(
         Command::new("tar")
@@ -749,20 +782,33 @@ fn make_executable(path: &Path) -> Result<()> {
 }
 
 fn sync_existing_installed_skills(package_dir: &Path) -> Result<()> {
-    let source_skill = package_dir.join("agent-surfaces").join("skills").join("harnesskit").join("SKILL.md");
+    let source_skill = package_dir
+        .join("agent-surfaces")
+        .join("skills")
+        .join("harnesskit")
+        .join("SKILL.md");
     if !source_skill.is_file() {
         return Ok(());
     }
 
     if let Some(home) = home_dir() {
-        let claude_skill = home.join(".claude").join("skills").join("harnesskit").join("SKILL.md");
+        let claude_skill = home
+            .join(".claude")
+            .join("skills")
+            .join("harnesskit")
+            .join("SKILL.md");
         if claude_skill.exists() {
             copy_skill(&source_skill, &claude_skill)?;
             println!("Updated Claude Code skill: {}", claude_skill.display());
         }
 
-        let codex_home = env::var_os("CODEX_HOME").map(PathBuf::from).unwrap_or_else(|| home.join(".codex"));
-        let codex_skill = codex_home.join("skills").join("harnesskit").join("SKILL.md");
+        let codex_home = env::var_os("CODEX_HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join(".codex"));
+        let codex_skill = codex_home
+            .join("skills")
+            .join("harnesskit")
+            .join("SKILL.md");
         if codex_skill.exists() {
             copy_skill(&source_skill, &codex_skill)?;
             println!("Updated Codex skill: {}", codex_skill.display());
@@ -920,7 +966,10 @@ fn run_graph(args: &[String]) -> Result<()> {
     let packet = context_packet_for_doc(&db, &context.target_dir, &doc_path)?;
 
     if options.json {
-        println!("{}", render_context_packet_json("graph", &doc_path, &packet));
+        println!(
+            "{}",
+            render_context_packet_json("graph", &doc_path, &packet)
+        );
     } else {
         print_context_packet("Graph", &doc_path, &packet);
     }
@@ -1026,7 +1075,10 @@ fn run_history_diff(args: &[String]) -> Result<()> {
     let context = load_engine_context(args, snapshot_args.len())?;
     let first = resolve_snapshot_arg(&context.target_dir, &positionals[0])?;
     let second = if snapshot_args.len() >= 2 {
-        Some(resolve_snapshot_arg(&context.target_dir, &snapshot_args[1])?)
+        Some(resolve_snapshot_arg(
+            &context.target_dir,
+            &snapshot_args[1],
+        )?)
     } else {
         None
     };
@@ -1067,7 +1119,10 @@ fn run_history_restore(args: &[String]) -> Result<()> {
     let dirty = compute_history_status(&context.target_dir, &context.schema)?;
 
     if apply && is_history_dirty(&dirty) && !force {
-        return Err("current docs differ from latest snapshot; run history snapshot first or use --force".into());
+        return Err(
+            "current docs differ from latest snapshot; run history snapshot first or use --force"
+                .into(),
+        );
     }
 
     let plan = restore_plan(&context.target_dir, &context.schema, &snapshot)?;
@@ -1107,7 +1162,10 @@ fn ensure_history_dirs(target_dir: &Path) -> Result<()> {
 
 fn managed_memory_paths(schema: &Schema) -> Vec<String> {
     let mut paths = Vec::new();
-    push_unique_string(&mut paths, format!("{}/", schema.managed_root.trim_end_matches('/')));
+    push_unique_string(
+        &mut paths,
+        format!("{}/", schema.managed_root.trim_end_matches('/')),
+    );
     if let Some(path) = &schema.entrypoints.agents {
         push_unique_string(&mut paths, path.clone());
     }
@@ -1151,7 +1209,11 @@ fn init_plan_paths(schema: &Schema) -> Vec<String> {
         } else {
             push_unique_string(
                 &mut paths,
-                format!("{}/{}", schema.managed_root.trim_end_matches('/'), spec.path.trim_start_matches('/')),
+                format!(
+                    "{}/{}",
+                    schema.managed_root.trim_end_matches('/'),
+                    spec.path.trim_start_matches('/')
+                ),
             );
         }
     }
@@ -1165,14 +1227,23 @@ fn init_plan_paths(schema: &Schema) -> Vec<String> {
             ),
         );
     }
-    push_unique_string(&mut paths, format!("{}/templates/", schema.managed_root.trim_end_matches('/')));
+    push_unique_string(
+        &mut paths,
+        format!("{}/templates/", schema.managed_root.trim_end_matches('/')),
+    );
     push_unique_string(&mut paths, ".harnesskit/schema.yaml".to_string());
     push_unique_string(&mut paths, ".harnesskit/state/".to_string());
     push_unique_string(&mut paths, ".harnesskit/history/".to_string());
     paths
 }
 
-fn print_init_preview(target_dir: &Path, schema: &Schema, schema_path: &Path, mode: InitMode, force: bool) {
+fn print_init_preview(
+    target_dir: &Path,
+    schema: &Schema,
+    schema_path: &Path,
+    mode: InitMode,
+    force: bool,
+) {
     println!("HarnessKit init preview");
     println!("Target: {}", target_dir.display());
     println!("Schema: {}", schema_path.display());
@@ -1183,7 +1254,11 @@ fn print_init_preview(target_dir: &Path, schema: &Schema, schema_path: &Path, mo
     println!("Would create or update:");
     for path in init_plan_paths(schema) {
         let abs = target_dir.join(&path);
-        let status = if abs.exists() { "skip existing" } else { "create" };
+        let status = if abs.exists() {
+            "skip existing"
+        } else {
+            "create"
+        };
         println!("- {} ({})", path, status);
     }
     println!();
@@ -1219,7 +1294,9 @@ fn print_init_summary(
     if let Some(path) = &schema.entrypoints.architecture {
         println!("- {}", path);
     }
-    println!(".harnesskit/state: derived fact/index layer; safe to rebuild with `harnesskit index`.");
+    println!(
+        ".harnesskit/state: derived fact/index layer; safe to rebuild with `harnesskit index`."
+    );
     println!(".harnesskit/history: local doc checkpoints; do not delete as cache.");
 
     match mode {
@@ -1243,7 +1320,10 @@ fn print_init_summary(
     println!("- Agent-first: ask your agent to read `AGENTS.md` or `CLAUDE.md` and follow the reading path.");
     println!("- Manual: `harnesskit index {}`", target_dir.display());
     println!("- Manual: `harnesskit doctor {}`", target_dir.display());
-    println!("- Manual: `harnesskit check {} --json`", target_dir.display());
+    println!(
+        "- Manual: `harnesskit check {} --json`",
+        target_dir.display()
+    );
 }
 
 fn ensure_host_git_exclude(target_dir: &Path, schema: &Schema) -> Result<Option<(usize, usize)>> {
@@ -1254,7 +1334,10 @@ fn ensure_host_git_exclude(target_dir: &Path, schema: &Schema) -> Result<Option<
     let exclude_path = info_dir.join("exclude");
     fs::create_dir_all(&info_dir)?;
     let existing = fs::read_to_string(&exclude_path).unwrap_or_default();
-    let mut lines = existing.lines().map(|line| line.to_string()).collect::<Vec<_>>();
+    let mut lines = existing
+        .lines()
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>();
     let mut added = 0usize;
     let mut already = 0usize;
     for path in managed_memory_paths(schema) {
@@ -1272,7 +1355,9 @@ fn ensure_host_git_exclude(target_dir: &Path, schema: &Schema) -> Result<Option<
 }
 
 fn find_host_git_dir(target_dir: &Path) -> Option<PathBuf> {
-    let mut current = target_dir.canonicalize().unwrap_or_else(|_| target_dir.to_path_buf());
+    let mut current = target_dir
+        .canonicalize()
+        .unwrap_or_else(|_| target_dir.to_path_buf());
     loop {
         let dot_git = current.join(".git");
         if dot_git.is_dir() {
@@ -1291,7 +1376,9 @@ fn host_git_info(target_dir: &Path, mode: HostGitMode) -> HostGitInfo {
         return HostGitInfo::default();
     }
     let head = run_git_capture(target_dir, &["rev-parse", "HEAD"]).ok();
-    let branch = run_git_capture(target_dir, &["branch", "--show-current"]).ok().filter(|value| !value.is_empty());
+    let branch = run_git_capture(target_dir, &["branch", "--show-current"])
+        .ok()
+        .filter(|value| !value.is_empty());
     let dirty = match mode {
         HostGitMode::Full => run_git_capture(target_dir, &["status", "--porcelain"])
             .map(|value| !value.trim().is_empty())
@@ -1311,15 +1398,27 @@ fn file_modified_parts(metadata: &fs::Metadata) -> Result<(u64, u64)> {
 }
 
 fn run_git_capture(target_dir: &Path, args: &[&str]) -> Result<String> {
-    let output = Command::new("git").args(args).current_dir(target_dir).output()?;
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(target_dir)
+        .output()?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(if stderr.is_empty() { "git command failed".to_string() } else { stderr }.into());
+        return Err(if stderr.is_empty() {
+            "git command failed".to_string()
+        } else {
+            stderr
+        }
+        .into());
     }
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-fn create_history_snapshot(target_dir: &Path, schema: &Schema, message: &str) -> Result<HistorySnapshot> {
+fn create_history_snapshot(
+    target_dir: &Path,
+    schema: &Schema,
+    message: &str,
+) -> Result<HistorySnapshot> {
     ensure_history_dirs(target_dir)?;
     let created_at_unix = now_unix();
     let id = unique_snapshot_id(created_at_unix);
@@ -1360,7 +1459,10 @@ fn schema_file_hash(target_dir: &Path) -> String {
         .unwrap_or_default()
 }
 
-fn collect_history_file_records(target_dir: &Path, schema: &Schema) -> Result<Vec<HistoryFileRecord>> {
+fn collect_history_file_records(
+    target_dir: &Path,
+    schema: &Schema,
+) -> Result<Vec<HistoryFileRecord>> {
     let mut paths = collect_managed_doc_paths(target_dir, schema)?;
     paths.push(".harnesskit/schema.yaml".to_string());
     paths.sort();
@@ -1421,13 +1523,34 @@ fn render_history_snapshot_json(snapshot: &HistorySnapshot) -> String {
     let mut out = String::new();
     out.push_str("{\n");
     out.push_str(&format!("  \"id\": {},\n", json_string(&snapshot.id)));
-    out.push_str(&format!("  \"created_at_unix\": {},\n", snapshot.created_at_unix));
-    out.push_str(&format!("  \"message\": {},\n", json_string(&snapshot.message)));
-    out.push_str(&format!("  \"docs_root\": {},\n", json_string(&snapshot.docs_root)));
-    out.push_str(&format!("  \"schema_hash\": {},\n", json_string(&snapshot.schema_hash)));
-    out.push_str(&format!("  \"host_git_head\": {},\n", json_opt_string(snapshot.host_git_head.as_deref())));
-    out.push_str(&format!("  \"host_git_branch\": {},\n", json_opt_string(snapshot.host_git_branch.as_deref())));
-    out.push_str(&format!("  \"host_git_dirty\": {},\n", json_bool(snapshot.host_git_dirty)));
+    out.push_str(&format!(
+        "  \"created_at_unix\": {},\n",
+        snapshot.created_at_unix
+    ));
+    out.push_str(&format!(
+        "  \"message\": {},\n",
+        json_string(&snapshot.message)
+    ));
+    out.push_str(&format!(
+        "  \"docs_root\": {},\n",
+        json_string(&snapshot.docs_root)
+    ));
+    out.push_str(&format!(
+        "  \"schema_hash\": {},\n",
+        json_string(&snapshot.schema_hash)
+    ));
+    out.push_str(&format!(
+        "  \"host_git_head\": {},\n",
+        json_opt_string(snapshot.host_git_head.as_deref())
+    ));
+    out.push_str(&format!(
+        "  \"host_git_branch\": {},\n",
+        json_opt_string(snapshot.host_git_branch.as_deref())
+    ));
+    out.push_str(&format!(
+        "  \"host_git_dirty\": {},\n",
+        json_bool(snapshot.host_git_dirty)
+    ));
     out.push_str("  \"files\": [\n");
     for (idx, file) in snapshot.files.iter().enumerate() {
         out.push_str("    {\n");
@@ -1463,7 +1586,11 @@ fn sanitize_fts_query(query: &str) -> String {
     }
 }
 
-fn query_candidates(db: &SqliteConnection, target_dir: &Path, query_terms: &str) -> Result<QueryResult> {
+fn query_candidates(
+    db: &SqliteConnection,
+    target_dir: &Path,
+    query_terms: &str,
+) -> Result<QueryResult> {
     let escaped_terms = sql_string_literal(query_terms);
     let sanitized_fts_terms = sanitize_fts_query(query_terms);
     let escaped_fts_terms = sql_string_literal(&sanitized_fts_terms);
@@ -1626,30 +1753,32 @@ fn query_rows_to_candidates(
             let snippet_heading = cell(row, 8).to_string();
             let snippet_location = cell(row, 9).to_string();
             let snippet = cell(row, 10).to_string();
-            let (snippet_heading, snippet_location, snippet) =
-                if snippet_heading.is_empty() || snippet_location.is_empty() || snippet.is_empty() {
-                    let computed =
-                        fallback.get_or_insert_with(|| snippet_for_doc(target_dir, &path, query_terms));
-                    (
-                        if snippet_heading.is_empty() {
-                            computed.0.clone()
-                        } else {
-                            snippet_heading
-                        },
-                        if snippet_location.is_empty() {
-                            computed.1.clone()
-                        } else {
-                            snippet_location
-                        },
-                        if snippet.is_empty() {
-                            computed.2.clone()
-                        } else {
-                            snippet
-                        },
-                    )
-                } else {
-                    (snippet_heading, snippet_location, snippet)
-                };
+            let (snippet_heading, snippet_location, snippet) = if snippet_heading.is_empty()
+                || snippet_location.is_empty()
+                || snippet.is_empty()
+            {
+                let computed =
+                    fallback.get_or_insert_with(|| snippet_for_doc(target_dir, &path, query_terms));
+                (
+                    if snippet_heading.is_empty() {
+                        computed.0.clone()
+                    } else {
+                        snippet_heading
+                    },
+                    if snippet_location.is_empty() {
+                        computed.1.clone()
+                    } else {
+                        snippet_location
+                    },
+                    if snippet.is_empty() {
+                        computed.2.clone()
+                    } else {
+                        snippet
+                    },
+                )
+            } else {
+                (snippet_heading, snippet_location, snippet)
+            };
             QueryCandidate {
                 path,
                 title: cell(row, 1).to_string(),
@@ -1667,7 +1796,11 @@ fn query_rows_to_candidates(
         .collect()
 }
 
-fn snippet_for_doc(target_dir: &Path, doc_path: &str, query_terms: &str) -> (String, String, String) {
+fn snippet_for_doc(
+    target_dir: &Path,
+    doc_path: &str,
+    query_terms: &str,
+) -> (String, String, String) {
     let text = fs::read_to_string(target_dir.join(doc_path)).unwrap_or_default();
     if text.is_empty() {
         return (String::new(), String::new(), String::new());
@@ -1697,7 +1830,11 @@ fn snippet_for_doc(target_dir: &Path, doc_path: &str, query_terms: &str) -> (Str
         }
         let lower = trimmed.to_ascii_lowercase();
         if terms.iter().any(|term| lower.contains(term)) {
-            return (current_heading, format!("line {}", line_number), truncate_snippet(trimmed, 220));
+            return (
+                current_heading,
+                format!("line {}", line_number),
+                truncate_snippet(trimmed, 220),
+            );
         }
     }
     let location = if fallback_line > 0 {
@@ -1724,11 +1861,18 @@ fn truncate_snippet(value: &str, max_chars: usize) -> String {
 fn doc_exists(db: &SqliteConnection, doc_path: &str) -> Result<bool> {
     Ok(scalar_count(
         db,
-        &format!("SELECT COUNT(*) FROM docs WHERE path = {};", sql_string_literal(doc_path)),
+        &format!(
+            "SELECT COUNT(*) FROM docs WHERE path = {};",
+            sql_string_literal(doc_path)
+        ),
     )? > 0)
 }
 
-fn context_packet_for_doc(db: &SqliteConnection, target_dir: &Path, doc_path: &str) -> Result<ContextPacket> {
+fn context_packet_for_doc(
+    db: &SqliteConnection,
+    target_dir: &Path,
+    doc_path: &str,
+) -> Result<ContextPacket> {
     let doc = db.query(&format!(
         "SELECT path, title, role, COALESCE(status, ''), summary, incoming_links
          FROM docs WHERE path = {};",
@@ -1756,7 +1900,13 @@ fn context_packet_for_doc(db: &SqliteConnection, target_dir: &Path, doc_path: &s
     let incoming = relation_rows(db, "dst_path", doc_path)?;
     let collection_siblings = collection_siblings(db, doc_path)?;
     let same_scope_docs = same_scope_docs(db, doc_path)?;
-    let recommended_reading_order = recommended_reading_order(&anchor, &incoming, &outgoing, &collection_siblings, &same_scope_docs);
+    let recommended_reading_order = recommended_reading_order(
+        &anchor,
+        &incoming,
+        &outgoing,
+        &collection_siblings,
+        &same_scope_docs,
+    );
 
     Ok(ContextPacket {
         anchor,
@@ -1805,7 +1955,11 @@ fn collection_siblings(db: &SqliteConnection, doc_path: &str) -> Result<Vec<Stri
          LIMIT 12;",
         sql_string_literal(doc_path)
     ))?;
-    Ok(rows.rows.iter().map(|row| cell(row, 0).to_string()).collect())
+    Ok(rows
+        .rows
+        .iter()
+        .map(|row| cell(row, 0).to_string())
+        .collect())
 }
 
 fn same_scope_docs(db: &SqliteConnection, doc_path: &str) -> Result<Vec<String>> {
@@ -1819,7 +1973,11 @@ fn same_scope_docs(db: &SqliteConnection, doc_path: &str) -> Result<Vec<String>>
          LIMIT 12;",
         sql_string_literal(doc_path)
     ))?;
-    Ok(rows.rows.iter().map(|row| cell(row, 0).to_string()).collect())
+    Ok(rows
+        .rows
+        .iter()
+        .map(|row| cell(row, 0).to_string())
+        .collect())
 }
 
 fn recommended_reading_order(
@@ -1832,10 +1990,16 @@ fn recommended_reading_order(
     let mut seen = BTreeSet::new();
     let mut order = Vec::new();
     push_unique_path(&mut order, &mut seen, &anchor.path);
-    for relation in incoming.iter().filter(|relation| relation.relation_type == "doc_indexes_doc") {
+    for relation in incoming
+        .iter()
+        .filter(|relation| relation.relation_type == "doc_indexes_doc")
+    {
         push_unique_path(&mut order, &mut seen, &relation.src_path);
     }
-    for relation in outgoing.iter().filter(|relation| relation.dst_path.ends_with(".md")) {
+    for relation in outgoing
+        .iter()
+        .filter(|relation| relation.dst_path.ends_with(".md"))
+    {
         push_unique_path(&mut order, &mut seen, &relation.dst_path);
     }
     for path in same_scope_docs {
@@ -1870,10 +2034,22 @@ fn positional_args(args: &[String]) -> Vec<String> {
             continue;
         }
         match arg.as_str() {
-            "--schema" | "--docs-root" | "--rules" | "--message" | "-m" | "--version" | "--repo" | "--asset-base-url" => {
+            "--schema" | "--docs-root" | "--rules" | "--message" | "-m" | "--version"
+            | "--repo" | "--asset-base-url" => {
                 skip_next = true;
             }
-            "--force" | "--json" | "--strict" | "--no-strict" | "--apply" | "--cli-only" | "--no-claude" | "--no-codex" | "--with-codex-plugin" | "--local" | "--tracked" | "--preview" => {}
+            "--force"
+            | "--json"
+            | "--strict"
+            | "--no-strict"
+            | "--apply"
+            | "--cli-only"
+            | "--no-claude"
+            | "--no-codex"
+            | "--with-codex-plugin"
+            | "--local"
+            | "--tracked"
+            | "--preview" => {}
             _ if arg.starts_with("--") => {}
             _ if arg.starts_with('-') => {}
             _ => values.push(arg.clone()),
@@ -1887,7 +2063,9 @@ fn has_flag(args: &[String], flag: &str) -> bool {
 }
 
 fn command_options(args: &[String], schema: Option<&Schema>) -> CommandOptions {
-    let schema_strict = schema.and_then(|schema| schema.rules.strict_checks).unwrap_or(false);
+    let schema_strict = schema
+        .and_then(|schema| schema.rules.strict_checks)
+        .unwrap_or(false);
     CommandOptions {
         json: has_flag(args, "--json"),
         strict: (has_flag(args, "--strict") || schema_strict) && !has_flag(args, "--no-strict"),
@@ -1949,7 +2127,11 @@ fn ensure_writable_dir(path: &Path, purpose: &str) -> Result<()> {
     }
 }
 
-fn ensure_writable_fact_store_dir(target_dir: &Path, state_dir: &Path, purpose: &str) -> Result<()> {
+fn ensure_writable_fact_store_dir(
+    target_dir: &Path,
+    state_dir: &Path,
+    purpose: &str,
+) -> Result<()> {
     ensure_writable_dir(state_dir, purpose).map_err(|err| {
         format!(
             "{}\n\n{}",
@@ -1960,7 +2142,11 @@ fn ensure_writable_fact_store_dir(target_dir: &Path, state_dir: &Path, purpose: 
     })
 }
 
-fn fact_store_path_hint(target_dir: &Path, state_dir: Option<&Path>, facts_path: Option<&Path>) -> String {
+fn fact_store_path_hint(
+    target_dir: &Path,
+    state_dir: Option<&Path>,
+    facts_path: Option<&Path>,
+) -> String {
     let diagnostics = path_diagnostics(target_dir, state_dir, facts_path);
     let mut out = String::new();
     out.push_str("HarnessKit path diagnostics:\n");
@@ -1977,11 +2163,17 @@ fn fact_store_path_hint(target_dir: &Path, state_dir: Option<&Path>, facts_path:
     out
 }
 
-fn path_diagnostics(target_dir: &Path, state_dir: Option<&Path>, facts_path: Option<&Path>) -> PathDiagnostics {
+fn path_diagnostics(
+    target_dir: &Path,
+    state_dir: Option<&Path>,
+    facts_path: Option<&Path>,
+) -> PathDiagnostics {
     let state = state_dir
         .map(Path::to_path_buf)
         .unwrap_or_else(|| target_dir.join(".harnesskit").join("state"));
-    let facts = facts_path.map(Path::to_path_buf).unwrap_or_else(|| state.join("facts.sqlite"));
+    let facts = facts_path
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| state.join("facts.sqlite"));
     PathDiagnostics {
         target_dir: absolute_display_path(target_dir),
         current_dir: env::current_dir()
@@ -2012,14 +2204,21 @@ fn build_doctor_report(target_dir: &Path) -> DoctorReport {
     let schema_path = target_dir.join(".harnesskit").join("schema.yaml");
     let (state_writable, state_error) = state_writable_check(target_dir, &state_dir);
     let home = env::var("HOME").unwrap_or_default();
-    let claude_skill = PathBuf::from(&home).join(".claude").join("skills").join("harnesskit").join("SKILL.md");
+    let claude_skill = PathBuf::from(&home)
+        .join(".claude")
+        .join("skills")
+        .join("harnesskit")
+        .join("SKILL.md");
     let codex_home = env::var("CODEX_HOME").unwrap_or_else(|_| {
         PathBuf::from(&home)
             .join(".codex")
             .to_string_lossy()
             .to_string()
     });
-    let codex_skill = PathBuf::from(codex_home).join("skills").join("harnesskit").join("SKILL.md");
+    let codex_skill = PathBuf::from(codex_home)
+        .join("skills")
+        .join("harnesskit")
+        .join("SKILL.md");
     let current_exe = env::current_exe().ok();
     let path_contains_cli_dir = current_exe
         .as_ref()
@@ -2100,7 +2299,10 @@ fn git_repo_check(target_dir: &Path) -> (Option<bool>, Option<String>) {
             let value = String::from_utf8_lossy(&output.stdout).trim() == "true";
             (Some(value), None)
         }
-        Ok(output) => (Some(false), Some(render_command_output_error("git", &output))),
+        Ok(output) => (
+            Some(false),
+            Some(render_command_output_error("git", &output)),
+        ),
         Err(err) => (None, Some(err.to_string())),
     }
 }
@@ -2116,16 +2318,32 @@ fn state_writable_check(target_dir: &Path, state_dir: &Path) -> (bool, Option<St
     } else {
         match nearest_existing_parent(target_dir) {
             Some(path) => path,
-            None => return (false, Some("target dir and parents do not exist".to_string())),
+            None => {
+                return (
+                    false,
+                    Some("target dir and parents do not exist".to_string()),
+                )
+            }
         }
     };
-    let probe = probe_dir.join(format!(".harnesskit-doctor-write-test-{}-{}", std::process::id(), now_unix()));
+    let probe = probe_dir.join(format!(
+        ".harnesskit-doctor-write-test-{}-{}",
+        std::process::id(),
+        now_unix()
+    ));
     match fs::write(&probe, b"ok") {
         Ok(()) => {
             let _ = fs::remove_file(&probe);
             (true, None)
         }
-        Err(err) => (false, Some(format!("cannot write probe at {}: {}", probe.display(), err))),
+        Err(err) => (
+            false,
+            Some(format!(
+                "cannot write probe at {}: {}",
+                probe.display(),
+                err
+            )),
+        ),
     }
 }
 
@@ -2153,31 +2371,57 @@ fn print_doctor_report(report: &DoctorReport) {
     println!("Target dir: {}", report.target_dir);
     println!("Current dir: {}", report.current_dir);
     println!("PWD: {}", report.pwd.as_deref().unwrap_or("(not set)"));
-    println!("PWD differs from current_dir: {}", yes_no_bool(report.pwd_differs_from_current_dir));
+    println!(
+        "PWD differs from current_dir: {}",
+        yes_no_bool(report.pwd_differs_from_current_dir)
+    );
     println!("sqlite3: {}", command_check_label(&report.sqlite3));
     println!("git: {}", command_check_label(&report.git));
     println!(
         "Inside git repo: {}",
-        report
-            .inside_git_repo
-            .map(yes_no_bool)
-            .unwrap_or("unknown")
+        report.inside_git_repo.map(yes_no_bool).unwrap_or("unknown")
     );
     if let Some(error) = &report.git_repo_error {
         println!("Git repo check: {}", error);
     }
-    println!(".harnesskit/state exists: {}", yes_no_bool(report.state_exists));
-    println!(".harnesskit/state writable or creatable: {}", yes_no_bool(report.state_writable));
+    println!(
+        ".harnesskit/state exists: {}",
+        yes_no_bool(report.state_exists)
+    );
+    println!(
+        ".harnesskit/state writable or creatable: {}",
+        yes_no_bool(report.state_writable)
+    );
     if let Some(error) = &report.state_error {
         println!("State write check: {}", error);
         println!("Hint: if diagnostics do not point at the intended writable project root, pass the project root explicitly, for example `harnesskit doctor /path/to/repo --json` or `harnesskit index /path/to/repo`.");
     }
-    println!(".harnesskit/history exists: {}", yes_no_bool(report.history_exists));
-    println!(".harnesskit/schema.yaml exists: {}", yes_no_bool(report.schema_exists));
-    println!("Claude skill: {} ({})", installed_label(report.claude_skill_installed), report.claude_skill_path);
-    println!("Codex skill: {} ({})", installed_label(report.codex_skill_installed), report.codex_skill_path);
-    println!("Current executable: {}", report.current_exe.as_deref().unwrap_or("(unknown)"));
-    println!("Current executable directory on PATH: {}", yes_no_bool(report.path_contains_cli_dir));
+    println!(
+        ".harnesskit/history exists: {}",
+        yes_no_bool(report.history_exists)
+    );
+    println!(
+        ".harnesskit/schema.yaml exists: {}",
+        yes_no_bool(report.schema_exists)
+    );
+    println!(
+        "Claude skill: {} ({})",
+        installed_label(report.claude_skill_installed),
+        report.claude_skill_path
+    );
+    println!(
+        "Codex skill: {} ({})",
+        installed_label(report.codex_skill_installed),
+        report.codex_skill_path
+    );
+    println!(
+        "Current executable: {}",
+        report.current_exe.as_deref().unwrap_or("(unknown)")
+    );
+    println!(
+        "Current executable directory on PATH: {}",
+        yes_no_bool(report.path_contains_cli_dir)
+    );
     if !report.sqlite3.present {
         println!("Hint: HarnessKit alpha requires sqlite3 CLI on PATH for fact-store-backed commands such as index, query, check, context, graph, inspect, refs, rank, and list-docs.");
     }
@@ -2192,50 +2436,110 @@ fn command_check_label(check: &CommandCheck) -> String {
             _ => "ok".to_string(),
         }
     } else {
-        format!("missing ({})", check.error.as_deref().unwrap_or("not found"))
+        format!(
+            "missing ({})",
+            check.error.as_deref().unwrap_or("not found")
+        )
     }
 }
 
 fn installed_label(installed: bool) -> &'static str {
-    if installed { "installed" } else { "missing" }
+    if installed {
+        "installed"
+    } else {
+        "missing"
+    }
 }
 
 fn render_doctor_json(report: &DoctorReport) -> String {
     let mut out = String::new();
     out.push_str("{\n");
-    out.push_str(&format!("  \"cli_version\": {},\n", json_string(&report.cli_version)));
+    out.push_str(&format!(
+        "  \"cli_version\": {},\n",
+        json_string(&report.cli_version)
+    ));
     out.push_str(&format!("  \"os\": {},\n", json_string(&report.os)));
     out.push_str(&format!("  \"arch\": {},\n", json_string(&report.arch)));
-    out.push_str(&format!("  \"target_dir\": {},\n", json_string(&report.target_dir)));
-    out.push_str(&format!("  \"current_dir\": {},\n", json_string(&report.current_dir)));
-    out.push_str(&format!("  \"pwd\": {},\n", json_opt_string(report.pwd.as_deref())));
+    out.push_str(&format!(
+        "  \"target_dir\": {},\n",
+        json_string(&report.target_dir)
+    ));
+    out.push_str(&format!(
+        "  \"current_dir\": {},\n",
+        json_string(&report.current_dir)
+    ));
+    out.push_str(&format!(
+        "  \"pwd\": {},\n",
+        json_opt_string(report.pwd.as_deref())
+    ));
     out.push_str(&format!(
         "  \"pwd_differs_from_current_dir\": {},\n",
         json_bool(report.pwd_differs_from_current_dir)
     ));
-    out.push_str(&format!("  \"sqlite3\": {},\n", render_command_check_json(&report.sqlite3)));
-    out.push_str(&format!("  \"git\": {},\n", render_command_check_json(&report.git)));
+    out.push_str(&format!(
+        "  \"sqlite3\": {},\n",
+        render_command_check_json(&report.sqlite3)
+    ));
+    out.push_str(&format!(
+        "  \"git\": {},\n",
+        render_command_check_json(&report.git)
+    ));
     out.push_str(&format!(
         "  \"inside_git_repo\": {},\n",
-        report
-            .inside_git_repo
-            .map(json_bool)
-            .unwrap_or("null")
+        report.inside_git_repo.map(json_bool).unwrap_or("null")
     ));
-    out.push_str(&format!("  \"git_repo_error\": {},\n", json_opt_string(report.git_repo_error.as_deref())));
-    out.push_str(&format!("  \"state_exists\": {},\n", json_bool(report.state_exists)));
-    out.push_str(&format!("  \"state_writable\": {},\n", json_bool(report.state_writable)));
-    out.push_str(&format!("  \"state_error\": {},\n", json_opt_string(report.state_error.as_deref())));
-    out.push_str(&format!("  \"history_exists\": {},\n", json_bool(report.history_exists)));
-    out.push_str(&format!("  \"schema_exists\": {},\n", json_bool(report.schema_exists)));
-    out.push_str(&format!("  \"claude_skill_path\": {},\n", json_string(&report.claude_skill_path)));
-    out.push_str(&format!("  \"claude_skill_installed\": {},\n", json_bool(report.claude_skill_installed)));
-    out.push_str(&format!("  \"codex_skill_path\": {},\n", json_string(&report.codex_skill_path)));
-    out.push_str(&format!("  \"codex_skill_installed\": {},\n", json_bool(report.codex_skill_installed)));
-    out.push_str(&format!("  \"current_exe\": {},\n", json_opt_string(report.current_exe.as_deref())));
-    out.push_str(&format!("  \"path_contains_cli_dir\": {},\n", json_bool(report.path_contains_cli_dir)));
+    out.push_str(&format!(
+        "  \"git_repo_error\": {},\n",
+        json_opt_string(report.git_repo_error.as_deref())
+    ));
+    out.push_str(&format!(
+        "  \"state_exists\": {},\n",
+        json_bool(report.state_exists)
+    ));
+    out.push_str(&format!(
+        "  \"state_writable\": {},\n",
+        json_bool(report.state_writable)
+    ));
+    out.push_str(&format!(
+        "  \"state_error\": {},\n",
+        json_opt_string(report.state_error.as_deref())
+    ));
+    out.push_str(&format!(
+        "  \"history_exists\": {},\n",
+        json_bool(report.history_exists)
+    ));
+    out.push_str(&format!(
+        "  \"schema_exists\": {},\n",
+        json_bool(report.schema_exists)
+    ));
+    out.push_str(&format!(
+        "  \"claude_skill_path\": {},\n",
+        json_string(&report.claude_skill_path)
+    ));
+    out.push_str(&format!(
+        "  \"claude_skill_installed\": {},\n",
+        json_bool(report.claude_skill_installed)
+    ));
+    out.push_str(&format!(
+        "  \"codex_skill_path\": {},\n",
+        json_string(&report.codex_skill_path)
+    ));
+    out.push_str(&format!(
+        "  \"codex_skill_installed\": {},\n",
+        json_bool(report.codex_skill_installed)
+    ));
+    out.push_str(&format!(
+        "  \"current_exe\": {},\n",
+        json_opt_string(report.current_exe.as_deref())
+    ));
+    out.push_str(&format!(
+        "  \"path_contains_cli_dir\": {},\n",
+        json_bool(report.path_contains_cli_dir)
+    ));
     out.push_str("  \"notes\": [\n");
-    out.push_str("    \"HarnessKit alpha requires sqlite3 CLI on PATH for fact-store-backed commands.\",\n");
+    out.push_str(
+        "    \"HarnessKit alpha requires sqlite3 CLI on PATH for fact-store-backed commands.\",\n",
+    );
     out.push_str("    \".harnesskit/state is derived and rebuildable; .harnesskit/history stores local doc checkpoints.\",\n");
     out.push_str("    \"If diagnostics do not point at the intended writable project root, pass the project root explicitly.\"\n");
     out.push_str("  ]\n");
@@ -2255,7 +2559,8 @@ fn render_command_check_json(check: &CommandCheck) -> String {
 fn load_engine_context(args: &[String], positional_index: usize) -> Result<EngineContext> {
     let target_dir = PathBuf::from(positional_or_default(args, positional_index, "."));
     let docs_root_override = option_value(args, "--docs-root");
-    let schema_arg = option_value(args, "--schema").unwrap_or_else(|| default_context_schema_arg(&target_dir));
+    let schema_arg =
+        option_value(args, "--schema").unwrap_or_else(|| default_context_schema_arg(&target_dir));
 
     let schema_path = resolve_schema_path(&target_dir, &schema_arg)?;
     let raw_schema_text = fs::read_to_string(&schema_path)?;
@@ -2338,13 +2643,23 @@ fn parse_schema(text: &str) -> Result<Schema> {
                         "doc_collections" => Section::DocCollections,
                         "rules" => Section::Rules,
                         "suppressions" => Section::Suppressions,
-                        other => return Err(format!("invalid schema: unknown section `{}`", other).into()),
+                        other => {
+                            return Err(
+                                format!("invalid schema: unknown section `{}`", other).into()
+                            )
+                        }
                     };
                 } else if let Some((key, value)) = parse_key_value(trimmed) {
                     match key.as_str() {
                         "schema_version" => schema.schema_version = parse_u32(&value)?,
                         "managed_root" => schema.managed_root = value,
-                        other => return Err(format!("invalid schema: unknown top-level key `{}`", other).into()),
+                        other => {
+                            return Err(format!(
+                                "invalid schema: unknown top-level key `{}`",
+                                other
+                            )
+                            .into())
+                        }
                     }
                 } else {
                     return Err(format!("invalid schema: malformed line `{}`", trimmed).into());
@@ -2359,10 +2674,18 @@ fn parse_schema(text: &str) -> Result<Schema> {
                             "architecture" => schema.entrypoints.architecture = Some(value),
                             "manifest" => schema.entrypoints.manifest = Some(value),
                             "project_map" => schema.entrypoints.project_map = Some(value),
-                            other => return Err(format!("invalid schema: unknown entrypoint `{}`", other).into()),
+                            other => {
+                                return Err(format!(
+                                    "invalid schema: unknown entrypoint `{}`",
+                                    other
+                                )
+                                .into())
+                            }
                         }
                     } else {
-                        return Err(format!("invalid schema: malformed entrypoint `{}`", trimmed).into());
+                        return Err(
+                            format!("invalid schema: malformed entrypoint `{}`", trimmed).into(),
+                        );
                     }
                 }
                 Section::CoreFiles => {
@@ -2390,17 +2713,35 @@ fn parse_schema(text: &str) -> Result<Schema> {
                     if let Some((key, value)) = parse_key_value(trimmed) {
                         let parsed = parse_bool(&value)?;
                         match key.as_str() {
-                            "path_defines_doc_type" => schema.rules.path_defines_doc_type = Some(parsed),
+                            "path_defines_doc_type" => {
+                                schema.rules.path_defines_doc_type = Some(parsed)
+                            }
                             "h1_is_title" => schema.rules.h1_is_title = Some(parsed),
-                            "first_paragraph_is_summary" => schema.rules.first_paragraph_is_summary = Some(parsed),
+                            "first_paragraph_is_summary" => {
+                                schema.rules.first_paragraph_is_summary = Some(parsed)
+                            }
                             "index_required" => schema.rules.index_required = Some(parsed),
-                            "prefer_directory_defaults" => schema.rules.prefer_directory_defaults = Some(parsed),
-                            "minimal_frontmatter_only" => schema.rules.minimal_frontmatter_only = Some(parsed),
-                            "stale_explicit_anchor" => schema.rules.stale_explicit_anchor = Some(parsed),
-                            "duplicate_detection" => schema.rules.duplicate_detection = Some(parsed),
-                            "contamination_checks" => schema.rules.contamination_checks = Some(parsed),
+                            "prefer_directory_defaults" => {
+                                schema.rules.prefer_directory_defaults = Some(parsed)
+                            }
+                            "minimal_frontmatter_only" => {
+                                schema.rules.minimal_frontmatter_only = Some(parsed)
+                            }
+                            "stale_explicit_anchor" => {
+                                schema.rules.stale_explicit_anchor = Some(parsed)
+                            }
+                            "duplicate_detection" => {
+                                schema.rules.duplicate_detection = Some(parsed)
+                            }
+                            "contamination_checks" => {
+                                schema.rules.contamination_checks = Some(parsed)
+                            }
                             "strict_checks" => schema.rules.strict_checks = Some(parsed),
-                            other => return Err(format!("invalid schema: unknown rule `{}`", other).into()),
+                            other => {
+                                return Err(
+                                    format!("invalid schema: unknown rule `{}`", other).into()
+                                )
+                            }
                         }
                     } else {
                         return Err(format!("invalid schema: malformed rule `{}`", trimmed).into());
@@ -2411,9 +2752,9 @@ fn parse_schema(text: &str) -> Result<Schema> {
             4 => match section {
                 Section::CoreFiles => {
                     if let Some((key, value)) = parse_key_value(trimmed) {
-                        let spec = current_core
-                            .as_mut()
-                            .ok_or_else(|| "invalid schema: core file property without item".to_string())?;
+                        let spec = current_core.as_mut().ok_or_else(|| {
+                            "invalid schema: core file property without item".to_string()
+                        })?;
                         match key.as_str() {
                             "path" => spec.path = value,
                             "authority" => spec.authority = Some(value),
@@ -2422,59 +2763,87 @@ fn parse_schema(text: &str) -> Result<Schema> {
                             "template" => spec.template = value,
                             "root_path" => spec.root_path = Some(value),
                             other => {
-                                return Err(format!("invalid schema: unknown core file property `{}`", other).into())
+                                return Err(format!(
+                                    "invalid schema: unknown core file property `{}`",
+                                    other
+                                )
+                                .into())
                             }
                         }
                     } else {
-                        return Err(format!("invalid schema: malformed core file property `{}`", trimmed).into());
+                        return Err(format!(
+                            "invalid schema: malformed core file property `{}`",
+                            trimmed
+                        )
+                        .into());
                     }
                 }
                 Section::DocCollections => {
                     if let Some((key, value)) = parse_key_value(trimmed) {
-                        let spec = current_collection
-                            .as_mut()
-                            .ok_or_else(|| "invalid schema: collection property without item".to_string())?;
+                        let spec = current_collection.as_mut().ok_or_else(|| {
+                            "invalid schema: collection property without item".to_string()
+                        })?;
                         match key.as_str() {
                             "path" => spec.path = value,
                             "authority" => spec.authority = Some(value),
                             "status" => spec.status = Some(value),
                             "anchor_candidate" => spec.anchor_candidate = parse_bool(&value)?,
                             "template" => spec.template = value,
-                            "allowed_frontmatter" => spec.allowed_frontmatter = parse_inline_list(&value),
+                            "allowed_frontmatter" => {
+                                spec.allowed_frontmatter = parse_inline_list(&value)
+                            }
                             other => {
-                                return Err(
-                                    format!("invalid schema: unknown doc collection property `{}`", other).into(),
+                                return Err(format!(
+                                    "invalid schema: unknown doc collection property `{}`",
+                                    other
                                 )
+                                .into())
                             }
                         }
                     } else {
-                        return Err(
-                            format!("invalid schema: malformed doc collection property `{}`", trimmed).into(),
-                        );
+                        return Err(format!(
+                            "invalid schema: malformed doc collection property `{}`",
+                            trimmed
+                        )
+                        .into());
                     }
                 }
                 Section::Suppressions => {
                     if let Some((key, value)) = parse_key_value(trimmed) {
-                        let spec = current_suppression
-                            .as_mut()
-                            .ok_or_else(|| "invalid schema: suppression property without item".to_string())?;
+                        let spec = current_suppression.as_mut().ok_or_else(|| {
+                            "invalid schema: suppression property without item".to_string()
+                        })?;
                         match key.as_str() {
                             "rule_id" => spec.rule_id = value,
                             "path" => spec.path = value,
                             "reason" => spec.reason = value,
                             other => {
-                                return Err(format!("invalid schema: unknown suppression property `{}`", other).into())
+                                return Err(format!(
+                                    "invalid schema: unknown suppression property `{}`",
+                                    other
+                                )
+                                .into())
                             }
                         }
                     } else {
-                        return Err(format!("invalid schema: malformed suppression property `{}`", trimmed).into());
+                        return Err(format!(
+                            "invalid schema: malformed suppression property `{}`",
+                            trimmed
+                        )
+                        .into());
                     }
                 }
                 Section::Rules | Section::EntryPoints | Section::None => {
-                    return Err(format!("invalid schema: unexpected indentation for `{}`", trimmed).into())
+                    return Err(
+                        format!("invalid schema: unexpected indentation for `{}`", trimmed).into(),
+                    )
                 }
             },
-            _ => return Err(format!("invalid schema: unsupported indentation for `{}`", trimmed).into()),
+            _ => {
+                return Err(
+                    format!("invalid schema: unsupported indentation for `{}`", trimmed).into(),
+                )
+            }
         }
     }
 
@@ -2612,10 +2981,17 @@ fn validate_schema(schema: &Schema) -> Result<()> {
             return Err(format!("invalid schema: duplicate core file `{}`", spec.name).into());
         }
         if spec.template.trim().is_empty() {
-            return Err(format!("invalid schema: core file `{}` missing template", spec.name).into());
+            return Err(
+                format!("invalid schema: core file `{}` missing template", spec.name).into(),
+            );
         }
-        if spec.path.trim().is_empty() && spec.root_path.as_deref().unwrap_or("").trim().is_empty() {
-            return Err(format!("invalid schema: core file `{}` missing path/root_path", spec.name).into());
+        if spec.path.trim().is_empty() && spec.root_path.as_deref().unwrap_or("").trim().is_empty()
+        {
+            return Err(format!(
+                "invalid schema: core file `{}` missing path/root_path",
+                spec.name
+            )
+            .into());
         }
     }
 
@@ -2629,13 +3005,25 @@ fn validate_schema(schema: &Schema) -> Result<()> {
             return Err(format!("invalid schema: duplicate doc collection `{}`", spec.name).into());
         }
         if spec.path.trim().is_empty() {
-            return Err(format!("invalid schema: doc collection `{}` missing path", spec.name).into());
+            return Err(format!(
+                "invalid schema: doc collection `{}` missing path",
+                spec.name
+            )
+            .into());
         }
         if !collection_paths.insert(spec.path.clone()) {
-            return Err(format!("invalid schema: duplicate doc collection path `{}`", spec.path).into());
+            return Err(format!(
+                "invalid schema: duplicate doc collection path `{}`",
+                spec.path
+            )
+            .into());
         }
         if spec.template.trim().is_empty() {
-            return Err(format!("invalid schema: doc collection `{}` missing template", spec.name).into());
+            return Err(format!(
+                "invalid schema: doc collection `{}` missing template",
+                spec.name
+            )
+            .into());
         }
     }
 
@@ -2648,13 +3036,19 @@ fn validate_schema(schema: &Schema) -> Result<()> {
             return Err(format!("invalid schema: duplicate suppression `{}`", spec.name).into());
         }
         if spec.rule_id.trim().is_empty() {
-            return Err(format!("invalid schema: suppression `{}` missing rule_id", spec.name).into());
+            return Err(format!(
+                "invalid schema: suppression `{}` missing rule_id",
+                spec.name
+            )
+            .into());
         }
         if spec.path.trim().is_empty() {
             return Err(format!("invalid schema: suppression `{}` missing path", spec.name).into());
         }
         if spec.reason.trim().is_empty() {
-            return Err(format!("invalid schema: suppression `{}` missing reason", spec.name).into());
+            return Err(
+                format!("invalid schema: suppression `{}` missing reason", spec.name).into(),
+            );
         }
     }
 
@@ -2669,11 +3063,36 @@ fn render_schema_copy(schema: &Schema) -> String {
         "entrypoints:".to_string(),
     ];
 
-    push_optional_line(&mut lines, 2, "agents", schema.entrypoints.agents.as_deref());
-    push_optional_line(&mut lines, 2, "claude", schema.entrypoints.claude.as_deref());
-    push_optional_line(&mut lines, 2, "architecture", schema.entrypoints.architecture.as_deref());
-    push_optional_line(&mut lines, 2, "manifest", schema.entrypoints.manifest.as_deref());
-    push_optional_line(&mut lines, 2, "project_map", schema.entrypoints.project_map.as_deref());
+    push_optional_line(
+        &mut lines,
+        2,
+        "agents",
+        schema.entrypoints.agents.as_deref(),
+    );
+    push_optional_line(
+        &mut lines,
+        2,
+        "claude",
+        schema.entrypoints.claude.as_deref(),
+    );
+    push_optional_line(
+        &mut lines,
+        2,
+        "architecture",
+        schema.entrypoints.architecture.as_deref(),
+    );
+    push_optional_line(
+        &mut lines,
+        2,
+        "manifest",
+        schema.entrypoints.manifest.as_deref(),
+    );
+    push_optional_line(
+        &mut lines,
+        2,
+        "project_map",
+        schema.entrypoints.project_map.as_deref(),
+    );
 
     lines.push(String::new());
     lines.push("core_files:".to_string());
@@ -2704,7 +3123,12 @@ fn render_schema_copy(schema: &Schema) -> String {
 
     lines.push(String::new());
     lines.push("rules:".to_string());
-    push_optional_bool_line(&mut lines, 2, "path_defines_doc_type", schema.rules.path_defines_doc_type);
+    push_optional_bool_line(
+        &mut lines,
+        2,
+        "path_defines_doc_type",
+        schema.rules.path_defines_doc_type,
+    );
     push_optional_bool_line(&mut lines, 2, "h1_is_title", schema.rules.h1_is_title);
     push_optional_bool_line(
         &mut lines,
@@ -2725,9 +3149,24 @@ fn render_schema_copy(schema: &Schema) -> String {
         "minimal_frontmatter_only",
         schema.rules.minimal_frontmatter_only,
     );
-    push_optional_bool_line(&mut lines, 2, "stale_explicit_anchor", schema.rules.stale_explicit_anchor);
-    push_optional_bool_line(&mut lines, 2, "duplicate_detection", schema.rules.duplicate_detection);
-    push_optional_bool_line(&mut lines, 2, "contamination_checks", schema.rules.contamination_checks);
+    push_optional_bool_line(
+        &mut lines,
+        2,
+        "stale_explicit_anchor",
+        schema.rules.stale_explicit_anchor,
+    );
+    push_optional_bool_line(
+        &mut lines,
+        2,
+        "duplicate_detection",
+        schema.rules.duplicate_detection,
+    );
+    push_optional_bool_line(
+        &mut lines,
+        2,
+        "contamination_checks",
+        schema.rules.contamination_checks,
+    );
     push_optional_bool_line(&mut lines, 2, "strict_checks", schema.rules.strict_checks);
 
     if !schema.suppressions.is_empty() {
@@ -2784,13 +3223,27 @@ fn materialize_from_schema(
     }
 
     if let Some(path) = &schema.entrypoints.agents {
-        let content = render_entrypoint_template("templates/entrypoints/AGENTS.md.tpl", schema, &render_paths)?;
-        record_write(write_if_allowed(&target_dir.join(path), &content, force)?, &mut stats);
+        let content = render_entrypoint_template(
+            "templates/entrypoints/AGENTS.md.tpl",
+            schema,
+            &render_paths,
+        )?;
+        record_write(
+            write_if_allowed(&target_dir.join(path), &content, force)?,
+            &mut stats,
+        );
     }
 
     if let Some(path) = &schema.entrypoints.claude {
-        let content = render_entrypoint_template("templates/entrypoints/CLAUDE.md.tpl", schema, &render_paths)?;
-        record_write(write_if_allowed(&target_dir.join(path), &content, force)?, &mut stats);
+        let content = render_entrypoint_template(
+            "templates/entrypoints/CLAUDE.md.tpl",
+            schema,
+            &render_paths,
+        )?;
+        record_write(
+            write_if_allowed(&target_dir.join(path), &content, force)?,
+            &mut stats,
+        );
     }
 
     for spec in &schema.core_files {
@@ -2802,16 +3255,17 @@ fn materialize_from_schema(
         } else {
             docs_root_path.join(&spec.path)
         };
-        record_write(
-            write_if_allowed(&target_path, &content, force)?,
-            &mut stats,
-        );
+        record_write(write_if_allowed(&target_path, &content, force)?, &mut stats);
     }
 
     for spec in &schema.doc_collections {
         let content = render_collection_index_template(schema, spec, &render_paths)?;
         record_write(
-            write_if_allowed(&docs_root_path.join(&spec.path).join("index.md"), &content, force)?,
+            write_if_allowed(
+                &docs_root_path.join(&spec.path).join("index.md"),
+                &content,
+                force,
+            )?,
             &mut stats,
         );
     }
@@ -2819,24 +3273,34 @@ fn materialize_from_schema(
     let mut seen_templates = BTreeSet::new();
     for spec in &schema.doc_collections {
         if seen_templates.insert(spec.template.clone()) {
-            let template_path = doc_template_path(&spec.template)
-                .ok_or_else(|| format!("unknown doc template: {} ({})", spec.template, spec.name))?;
+            let template_path = doc_template_path(&spec.template).ok_or_else(|| {
+                format!("unknown doc template: {} ({})", spec.template, spec.name)
+            })?;
             let filename = format!("{}.md", spec.template);
             let content = render_template(template_path, &schema.managed_root)?;
             record_write(
-                write_if_allowed(&docs_root_path.join("templates").join(filename), &content, force)?,
+                write_if_allowed(
+                    &docs_root_path.join("templates").join(filename),
+                    &content,
+                    force,
+                )?,
                 &mut stats,
             );
         }
     }
 
-    record_write(write_if_allowed(&schema_dst, schema_copy_text, force)?, &mut stats);
+    record_write(
+        write_if_allowed(&schema_dst, schema_copy_text, force)?,
+        &mut stats,
+    );
 
     Ok(stats)
 }
 
 fn build_index_artifact(target_dir: &Path, schema: &Schema) -> Result<IndexArtifact> {
-    let repo_root = target_dir.canonicalize().unwrap_or_else(|_| target_dir.to_path_buf());
+    let repo_root = target_dir
+        .canonicalize()
+        .unwrap_or_else(|_| target_dir.to_path_buf());
     let mut doc_paths = collect_managed_doc_paths(&repo_root, schema)?;
     doc_paths.sort();
 
@@ -2853,8 +3317,20 @@ fn build_index_artifact(target_dir: &Path, schema: &Schema) -> Result<IndexArtif
         let metadata = fs::metadata(&abs)?;
         let (mtime_unix, mtime_ns) = file_modified_parts(&metadata)?;
         let collection = collection_name_for_path(schema, rel_path);
-        let authority = parsed.frontmatter.get("authority").cloned().or_else(|| collection.as_ref().and_then(|name| collection_by_path.get(name).and_then(|spec| spec.authority.clone())));
-        let status = parsed.frontmatter.get("status").cloned().or_else(|| collection.as_ref().and_then(|name| collection_by_path.get(name).and_then(|spec| spec.status.clone())));
+        let authority = parsed.frontmatter.get("authority").cloned().or_else(|| {
+            collection.as_ref().and_then(|name| {
+                collection_by_path
+                    .get(name)
+                    .and_then(|spec| spec.authority.clone())
+            })
+        });
+        let status = parsed.frontmatter.get("status").cloned().or_else(|| {
+            collection.as_ref().and_then(|name| {
+                collection_by_path
+                    .get(name)
+                    .and_then(|spec| spec.status.clone())
+            })
+        });
         let role = infer_index_role(schema, rel_path, collection.as_deref());
         let is_generated = authority.as_deref() == Some("generated");
         let is_reference = authority.as_deref() == Some("reference");
@@ -2919,14 +3395,22 @@ fn build_index_artifact(target_dir: &Path, schema: &Schema) -> Result<IndexArtif
 fn write_index_artifact(target_dir: &Path, artifact: &IndexArtifact) -> Result<()> {
     let state_dir = target_dir.join(".harnesskit").join("state");
     ensure_writable_fact_store_dir(target_dir, &state_dir, "HarnessKit state")?;
-    fs::write(state_dir.join("doc-index.json"), render_index_json(artifact)).map_err(|err| {
+    fs::write(
+        state_dir.join("doc-index.json"),
+        render_index_json(artifact),
+    )
+    .map_err(|err| {
         format!(
             "cannot write HarnessKit index artifact: {}\n\n{}",
             err,
             fact_store_path_hint(target_dir, Some(&state_dir), None)
         )
     })?;
-    fs::write(state_dir.join("doc-index-summary.md"), render_index_summary(artifact)).map_err(|err| {
+    fs::write(
+        state_dir.join("doc-index-summary.md"),
+        render_index_summary(artifact),
+    )
+    .map_err(|err| {
         format!(
             "cannot write HarnessKit index summary: {}\n\n{}",
             err,
@@ -2940,7 +3424,11 @@ fn write_fact_store(target_dir: &Path, artifact: &IndexArtifact) -> Result<()> {
     let state_dir = target_dir.join(".harnesskit").join("state");
     ensure_writable_fact_store_dir(target_dir, &state_dir, "HarnessKit fact store")?;
     let db_path = state_dir.join("facts.sqlite");
-    let tmp_path = state_dir.join(format!("facts.sqlite.rebuild-{}-{}", std::process::id(), now_unix()));
+    let tmp_path = state_dir.join(format!(
+        "facts.sqlite.rebuild-{}-{}",
+        std::process::id(),
+        now_unix()
+    ));
     let _ = fs::remove_file(&tmp_path);
     let db = SqliteConnection::open(&tmp_path).map_err(|err| {
         format!(
@@ -3026,7 +3514,11 @@ fn scalar_count(db: &SqliteConnection, sql: &str) -> Result<usize> {
 }
 
 fn refresh_fact_store(context: &EngineContext) -> Result<()> {
-    let db_path = context.target_dir.join(".harnesskit").join("state").join("facts.sqlite");
+    let db_path = context
+        .target_dir
+        .join(".harnesskit")
+        .join("state")
+        .join("facts.sqlite");
     if !db_path.exists() {
         rebuild_fact_store_full(context)?;
         return Ok(());
@@ -3040,7 +3532,10 @@ fn refresh_fact_store(context: &EngineContext) -> Result<()> {
     }
 
     let delta = compute_fact_store_delta(context)?;
-    if delta.added_paths.is_empty() && delta.changed_paths.is_empty() && delta.removed_paths.is_empty() {
+    if delta.added_paths.is_empty()
+        && delta.changed_paths.is_empty()
+        && delta.removed_paths.is_empty()
+    {
         if history_or_host_git_state_changed(context, &db)? {
             refresh_fact_store_metadata(context, &db, "metadata")?;
         }
@@ -3051,8 +3546,12 @@ fn refresh_fact_store(context: &EngineContext) -> Result<()> {
     Ok(())
 }
 
-fn history_or_host_git_state_changed(context: &EngineContext, db: &SqliteConnection) -> Result<bool> {
-    let history_status = compute_history_status(&context.target_dir, &context.schema).unwrap_or_default();
+fn history_or_host_git_state_changed(
+    context: &EngineContext,
+    db: &SqliteConnection,
+) -> Result<bool> {
+    let history_status =
+        compute_history_status(&context.target_dir, &context.schema).unwrap_or_default();
     let host_git = host_git_info(&context.target_dir, HostGitMode::Full);
     let current = [
         (
@@ -3061,7 +3560,12 @@ fn history_or_host_git_state_changed(context: &EngineContext, db: &SqliteConnect
         ),
         (
             "history_dirty",
-            if is_history_dirty(&history_status) { "true" } else { "false" }.to_string(),
+            if is_history_dirty(&history_status) {
+                "true"
+            } else {
+                "false"
+            }
+            .to_string(),
         ),
         (
             "history_tracked_files_count",
@@ -3082,7 +3586,11 @@ fn history_or_host_git_state_changed(context: &EngineContext, db: &SqliteConnect
     Ok(false)
 }
 
-fn refresh_fact_store_metadata(context: &EngineContext, db: &SqliteConnection, mode: &str) -> Result<()> {
+fn refresh_fact_store_metadata(
+    context: &EngineContext,
+    db: &SqliteConnection,
+    mode: &str,
+) -> Result<()> {
     let artifact = read_index_artifact_from_fact_store(db)?;
     let repo_root = context
         .target_dir
@@ -3090,7 +3598,12 @@ fn refresh_fact_store_metadata(context: &EngineContext, db: &SqliteConnection, m
         .unwrap_or_else(|_| context.target_dir.clone());
     let history_status = compute_history_status(&repo_root, &context.schema).unwrap_or_default();
     let host_git = host_git_info(&repo_root, HostGitMode::Full);
-    let checks = build_index_checks(&context.schema, &repo_root, &artifact.docs, &artifact.relations);
+    let checks = build_index_checks(
+        &context.schema,
+        &repo_root,
+        &artifact.docs,
+        &artifact.relations,
+    );
     replace_checks_and_meta(
         db,
         &absolute_display_path(&repo_root),
@@ -3117,7 +3630,17 @@ fn fact_store_is_compatible(db: &SqliteConnection) -> Result<bool> {
         return Ok(false);
     }
 
-    let required_tables = ["docs", "file_states", "headings", "raw_links", "path_mentions", "relations", "checks", "scope_paths", "supersedes"];
+    let required_tables = [
+        "docs",
+        "file_states",
+        "headings",
+        "raw_links",
+        "path_mentions",
+        "relations",
+        "checks",
+        "scope_paths",
+        "supersedes",
+    ];
     for table in required_tables {
         let exists = db.query(&format!(
             "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = {};",
@@ -3157,7 +3680,8 @@ fn compute_fact_store_delta(context: &EngineContext) -> Result<FactStoreDelta> {
     let db = open_fact_store(&context.target_dir)?;
     let rows = db.query("SELECT path, content_hash, file_size_bytes, mtime_unix, mtime_ns FROM file_states ORDER BY path ASC;")?;
     let previous_states = parse_file_state_rows(&rows);
-    let current_states = collect_current_file_states(&context.target_dir, &context.schema, &previous_states)?;
+    let current_states =
+        collect_current_file_states(&context.target_dir, &context.schema, &previous_states)?;
 
     let mut added_paths = Vec::new();
     let mut changed_paths = Vec::new();
@@ -3262,7 +3786,14 @@ fn apply_fact_store_delta(context: &EngineContext, delta: &FactStoreDelta) -> Re
     let collection_by_path = collection_lookup(&context.schema);
     let changed_docs = changed_set
         .iter()
-        .map(|path| load_indexed_doc(&context.target_dir, &context.schema, &collection_by_path, path))
+        .map(|path| {
+            load_indexed_doc(
+                &context.target_dir,
+                &context.schema,
+                &collection_by_path,
+                path,
+            )
+        })
         .collect::<Result<Vec<_>>>()?;
 
     apply_doc_fact_delta(
@@ -3271,9 +3802,9 @@ fn apply_fact_store_delta(context: &EngineContext, delta: &FactStoreDelta) -> Re
             .added_paths
             .iter()
             .chain(delta.changed_paths.iter())
-        .chain(delta.removed_paths.iter())
-        .cloned()
-        .collect::<Vec<_>>(),
+            .chain(delta.removed_paths.iter())
+            .cloned()
+            .collect::<Vec<_>>(),
         &changed_docs,
     )?;
 
@@ -3471,14 +4002,18 @@ fn load_indexed_doc(
     let (mtime_unix, mtime_ns) = file_modified_parts(&metadata)?;
     let collection = collection_name_for_path(schema, rel_path);
     let authority = parsed.frontmatter.get("authority").cloned().or_else(|| {
-        collection
-            .as_ref()
-            .and_then(|name| collection_by_path.get(name).and_then(|spec| spec.authority.clone()))
+        collection.as_ref().and_then(|name| {
+            collection_by_path
+                .get(name)
+                .and_then(|spec| spec.authority.clone())
+        })
     });
     let status = parsed.frontmatter.get("status").cloned().or_else(|| {
-        collection
-            .as_ref()
-            .and_then(|name| collection_by_path.get(name).and_then(|spec| spec.status.clone()))
+        collection.as_ref().and_then(|name| {
+            collection_by_path
+                .get(name)
+                .and_then(|spec| spec.status.clone())
+        })
     });
     let role = infer_index_role(schema, rel_path, collection.as_deref());
     let is_generated = authority.as_deref() == Some("generated");
@@ -3512,7 +4047,11 @@ fn load_indexed_doc(
     })
 }
 
-fn apply_doc_fact_delta(db: &SqliteConnection, touched_paths: &[String], changed_docs: &[IndexedDoc]) -> Result<()> {
+fn apply_doc_fact_delta(
+    db: &SqliteConnection,
+    touched_paths: &[String],
+    changed_docs: &[IndexedDoc],
+) -> Result<()> {
     let mut sql = String::from("BEGIN IMMEDIATE;");
     for path in touched_paths {
         let escaped = sql_string_literal(path);
@@ -3571,9 +4110,18 @@ fn collect_impacted_relation_sources(
             continue;
         }
         let depends_on_touched = doc.links.iter().any(|link| touched_paths.contains(link))
-            || doc.path_mentions.iter().any(|path| touched_paths.contains(path))
-            || doc.scope_paths.iter().any(|path| touched_paths.contains(path))
-            || doc.supersedes.iter().any(|path| touched_paths.contains(path));
+            || doc
+                .path_mentions
+                .iter()
+                .any(|path| touched_paths.contains(path))
+            || doc
+                .scope_paths
+                .iter()
+                .any(|path| touched_paths.contains(path))
+            || doc
+                .supersedes
+                .iter()
+                .any(|path| touched_paths.contains(path));
         if depends_on_touched {
             impacted.insert(doc.path.clone());
         }
@@ -3593,11 +4141,7 @@ fn collect_impacted_relation_sources(
         }
     }
 
-    let manifest_path = schema
-        .entrypoints
-        .manifest
-        .as_deref()
-        .unwrap_or("");
+    let manifest_path = schema.entrypoints.manifest.as_deref().unwrap_or("");
     if !manifest_path.is_empty() {
         impacted.insert(manifest_path.to_string());
     }
@@ -3616,7 +4160,10 @@ fn collect_impacted_relation_sources(
 
 fn collection_index_for_doc(schema: &Schema, doc: &IndexedDoc) -> Option<String> {
     let collection = doc.collection.as_deref()?;
-    let spec = schema.doc_collections.iter().find(|item| item.name == collection)?;
+    let spec = schema
+        .doc_collections
+        .iter()
+        .find(|item| item.name == collection)?;
     Some(format!("{}/{}/index.md", schema.managed_root, spec.path))
 }
 
@@ -3702,9 +4249,15 @@ fn replace_checks_and_meta(
         added = sql_string_literal(&delta.added_paths.len().to_string()),
         changed = sql_string_literal(&delta.changed_paths.len().to_string()),
         removed = sql_string_literal(&delta.removed_paths.len().to_string()),
-        history_latest_snapshot = sql_string_literal(history_status.latest_snapshot.as_deref().unwrap_or("")),
-        history_dirty = sql_string_literal(if is_history_dirty(history_status) { "true" } else { "false" }),
-        history_tracked_files_count = sql_string_literal(&history_status.tracked_files_count.to_string()),
+        history_latest_snapshot =
+            sql_string_literal(history_status.latest_snapshot.as_deref().unwrap_or("")),
+        history_dirty = sql_string_literal(if is_history_dirty(history_status) {
+            "true"
+        } else {
+            "false"
+        }),
+        history_tracked_files_count =
+            sql_string_literal(&history_status.tracked_files_count.to_string()),
         host_git_head = sql_string_literal(host_git.head.as_deref().unwrap_or("")),
         host_git_branch = sql_string_literal(host_git.branch.as_deref().unwrap_or("")),
         host_git_dirty = sql_string_literal(if host_git.dirty { "true" } else { "false" })
@@ -3926,12 +4479,22 @@ fn replace_fact_store_contents(db: &SqliteConnection, artifact: &IndexArtifact) 
         managed_root = sql_string_literal(&artifact.managed_root),
         generated_at = sql_string_literal(&artifact.generated_at_unix.to_string()),
         fact_schema_version = sql_string_literal(FACT_SCHEMA_VERSION),
-        history_latest_snapshot = sql_string_literal(artifact.history_latest_snapshot.as_deref().unwrap_or("")),
-        history_dirty = sql_string_literal(if artifact.history_dirty { "true" } else { "false" }),
-        history_tracked_files_count = sql_string_literal(&artifact.history_tracked_files_count.to_string()),
+        history_latest_snapshot =
+            sql_string_literal(artifact.history_latest_snapshot.as_deref().unwrap_or("")),
+        history_dirty = sql_string_literal(if artifact.history_dirty {
+            "true"
+        } else {
+            "false"
+        }),
+        history_tracked_files_count =
+            sql_string_literal(&artifact.history_tracked_files_count.to_string()),
         host_git_head = sql_string_literal(artifact.host_git_head.as_deref().unwrap_or("")),
         host_git_branch = sql_string_literal(artifact.host_git_branch.as_deref().unwrap_or("")),
-        host_git_dirty = sql_string_literal(if artifact.host_git_dirty { "true" } else { "false" })
+        host_git_dirty = sql_string_literal(if artifact.host_git_dirty {
+            "true"
+        } else {
+            "false"
+        })
     ));
 
     for doc in &artifact.docs {
@@ -3968,9 +4531,7 @@ fn read_index_artifact_from_fact_store(db: &SqliteConnection) -> Result<IndexArt
     let path_mentions_rows = db.query(
         "SELECT doc_path, mentioned_path FROM path_mentions ORDER BY doc_path ASC, mention_index ASC;",
     )?;
-    let file_state_rows = db.query(
-        "SELECT path, mtime_ns FROM file_states ORDER BY path ASC;",
-    )?;
+    let file_state_rows = db.query("SELECT path, mtime_ns FROM file_states ORDER BY path ASC;")?;
     let scope_rows = db.query(
         "SELECT doc_path, scope_path FROM scope_paths ORDER BY doc_path ASC, scope_path ASC;",
     )?;
@@ -4017,11 +4578,20 @@ fn read_index_artifact_from_fact_store(db: &SqliteConnection) -> Result<IndexArt
             status: empty_as_none(cell(row, 3)),
             authority: empty_as_none(cell(row, 4)),
             collection: empty_as_none(cell(row, 5)),
-            headings: headings_by_doc.get(cell(row, 0)).cloned().unwrap_or_default(),
+            headings: headings_by_doc
+                .get(cell(row, 0))
+                .cloned()
+                .unwrap_or_default(),
             links: links_by_doc.get(cell(row, 0)).cloned().unwrap_or_default(),
-            path_mentions: path_mentions_by_doc.get(cell(row, 0)).cloned().unwrap_or_default(),
+            path_mentions: path_mentions_by_doc
+                .get(cell(row, 0))
+                .cloned()
+                .unwrap_or_default(),
             scope_paths: scope_by_doc.get(cell(row, 0)).cloned().unwrap_or_default(),
-            supersedes: supersedes_by_doc.get(cell(row, 0)).cloned().unwrap_or_default(),
+            supersedes: supersedes_by_doc
+                .get(cell(row, 0))
+                .cloned()
+                .unwrap_or_default(),
             incoming_links: cell(row, 11).parse::<usize>().unwrap_or(0),
             outgoing_links: cell(row, 12).parse::<usize>().unwrap_or(0),
             is_entrypoint: cell(row, 13) == "1",
@@ -4034,7 +4604,12 @@ fn read_index_artifact_from_fact_store(db: &SqliteConnection) -> Result<IndexArt
             mtime_ns: mtime_ns_by_path
                 .get(cell(row, 0))
                 .cloned()
-                .unwrap_or_else(|| cell(row, 17).parse::<u64>().unwrap_or(0).saturating_mul(1_000_000_000)),
+                .unwrap_or_else(|| {
+                    cell(row, 17)
+                        .parse::<u64>()
+                        .unwrap_or(0)
+                        .saturating_mul(1_000_000_000)
+                }),
         })
         .collect::<Vec<_>>();
 
@@ -4075,17 +4650,26 @@ fn read_index_artifact_from_fact_store(db: &SqliteConnection) -> Result<IndexArt
             .get("history_latest_snapshot")
             .cloned()
             .filter(|value| !value.is_empty()),
-        history_dirty: meta_map.get("history_dirty").map(|value| value == "true").unwrap_or(false),
+        history_dirty: meta_map
+            .get("history_dirty")
+            .map(|value| value == "true")
+            .unwrap_or(false),
         history_tracked_files_count: meta_map
             .get("history_tracked_files_count")
             .and_then(|value| value.parse::<usize>().ok())
             .unwrap_or(0),
-        host_git_head: meta_map.get("host_git_head").cloned().filter(|value| !value.is_empty()),
+        host_git_head: meta_map
+            .get("host_git_head")
+            .cloned()
+            .filter(|value| !value.is_empty()),
         host_git_branch: meta_map
             .get("host_git_branch")
             .cloned()
             .filter(|value| !value.is_empty()),
-        host_git_dirty: meta_map.get("host_git_dirty").map(|value| value == "true").unwrap_or(false),
+        host_git_dirty: meta_map
+            .get("host_git_dirty")
+            .map(|value| value == "true")
+            .unwrap_or(false),
         docs,
         relations,
         checks,
@@ -4194,12 +4778,8 @@ fn parse_doc_text(path: &str, text: &str) -> ParsedDoc {
     };
     let (frontmatter, body) = split_frontmatter(text);
     let frontmatter_map = frontmatter.map(parse_frontmatter).unwrap_or_default();
-    let scope_paths = frontmatter
-        .map(parse_scope_paths)
-        .unwrap_or_else(Vec::new);
-    let supersedes = frontmatter
-        .map(parse_supersedes)
-        .unwrap_or_else(Vec::new);
+    let scope_paths = frontmatter.map(parse_scope_paths).unwrap_or_else(Vec::new);
+    let supersedes = frontmatter.map(parse_supersedes).unwrap_or_else(Vec::new);
 
     let mut title = None;
     let mut headings = Vec::new();
@@ -4354,11 +4934,17 @@ fn parse_heading(line: &str) -> Option<(u32, String)> {
 fn leading_backtick_run(line: &str) -> Option<usize> {
     let trimmed = line.trim_start();
     let run = trimmed.chars().take_while(|ch| *ch == '`').count();
-    if run > 0 { Some(run) } else { None }
+    if run > 0 {
+        Some(run)
+    } else {
+        None
+    }
 }
 
 fn is_backtick_fence_line(line: &str) -> bool {
-    leading_backtick_run(line).map(|run| run >= 3).unwrap_or(false)
+    leading_backtick_run(line)
+        .map(|run| run >= 3)
+        .unwrap_or(false)
 }
 
 fn extract_markdown_links(line: &str) -> Vec<(String, String)> {
@@ -4386,7 +4972,11 @@ fn extract_markdown_links(line: &str) -> Vec<(String, String)> {
 }
 
 fn normalize_link(src_doc: &str, raw: &str) -> Option<String> {
-    if raw.starts_with("http://") || raw.starts_with("https://") || raw.starts_with("mailto:") || raw.starts_with('#') {
+    if raw.starts_with("http://")
+        || raw.starts_with("https://")
+        || raw.starts_with("mailto:")
+        || raw.starts_with('#')
+    {
         return None;
     }
     let target = raw.split('#').next().unwrap_or(raw).trim();
@@ -4396,7 +4986,10 @@ fn normalize_link(src_doc: &str, raw: &str) -> Option<String> {
     let joined = if target.starts_with('/') {
         PathBuf::from(target.trim_start_matches('/'))
     } else {
-        Path::new(src_doc).parent().unwrap_or_else(|| Path::new("")).join(target)
+        Path::new(src_doc)
+            .parent()
+            .unwrap_or_else(|| Path::new(""))
+            .join(target)
     };
     Some(normalize_path(&joined))
 }
@@ -4484,7 +5077,11 @@ fn collection_lookup<'a>(schema: &'a Schema) -> BTreeMap<String, &'a DocCollecti
 
 fn collection_name_for_path(schema: &Schema, path: &str) -> Option<String> {
     for spec in &schema.doc_collections {
-        let prefix = format!("{}/{}/", schema.managed_root, spec.path.trim_end_matches('/'));
+        let prefix = format!(
+            "{}/{}/",
+            schema.managed_root,
+            spec.path.trim_end_matches('/')
+        );
         if path.starts_with(&prefix) {
             return Some(spec.name.clone());
         }
@@ -4522,7 +5119,11 @@ fn is_anchor_candidate(schema: &Schema, path: &str) -> bool {
     if path == schema.entrypoints.project_map.as_deref().unwrap_or("") {
         return true;
     }
-    if schema.core_files.iter().any(|spec| core_file_rel_path(schema, spec) == path) {
+    if schema
+        .core_files
+        .iter()
+        .any(|spec| core_file_rel_path(schema, spec) == path)
+    {
         return true;
     }
     collection_name_for_path(schema, path)
@@ -4537,7 +5138,11 @@ fn core_file_rel_path(schema: &Schema, spec: &CoreFileSpec) -> String {
         .unwrap_or_else(|| format!("{}/{}", schema.managed_root, spec.path))
 }
 
-fn build_doc_relations(schema: &Schema, docs: &[IndexedDoc], path_set: &BTreeSet<String>) -> Vec<DocRelation> {
+fn build_doc_relations(
+    schema: &Schema,
+    docs: &[IndexedDoc],
+    path_set: &BTreeSet<String>,
+) -> Vec<DocRelation> {
     let manifest_path = schema
         .entrypoints
         .manifest
@@ -4548,7 +5153,11 @@ fn build_doc_relations(schema: &Schema, docs: &[IndexedDoc], path_set: &BTreeSet
 
     for doc in docs {
         if let Some(collection) = &doc.collection {
-            if let Some(spec) = schema.doc_collections.iter().find(|item| item.name == *collection) {
+            if let Some(spec) = schema
+                .doc_collections
+                .iter()
+                .find(|item| item.name == *collection)
+            {
                 let collection_index = format!("{}/{}/index.md", schema.managed_root, spec.path);
                 if doc.path != collection_index {
                     push_relation(
@@ -4566,7 +5175,10 @@ fn build_doc_relations(schema: &Schema, docs: &[IndexedDoc], path_set: &BTreeSet
 
         for link in &doc.links {
             if path_set.contains(link) {
-                let relation_type = if doc.path == manifest_path || is_entrypoint_path(schema, &doc.path) || doc.path.ends_with("/index.md") {
+                let relation_type = if doc.path == manifest_path
+                    || is_entrypoint_path(schema, &doc.path)
+                    || doc.path.ends_with("/index.md")
+                {
                     "doc_indexes_doc"
                 } else {
                     "doc_links_doc"
@@ -4640,7 +5252,11 @@ fn build_doc_relations(schema: &Schema, docs: &[IndexedDoc], path_set: &BTreeSet
 }
 
 fn is_navigation_doc(doc: &IndexedDoc) -> bool {
-    doc.is_entrypoint || matches!(doc.role.as_str(), "manifest" | "collection-index" | "architecture")
+    doc.is_entrypoint
+        || matches!(
+            doc.role.as_str(),
+            "manifest" | "collection-index" | "architecture"
+        )
 }
 
 fn extract_inline_code_path_mentions(text: &str) -> Vec<String> {
@@ -4725,7 +5341,9 @@ fn extract_path_candidates(text: &str) -> Vec<String> {
     ];
     let mut paths = Vec::new();
     let mut seen = BTreeSet::new();
-    for token in text.split(|c: char| c.is_whitespace() || matches!(c, '`' | '"' | '\'' | '(' | ')' | '[' | ']' | ',' | ';')) {
+    for token in text.split(|c: char| {
+        c.is_whitespace() || matches!(c, '`' | '"' | '\'' | '(' | ')' | '[' | ']' | ',' | ';')
+    }) {
         let normalized = token
             .trim()
             .trim_matches(|c: char| matches!(c, '.' | ':' | ',' | ')' | '(' | '"' | '\'' | '`'))
@@ -4735,7 +5353,9 @@ fn extract_path_candidates(text: &str) -> Vec<String> {
         if normalized.len() < 3 {
             continue;
         }
-        if prefixes.iter().any(|prefix| normalized.starts_with(prefix)) && seen.insert(normalized.clone()) {
+        if prefixes.iter().any(|prefix| normalized.starts_with(prefix))
+            && seen.insert(normalized.clone())
+        {
             paths.push(normalized);
         }
     }
@@ -4751,7 +5371,11 @@ fn push_relation(
     reason: &str,
     explicit: bool,
 ) {
-    let key = (src_path.clone(), dst_path.clone(), relation_type.to_string());
+    let key = (
+        src_path.clone(),
+        dst_path.clone(),
+        relation_type.to_string(),
+    );
     if seen.insert(key) {
         relations.push(DocRelation {
             src_path,
@@ -4813,9 +5437,15 @@ fn counts_for_doc_navigation(relation: &DocRelation) -> bool {
     )
 }
 
-fn build_index_checks(schema: &Schema, repo_root: &Path, docs: &[IndexedDoc], relations: &[DocRelation]) -> Vec<IndexCheck> {
+fn build_index_checks(
+    schema: &Schema,
+    repo_root: &Path,
+    docs: &[IndexedDoc],
+    relations: &[DocRelation],
+) -> Vec<IndexCheck> {
     let mut checks = Vec::new();
-    let doc_map: BTreeMap<String, &IndexedDoc> = docs.iter().map(|doc| (doc.path.clone(), doc)).collect();
+    let doc_map: BTreeMap<String, &IndexedDoc> =
+        docs.iter().map(|doc| (doc.path.clone(), doc)).collect();
     let manifest_path = schema
         .entrypoints
         .manifest
@@ -4834,7 +5464,10 @@ fn build_index_checks(schema: &Schema, repo_root: &Path, docs: &[IndexedDoc], re
                     "missing-entrypoint-doc",
                     "warning",
                     path,
-                    &format!("configured {} entrypoint is missing: {}", entrypoint_name, path),
+                    &format!(
+                        "configured {} entrypoint is missing: {}",
+                        entrypoint_name, path
+                    ),
                     &[("entrypoint", entrypoint_name), ("path", path)],
                 );
             }
@@ -4875,7 +5508,10 @@ fn build_index_checks(schema: &Schema, repo_root: &Path, docs: &[IndexedDoc], re
         }
     }
 
-    for entrypoint in [schema.entrypoints.agents.as_deref(), schema.entrypoints.claude.as_deref()] {
+    for entrypoint in [
+        schema.entrypoints.agents.as_deref(),
+        schema.entrypoints.claude.as_deref(),
+    ] {
         if let Some(path) = entrypoint {
             if doc_map.contains_key(path) {
                 let points_to_manifest = relations.iter().any(|relation| {
@@ -4899,7 +5535,10 @@ fn build_index_checks(schema: &Schema, repo_root: &Path, docs: &[IndexedDoc], re
         add_manifest_constraint_checks(schema, docs, relations, &doc_map, &mut checks);
     }
 
-    for doc in docs.iter().filter(|doc| doc.collection.is_some() && !doc.path.ends_with("/index.md")) {
+    for doc in docs
+        .iter()
+        .filter(|doc| doc.collection.is_some() && !doc.path.ends_with("/index.md"))
+    {
         if doc.incoming_links == 0 {
             push_check(
                 &mut checks,
@@ -4962,11 +5601,7 @@ fn add_manifest_constraint_checks(
     doc_map: &BTreeMap<String, &IndexedDoc>,
     checks: &mut Vec<IndexCheck>,
 ) {
-    let manifest_path = schema
-        .entrypoints
-        .manifest
-        .as_deref()
-        .unwrap_or("");
+    let manifest_path = schema.entrypoints.manifest.as_deref().unwrap_or("");
     if manifest_path.is_empty() || !doc_map.contains_key(manifest_path) {
         return;
     }
@@ -4978,7 +5613,12 @@ fn add_manifest_constraint_checks(
         .collect::<BTreeSet<_>>();
 
     for doc in docs {
-        if doc.path == manifest_path || doc.is_entrypoint || doc.path.starts_with(&format!("{}/templates/", schema.managed_root)) {
+        if doc.path == manifest_path
+            || doc.is_entrypoint
+            || doc
+                .path
+                .starts_with(&format!("{}/templates/", schema.managed_root))
+        {
             continue;
         }
         let is_core = schema.core_files.iter().any(|spec| {
@@ -5038,7 +5678,10 @@ fn add_stale_anchor_checks(repo_root: &Path, docs: &[IndexedDoc], checks: &mut V
                         "stale-explicit-anchor",
                         "warning",
                         &doc.path,
-                        &format!("{} may be stale: scoped path {} is newer than the doc", doc.path, scope_path),
+                        &format!(
+                            "{} may be stale: scoped path {} is newer than the doc",
+                            doc.path, scope_path
+                        ),
                         &[
                             ("doc", &doc.path),
                             ("scope_path", scope_path),
@@ -5101,7 +5744,10 @@ fn add_duplicate_checks(docs: &[IndexedDoc], checks: &mut Vec<IndexCheck>) {
     let mut by_fingerprint = BTreeMap::<String, Vec<&IndexedDoc>>::new();
 
     for doc in docs {
-        by_hash.entry(doc.content_hash.clone()).or_default().push(doc);
+        by_hash
+            .entry(doc.content_hash.clone())
+            .or_default()
+            .push(doc);
         let fingerprint = doc_structure_fingerprint(doc);
         if !fingerprint.is_empty() {
             by_fingerprint.entry(fingerprint).or_default().push(doc);
@@ -5109,7 +5755,11 @@ fn add_duplicate_checks(docs: &[IndexedDoc], checks: &mut Vec<IndexCheck>) {
     }
 
     for group in by_hash.values().filter(|group| group.len() > 1) {
-        let paths = group.iter().map(|doc| doc.path.clone()).collect::<Vec<_>>().join(" | ");
+        let paths = group
+            .iter()
+            .map(|doc| doc.path.clone())
+            .collect::<Vec<_>>()
+            .join(" | ");
         for doc in group {
             push_check(
                 checks,
@@ -5123,15 +5773,25 @@ fn add_duplicate_checks(docs: &[IndexedDoc], checks: &mut Vec<IndexCheck>) {
     }
 
     for group in by_fingerprint.values().filter(|group| group.len() > 1) {
-        let paths = group.iter().map(|doc| doc.path.clone()).collect::<Vec<_>>().join(" | ");
+        let paths = group
+            .iter()
+            .map(|doc| doc.path.clone())
+            .collect::<Vec<_>>()
+            .join(" | ");
         for doc in group {
             push_check(
                 checks,
                 "overlap-heading-fingerprint",
                 "info",
                 &doc.path,
-                &format!("{} has a similar title/headings structure with {}", doc.path, paths),
-                &[("paths", &paths), ("fingerprint", &doc_structure_fingerprint(doc))],
+                &format!(
+                    "{} has a similar title/headings structure with {}",
+                    doc.path, paths
+                ),
+                &[
+                    ("paths", &paths),
+                    ("fingerprint", &doc_structure_fingerprint(doc)),
+                ],
             );
         }
     }
@@ -5157,15 +5817,26 @@ fn doc_structure_fingerprint(doc: &IndexedDoc) -> String {
 fn normalize_fingerprint_text(value: &str) -> String {
     value
         .chars()
-        .map(|ch| if ch.is_alphanumeric() { ch.to_ascii_lowercase() } else { ' ' })
+        .map(|ch| {
+            if ch.is_alphanumeric() {
+                ch.to_ascii_lowercase()
+            } else {
+                ' '
+            }
+        })
         .collect::<String>()
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
 }
 
-fn add_contamination_checks(docs: &[IndexedDoc], relations: &[DocRelation], checks: &mut Vec<IndexCheck>) {
-    let doc_map: BTreeMap<String, &IndexedDoc> = docs.iter().map(|doc| (doc.path.clone(), doc)).collect();
+fn add_contamination_checks(
+    docs: &[IndexedDoc],
+    relations: &[DocRelation],
+    checks: &mut Vec<IndexCheck>,
+) {
+    let doc_map: BTreeMap<String, &IndexedDoc> =
+        docs.iter().map(|doc| (doc.path.clone(), doc)).collect();
     for relation in relations {
         let Some(src) = doc_map.get(&relation.src_path) else {
             continue;
@@ -5184,14 +5855,25 @@ fn add_contamination_checks(docs: &[IndexedDoc], relations: &[DocRelation], chec
                 rule,
                 "warning",
                 &src.path,
-                &format!("canonical doc {} links to non-source doc {}", src.path, dst.path),
-                &[("source", &src.path), ("target", &dst.path), ("relation_type", &relation.relation_type)],
+                &format!(
+                    "canonical doc {} links to non-source doc {}",
+                    src.path, dst.path
+                ),
+                &[
+                    ("source", &src.path),
+                    ("target", &dst.path),
+                    ("relation_type", &relation.relation_type),
+                ],
             );
         }
     }
 }
 
-fn add_frontmatter_constraint_checks(schema: &Schema, docs: &[IndexedDoc], checks: &mut Vec<IndexCheck>) {
+fn add_frontmatter_constraint_checks(
+    schema: &Schema,
+    docs: &[IndexedDoc],
+    checks: &mut Vec<IndexCheck>,
+) {
     let collection_by_name = collection_lookup(schema);
     for doc in docs {
         let Some(collection_name) = &doc.collection else {
@@ -5212,8 +5894,15 @@ fn add_frontmatter_constraint_checks(schema: &Schema, docs: &[IndexedDoc], check
                     "frontmatter-field-not-allowed",
                     "info",
                     &doc.path,
-                    &format!("{} uses frontmatter field `{}` outside this collection's allowlist", doc.path, key),
-                    &[("doc", &doc.path), ("field", key), ("collection", collection_name)],
+                    &format!(
+                        "{} uses frontmatter field `{}` outside this collection's allowlist",
+                        doc.path, key
+                    ),
+                    &[
+                        ("doc", &doc.path),
+                        ("field", key),
+                        ("collection", collection_name),
+                    ],
                 );
             }
         }
@@ -5282,7 +5971,10 @@ fn add_history_checks(schema: &Schema, repo_root: &Path, checks: &mut Vec<IndexC
                 ".harnesskit/history",
                 "managed docs differ from latest HarnessKit history snapshot",
                 &[
-                    ("latest_snapshot", status.latest_snapshot.as_deref().unwrap_or("")),
+                    (
+                        "latest_snapshot",
+                        status.latest_snapshot.as_deref().unwrap_or(""),
+                    ),
                     ("added", &status.added.len().to_string()),
                     ("changed", &status.changed.len().to_string()),
                     ("removed", &status.removed.len().to_string()),
@@ -5305,46 +5997,112 @@ fn add_history_checks(schema: &Schema, repo_root: &Path, checks: &mut Vec<IndexC
 fn render_index_json(artifact: &IndexArtifact) -> String {
     let mut out = String::new();
     out.push_str("{\n");
-    out.push_str(&format!("  \"repo_root\": {},\n", json_string(&artifact.repo_root)));
-    out.push_str(&format!("  \"managed_root\": {},\n", json_string(&artifact.managed_root)));
-    out.push_str(&format!("  \"generated_at_unix\": {},\n", artifact.generated_at_unix));
+    out.push_str(&format!(
+        "  \"repo_root\": {},\n",
+        json_string(&artifact.repo_root)
+    ));
+    out.push_str(&format!(
+        "  \"managed_root\": {},\n",
+        json_string(&artifact.managed_root)
+    ));
+    out.push_str(&format!(
+        "  \"generated_at_unix\": {},\n",
+        artifact.generated_at_unix
+    ));
     out.push_str(&format!(
         "  \"history_latest_snapshot\": {},\n",
         json_opt_string(artifact.history_latest_snapshot.as_deref())
     ));
-    out.push_str(&format!("  \"history_dirty\": {},\n", json_bool(artifact.history_dirty)));
+    out.push_str(&format!(
+        "  \"history_dirty\": {},\n",
+        json_bool(artifact.history_dirty)
+    ));
     out.push_str(&format!(
         "  \"history_tracked_files_count\": {},\n",
         artifact.history_tracked_files_count
     ));
-    out.push_str(&format!("  \"host_git_head\": {},\n", json_opt_string(artifact.host_git_head.as_deref())));
+    out.push_str(&format!(
+        "  \"host_git_head\": {},\n",
+        json_opt_string(artifact.host_git_head.as_deref())
+    ));
     out.push_str(&format!(
         "  \"host_git_branch\": {},\n",
         json_opt_string(artifact.host_git_branch.as_deref())
     ));
-    out.push_str(&format!("  \"host_git_dirty\": {},\n", json_bool(artifact.host_git_dirty)));
+    out.push_str(&format!(
+        "  \"host_git_dirty\": {},\n",
+        json_bool(artifact.host_git_dirty)
+    ));
     out.push_str("  \"docs\": [\n");
     for (idx, doc) in artifact.docs.iter().enumerate() {
         out.push_str("    {\n");
         out.push_str(&format!("      \"path\": {},\n", json_string(&doc.path)));
         out.push_str(&format!("      \"title\": {},\n", json_string(&doc.title)));
-        out.push_str(&format!("      \"summary\": {},\n", json_string(&doc.summary)));
+        out.push_str(&format!(
+            "      \"summary\": {},\n",
+            json_string(&doc.summary)
+        ));
         out.push_str(&format!("      \"role\": {},\n", json_string(&doc.role)));
-        out.push_str(&format!("      \"status\": {},\n", json_opt_string(doc.status.as_deref())));
-        out.push_str(&format!("      \"authority\": {},\n", json_opt_string(doc.authority.as_deref())));
-        out.push_str(&format!("      \"collection\": {},\n", json_opt_string(doc.collection.as_deref())));
-        out.push_str(&format!("      \"headings\": {},\n", json_string_array(&doc.headings)));
-        out.push_str(&format!("      \"links\": {},\n", json_string_array(&doc.links)));
-        out.push_str(&format!("      \"scope_paths\": {},\n", json_string_array(&doc.scope_paths)));
-        out.push_str(&format!("      \"supersedes\": {},\n", json_string_array(&doc.supersedes)));
-        out.push_str(&format!("      \"content_hash\": {},\n", json_string(&doc.content_hash)));
-        out.push_str(&format!("      \"file_size_bytes\": {},\n", doc.file_size_bytes));
-        out.push_str(&format!("      \"incoming_links\": {},\n", doc.incoming_links));
-        out.push_str(&format!("      \"outgoing_links\": {},\n", doc.outgoing_links));
-        out.push_str(&format!("      \"is_entrypoint\": {},\n", json_bool(doc.is_entrypoint)));
-        out.push_str(&format!("      \"is_anchor_candidate\": {},\n", json_bool(doc.is_anchor_candidate)));
-        out.push_str(&format!("      \"is_generated\": {},\n", json_bool(doc.is_generated)));
-        out.push_str(&format!("      \"is_reference\": {},\n", json_bool(doc.is_reference)));
+        out.push_str(&format!(
+            "      \"status\": {},\n",
+            json_opt_string(doc.status.as_deref())
+        ));
+        out.push_str(&format!(
+            "      \"authority\": {},\n",
+            json_opt_string(doc.authority.as_deref())
+        ));
+        out.push_str(&format!(
+            "      \"collection\": {},\n",
+            json_opt_string(doc.collection.as_deref())
+        ));
+        out.push_str(&format!(
+            "      \"headings\": {},\n",
+            json_string_array(&doc.headings)
+        ));
+        out.push_str(&format!(
+            "      \"links\": {},\n",
+            json_string_array(&doc.links)
+        ));
+        out.push_str(&format!(
+            "      \"scope_paths\": {},\n",
+            json_string_array(&doc.scope_paths)
+        ));
+        out.push_str(&format!(
+            "      \"supersedes\": {},\n",
+            json_string_array(&doc.supersedes)
+        ));
+        out.push_str(&format!(
+            "      \"content_hash\": {},\n",
+            json_string(&doc.content_hash)
+        ));
+        out.push_str(&format!(
+            "      \"file_size_bytes\": {},\n",
+            doc.file_size_bytes
+        ));
+        out.push_str(&format!(
+            "      \"incoming_links\": {},\n",
+            doc.incoming_links
+        ));
+        out.push_str(&format!(
+            "      \"outgoing_links\": {},\n",
+            doc.outgoing_links
+        ));
+        out.push_str(&format!(
+            "      \"is_entrypoint\": {},\n",
+            json_bool(doc.is_entrypoint)
+        ));
+        out.push_str(&format!(
+            "      \"is_anchor_candidate\": {},\n",
+            json_bool(doc.is_anchor_candidate)
+        ));
+        out.push_str(&format!(
+            "      \"is_generated\": {},\n",
+            json_bool(doc.is_generated)
+        ));
+        out.push_str(&format!(
+            "      \"is_reference\": {},\n",
+            json_bool(doc.is_reference)
+        ));
         out.push_str(&format!("      \"mtime_unix\": {}\n", doc.mtime_unix));
         out.push_str("    }");
         if idx + 1 != artifact.docs.len() {
@@ -5356,13 +6114,34 @@ fn render_index_json(artifact: &IndexArtifact) -> String {
     out.push_str("  \"relations\": [\n");
     for (idx, relation) in artifact.relations.iter().enumerate() {
         out.push_str("    {\n");
-        out.push_str(&format!("      \"src_path\": {},\n", json_string(&relation.src_path)));
-        out.push_str(&format!("      \"dst_path\": {},\n", json_string(&relation.dst_path)));
-        out.push_str(&format!("      \"relation_type\": {},\n", json_string(&relation.relation_type)));
-        out.push_str(&format!("      \"reason\": {},\n", json_string(&relation.reason)));
-        out.push_str(&format!("      \"explicit\": {},\n", json_bool(relation.explicit)));
-        out.push_str(&format!("      \"confidence\": {:.2},\n", relation.confidence));
-        out.push_str(&format!("      \"evidence_json\": {}\n", json_value_or_string(&relation.evidence_json)));
+        out.push_str(&format!(
+            "      \"src_path\": {},\n",
+            json_string(&relation.src_path)
+        ));
+        out.push_str(&format!(
+            "      \"dst_path\": {},\n",
+            json_string(&relation.dst_path)
+        ));
+        out.push_str(&format!(
+            "      \"relation_type\": {},\n",
+            json_string(&relation.relation_type)
+        ));
+        out.push_str(&format!(
+            "      \"reason\": {},\n",
+            json_string(&relation.reason)
+        ));
+        out.push_str(&format!(
+            "      \"explicit\": {},\n",
+            json_bool(relation.explicit)
+        ));
+        out.push_str(&format!(
+            "      \"confidence\": {:.2},\n",
+            relation.confidence
+        ));
+        out.push_str(&format!(
+            "      \"evidence_json\": {}\n",
+            json_value_or_string(&relation.evidence_json)
+        ));
         out.push_str("    }");
         if idx + 1 != artifact.relations.len() {
             out.push(',');
@@ -5373,10 +6152,22 @@ fn render_index_json(artifact: &IndexArtifact) -> String {
     out.push_str("  \"checks\": [\n");
     for (idx, check) in artifact.checks.iter().enumerate() {
         out.push_str("    {\n");
-        out.push_str(&format!("      \"rule_id\": {},\n", json_string(&check.rule_id)));
-        out.push_str(&format!("      \"severity\": {},\n", json_string(&check.severity)));
-        out.push_str(&format!("      \"subject_path\": {},\n", json_string(&check.subject_path)));
-        out.push_str(&format!("      \"message\": {}\n", json_string(&check.message)));
+        out.push_str(&format!(
+            "      \"rule_id\": {},\n",
+            json_string(&check.rule_id)
+        ));
+        out.push_str(&format!(
+            "      \"severity\": {},\n",
+            json_string(&check.severity)
+        ));
+        out.push_str(&format!(
+            "      \"subject_path\": {},\n",
+            json_string(&check.subject_path)
+        ));
+        out.push_str(&format!(
+            "      \"message\": {}\n",
+            json_string(&check.message)
+        ));
         out.push_str("    }");
         if idx + 1 != artifact.checks.len() {
             out.push(',');
@@ -5403,7 +6194,11 @@ fn list_history_snapshots(target_dir: &Path) -> Result<Vec<HistorySnapshot>> {
         let text = fs::read_to_string(path)?;
         snapshots.push(parse_history_snapshot_json(&text)?);
     }
-    snapshots.sort_by(|a, b| a.created_at_unix.cmp(&b.created_at_unix).then_with(|| a.id.cmp(&b.id)));
+    snapshots.sort_by(|a, b| {
+        a.created_at_unix
+            .cmp(&b.created_at_unix)
+            .then_with(|| a.id.cmp(&b.id))
+    });
     Ok(snapshots)
 }
 
@@ -5536,7 +6331,12 @@ fn parse_json_string_token(text: &str, cursor: &mut JsonCursor) -> Result<String
     Err("invalid json: unterminated string".into())
 }
 
-fn push_json_unicode_escape(text: &str, cursor: &mut JsonCursor, code: u32, out: &mut String) -> Result<()> {
+fn push_json_unicode_escape(
+    text: &str,
+    cursor: &mut JsonCursor,
+    code: u32,
+    out: &mut String,
+) -> Result<()> {
     if (0xD800..=0xDBFF).contains(&code) {
         let saved = cursor.pos;
         if next_json_char(text, cursor) == Some('\\') && next_json_char(text, cursor) == Some('u') {
@@ -5565,7 +6365,12 @@ fn push_json_unicode_escape(text: &str, cursor: &mut JsonCursor, code: u32, out:
     Ok(())
 }
 
-fn parse_json_balanced_block(text: &str, cursor: &mut JsonCursor, open: char, close: char) -> Result<String> {
+fn parse_json_balanced_block(
+    text: &str,
+    cursor: &mut JsonCursor,
+    open: char,
+    close: char,
+) -> Result<String> {
     let start = cursor.pos;
     let mut depth = 0usize;
     let mut in_string = false;
@@ -5615,7 +6420,8 @@ fn parse_json_scalar_literal(text: &str, cursor: &mut JsonCursor) -> Result<Stri
 }
 
 fn json_object_required_string(entries: &[(String, String)], key: &str) -> Result<String> {
-    let value = json_object_value(entries, key).ok_or_else(|| format!("invalid json object: missing key `{}`", key))?;
+    let value = json_object_value(entries, key)
+        .ok_or_else(|| format!("invalid json object: missing key `{}`", key))?;
     Ok(parse_json_string_value(value))
 }
 
@@ -5627,7 +6433,8 @@ fn json_object_optional_string(entries: &[(String, String)], key: &str) -> Resul
 }
 
 fn json_object_required_u64(entries: &[(String, String)], key: &str) -> Result<u64> {
-    let value = json_object_value(entries, key).ok_or_else(|| format!("invalid json object: missing key `{}`", key))?;
+    let value = json_object_value(entries, key)
+        .ok_or_else(|| format!("invalid json object: missing key `{}`", key))?;
     value
         .trim()
         .parse::<u64>()
@@ -5635,7 +6442,8 @@ fn json_object_required_u64(entries: &[(String, String)], key: &str) -> Result<u
 }
 
 fn json_object_required_bool(entries: &[(String, String)], key: &str) -> Result<bool> {
-    let value = json_object_value(entries, key).ok_or_else(|| format!("invalid json object: missing key `{}`", key))?;
+    let value = json_object_value(entries, key)
+        .ok_or_else(|| format!("invalid json object: missing key `{}`", key))?;
     match value.trim() {
         "true" => Ok(true),
         "false" => Ok(false),
@@ -5644,7 +6452,8 @@ fn json_object_required_bool(entries: &[(String, String)], key: &str) -> Result<
 }
 
 fn json_object_required_array(entries: &[(String, String)], key: &str) -> Result<Vec<String>> {
-    let value = json_object_value(entries, key).ok_or_else(|| format!("invalid json object: missing key `{}`", key))?;
+    let value = json_object_value(entries, key)
+        .ok_or_else(|| format!("invalid json object: missing key `{}`", key))?;
     parse_json_array_tokens(value, &mut JsonCursor::default())
 }
 
@@ -5798,9 +6607,18 @@ fn is_history_dirty(status: &HistoryStatus) -> bool {
 }
 
 fn has_history_doc_changes(status: &HistoryStatus) -> bool {
-    status.added.iter().any(|path| path != ".harnesskit/schema.yaml")
-        || status.changed.iter().any(|path| path != ".harnesskit/schema.yaml")
-        || status.removed.iter().any(|path| path != ".harnesskit/schema.yaml")
+    status
+        .added
+        .iter()
+        .any(|path| path != ".harnesskit/schema.yaml")
+        || status
+            .changed
+            .iter()
+            .any(|path| path != ".harnesskit/schema.yaml")
+        || status
+            .removed
+            .iter()
+            .any(|path| path != ".harnesskit/schema.yaml")
 }
 
 fn print_history_status(status: &HistoryStatus) {
@@ -5817,7 +6635,11 @@ fn print_history_status(status: &HistoryStatus) {
 }
 
 fn yes_no_bool(value: bool) -> &'static str {
-    if value { "yes" } else { "no" }
+    if value {
+        "yes"
+    } else {
+        "no"
+    }
 }
 
 #[derive(Default)]
@@ -5841,7 +6663,11 @@ fn diff_snapshots(a: &HistorySnapshot, b: &HistorySnapshot) -> HistoryDiff {
     diff_hash_maps(&a_map, &b_map)
 }
 
-fn diff_snapshot_to_worktree(target_dir: &Path, schema: &Schema, snapshot: &HistorySnapshot) -> Result<HistoryDiff> {
+fn diff_snapshot_to_worktree(
+    target_dir: &Path,
+    schema: &Schema,
+    snapshot: &HistorySnapshot,
+) -> Result<HistoryDiff> {
     let snapshot_map = snapshot
         .files
         .iter()
@@ -5894,7 +6720,11 @@ struct RestorePlan {
     remove_paths: Vec<String>,
 }
 
-fn restore_plan(target_dir: &Path, schema: &Schema, snapshot: &HistorySnapshot) -> Result<RestorePlan> {
+fn restore_plan(
+    target_dir: &Path,
+    schema: &Schema,
+    snapshot: &HistorySnapshot,
+) -> Result<RestorePlan> {
     let current = collect_history_file_records(target_dir, schema)?;
     let snapshot_paths = snapshot
         .files
@@ -5975,11 +6805,21 @@ fn atomic_copy_file(src: &Path, dst: &Path) -> Result<()> {
     ));
     if let Err(err) = fs::write(&tmp_path, content) {
         let _ = fs::remove_file(&tmp_path);
-        return Err(format!("failed to write restore temp {}: {}", tmp_path.display(), err).into());
+        return Err(format!(
+            "failed to write restore temp {}: {}",
+            tmp_path.display(),
+            err
+        )
+        .into());
     }
     if let Err(err) = fs::rename(&tmp_path, dst) {
         let _ = fs::remove_file(&tmp_path);
-        return Err(format!("failed to replace {} from restore temp: {}", dst.display(), err).into());
+        return Err(format!(
+            "failed to replace {} from restore temp: {}",
+            dst.display(),
+            err
+        )
+        .into());
     }
     Ok(())
 }
@@ -5994,8 +6834,14 @@ fn render_index_summary(artifact: &IndexArtifact) -> String {
         artifact.history_latest_snapshot.as_deref().unwrap_or("-")
     ));
     out.push_str(&format!("- History dirty: `{}`\n", artifact.history_dirty));
-    out.push_str(&format!("- Host git dirty: `{}`\n", artifact.host_git_dirty));
-    out.push_str(&format!("- Relations built: `{}`\n\n", artifact.relations.len()));
+    out.push_str(&format!(
+        "- Host git dirty: `{}`\n",
+        artifact.host_git_dirty
+    ));
+    out.push_str(&format!(
+        "- Relations built: `{}`\n\n",
+        artifact.relations.len()
+    ));
 
     out.push_str("## Top Anchor Docs\n\n");
     let mut anchor_docs = artifact
@@ -6019,7 +6865,9 @@ fn render_index_summary(artifact: &IndexArtifact) -> String {
     out.push_str("\n## Relation Types\n\n");
     let mut relation_counts = BTreeMap::<String, usize>::new();
     for relation in &artifact.relations {
-        *relation_counts.entry(relation.relation_type.clone()).or_insert(0) += 1;
+        *relation_counts
+            .entry(relation.relation_type.clone())
+            .or_insert(0) += 1;
     }
     for (relation_type, count) in relation_counts {
         out.push_str(&format!("- `{}`: `{}`\n", relation_type, count));
@@ -6054,11 +6902,17 @@ fn sql_string_literal(value: &str) -> String {
 }
 
 fn sql_opt_literal(value: Option<&str>) -> String {
-    value.map(sql_string_literal).unwrap_or_else(|| "NULL".to_string())
+    value
+        .map(sql_string_literal)
+        .unwrap_or_else(|| "NULL".to_string())
 }
 
 fn sql_bool(value: bool) -> i32 {
-    if value { 1 } else { 0 }
+    if value {
+        1
+    } else {
+        0
+    }
 }
 
 fn print_rank_rows(result: &QueryResult) {
@@ -6093,7 +6947,12 @@ fn print_list_docs_rows(result: &QueryResult) {
     }
 }
 
-fn print_inspect_output(doc: &QueryResult, outgoing: &QueryResult, incoming: &QueryResult, checks: &QueryResult) {
+fn print_inspect_output(
+    doc: &QueryResult,
+    outgoing: &QueryResult,
+    incoming: &QueryResult,
+    checks: &QueryResult,
+) {
     let row = &doc.rows[0];
     println!("Path: {}", cell(row, 0));
     println!("Title: {}", cell(row, 1));
@@ -6148,7 +7007,12 @@ fn print_inspect_output(doc: &QueryResult, outgoing: &QueryResult, incoming: &Qu
         println!("- none");
     } else {
         for check in &checks.rows {
-            println!("- [{}] {} :: {}", cell(check, 0), cell(check, 1), cell(check, 2));
+            println!(
+                "- [{}] {} :: {}",
+                cell(check, 0),
+                cell(check, 1),
+                cell(check, 2)
+            );
             if !cell(check, 3).is_empty() && cell(check, 3) != "{}" {
                 println!("  evidence: {}", cell(check, 3));
             }
@@ -6209,7 +7073,10 @@ fn print_query_candidates(query_terms: &str, candidates: &[QueryCandidate]) {
 
 fn print_context_packet(label: &str, input: &str, packet: &ContextPacket) {
     println!("{}: {}", label, input);
-    println!("Anchor: {} [{}] :: {}", packet.anchor.path, packet.anchor.role, packet.anchor.title);
+    println!(
+        "Anchor: {} [{}] :: {}",
+        packet.anchor.path, packet.anchor.role, packet.anchor.title
+    );
     if !packet.anchor.summary.is_empty() {
         println!("Summary: {}", packet.anchor.summary);
     }
@@ -6238,7 +7105,11 @@ fn print_relation_list(relations: &[DocRelation], incoming: bool) {
         return;
     }
     for relation in relations {
-        let path = if incoming { &relation.src_path } else { &relation.dst_path };
+        let path = if incoming {
+            &relation.src_path
+        } else {
+            &relation.dst_path
+        };
         println!(
             "- {} via {} ({}, confidence={:.2})",
             path, relation.relation_type, relation.reason, relation.confidence
@@ -6256,7 +7127,11 @@ fn print_path_list(paths: &[String]) {
     }
 }
 
-fn filter_and_suppress_checks(result: &QueryResult, schema: &Schema, options: &CommandOptions) -> Vec<CheckView> {
+fn filter_and_suppress_checks(
+    result: &QueryResult,
+    schema: &Schema,
+    options: &CommandOptions,
+) -> Vec<CheckView> {
     result
         .rows
         .iter()
@@ -6268,10 +7143,9 @@ fn filter_and_suppress_checks(result: &QueryResult, schema: &Schema, options: &C
                 }
             }
             let subject_path = cell(row, 2).to_string();
-            let suppression = schema
-                .suppressions
-                .iter()
-                .find(|suppression| suppression.rule_id == rule_id && suppression.path == subject_path);
+            let suppression = schema.suppressions.iter().find(|suppression| {
+                suppression.rule_id == rule_id && suppression.path == subject_path
+            });
             Some(CheckView {
                 severity: cell(row, 0).to_string(),
                 rule_id,
@@ -6308,22 +7182,51 @@ fn rule_group(rule_id: &str) -> String {
     }
 }
 
-fn render_check_json(target_dir: &Path, docs_count: usize, relation_count: usize, checks: &[CheckView]) -> String {
+fn render_check_json(
+    target_dir: &Path,
+    docs_count: usize,
+    relation_count: usize,
+    checks: &[CheckView],
+) -> String {
     let mut out = String::new();
     out.push_str("{\n");
-    out.push_str(&format!("  \"target_dir\": {},\n", json_string(&absolute_display_path(target_dir))));
+    out.push_str(&format!(
+        "  \"target_dir\": {},\n",
+        json_string(&absolute_display_path(target_dir))
+    ));
     out.push_str(&format!("  \"docs_count\": {},\n", docs_count));
     out.push_str(&format!("  \"relation_count\": {},\n", relation_count));
     out.push_str("  \"checks\": [\n");
     for (idx, check) in checks.iter().enumerate() {
         out.push_str("    {\n");
-        out.push_str(&format!("      \"severity\": {},\n", json_string(&check.severity)));
-        out.push_str(&format!("      \"rule_id\": {},\n", json_string(&check.rule_id)));
-        out.push_str(&format!("      \"rule_group\": {},\n", json_string(&rule_group(&check.rule_id))));
-        out.push_str(&format!("      \"subject_path\": {},\n", json_string(&check.subject_path)));
-        out.push_str(&format!("      \"message\": {},\n", json_string(&check.message)));
-        out.push_str(&format!("      \"evidence_json\": {},\n", json_value_or_string(&check.evidence_json)));
-        out.push_str(&format!("      \"suppressed\": {},\n", json_bool(check.suppressed)));
+        out.push_str(&format!(
+            "      \"severity\": {},\n",
+            json_string(&check.severity)
+        ));
+        out.push_str(&format!(
+            "      \"rule_id\": {},\n",
+            json_string(&check.rule_id)
+        ));
+        out.push_str(&format!(
+            "      \"rule_group\": {},\n",
+            json_string(&rule_group(&check.rule_id))
+        ));
+        out.push_str(&format!(
+            "      \"subject_path\": {},\n",
+            json_string(&check.subject_path)
+        ));
+        out.push_str(&format!(
+            "      \"message\": {},\n",
+            json_string(&check.message)
+        ));
+        out.push_str(&format!(
+            "      \"evidence_json\": {},\n",
+            json_value_or_string(&check.evidence_json)
+        ));
+        out.push_str(&format!(
+            "      \"suppressed\": {},\n",
+            json_bool(check.suppressed)
+        ));
         out.push_str(&format!(
             "      \"suppression_reason\": {}\n",
             json_opt_string(check.suppression_reason.as_deref())
@@ -6362,13 +7265,22 @@ fn render_context_packet_json(kind: &str, input: &str, packet: &ContextPacket) -
     out.push_str("  \"anchor\": ");
     out.push_str(&render_query_candidate_json(&packet.anchor, 2));
     out.push_str(",\n");
-    out.push_str(&format!("  \"incoming\": {},\n", render_relations_json(&packet.incoming)));
-    out.push_str(&format!("  \"outgoing\": {},\n", render_relations_json(&packet.outgoing)));
+    out.push_str(&format!(
+        "  \"incoming\": {},\n",
+        render_relations_json(&packet.incoming)
+    ));
+    out.push_str(&format!(
+        "  \"outgoing\": {},\n",
+        render_relations_json(&packet.outgoing)
+    ));
     out.push_str(&format!(
         "  \"collection_siblings\": {},\n",
         json_string_array(&packet.collection_siblings)
     ));
-    out.push_str(&format!("  \"same_scope_docs\": {},\n", json_string_array(&packet.same_scope_docs)));
+    out.push_str(&format!(
+        "  \"same_scope_docs\": {},\n",
+        json_string_array(&packet.same_scope_docs)
+    ));
     out.push_str(&format!(
         "  \"recommended_reading_order\": {}\n",
         json_string_array(&packet.recommended_reading_order)
@@ -6425,11 +7337,19 @@ fn cell<'a>(row: &'a [Option<String>], index: usize) -> &'a str {
 }
 
 fn blank_as_dash(value: &str) -> &str {
-    if value.is_empty() { "-" } else { value }
+    if value.is_empty() {
+        "-"
+    } else {
+        value
+    }
 }
 
 fn yes_no(value: &str) -> &str {
-    if value == "1" { "yes" } else { "no" }
+    if value == "1" {
+        "yes"
+    } else {
+        "no"
+    }
 }
 
 fn json_string_array(values: &[String]) -> String {
@@ -6457,7 +7377,11 @@ fn json_opt_string(value: Option<&str>) -> String {
 }
 
 fn json_bool(value: bool) -> &'static str {
-    if value { "true" } else { "false" }
+    if value {
+        "true"
+    } else {
+        "false"
+    }
 }
 
 fn json_string(value: &str) -> String {
@@ -6510,7 +7434,11 @@ fn render_template(rel_path: &str, docs_root: &str) -> Result<String> {
     Ok(raw.replace("{{docs_root}}", docs_root))
 }
 
-fn render_entrypoint_template(rel_path: &str, schema: &Schema, paths: &RenderPaths) -> Result<String> {
+fn render_entrypoint_template(
+    rel_path: &str,
+    schema: &Schema,
+    paths: &RenderPaths,
+) -> Result<String> {
     let raw = load_bundled_text(rel_path)?;
     Ok(raw
         .replace("{{docs_root}}", &schema.managed_root)
@@ -6521,7 +7449,10 @@ fn render_entrypoint_template(rel_path: &str, schema: &Schema, paths: &RenderPat
         .replace("{{product_specs_index_path}}", &paths.product_specs_index)
         .replace("{{design_docs_index_path}}", &paths.design_docs_index)
         .replace("{{decisions_index_path}}", &paths.decisions_index)
-        .replace("{{exec_plans_active_index_path}}", &paths.exec_plans_active_index)
+        .replace(
+            "{{exec_plans_active_index_path}}",
+            &paths.exec_plans_active_index,
+        )
         .replace("{{worklog_active_index_path}}", &paths.worklog_active_index)
         .replace("{{generated_index_path}}", &paths.generated_index)
         .replace("{{references_index_path}}", &paths.references_index))
@@ -6566,11 +7497,26 @@ fn render_template_rows(schema: &Schema) -> String {
 
 fn render_core_rows(schema: &Schema, paths: &RenderPaths) -> String {
     let mut rows = vec![
-        format!("| `{}` | Project orientation and stable boundaries | Active |", paths.architecture),
-        format!("| `{}` | Top-level docs manifest and reading order | Active |", paths.manifest),
-        format!("| `{}` | Current project map and active focus | Active |", paths.project_map),
-        format!("| `{}` | Documentation rules and update policy | Stable |", format!("{}/DOCUMENTATION_SYSTEM.md", schema.managed_root)),
-        format!("| `{}` | Validation and operating commands | Active |", paths.commands),
+        format!(
+            "| `{}` | Project orientation and stable boundaries | Active |",
+            paths.architecture
+        ),
+        format!(
+            "| `{}` | Top-level docs manifest and reading order | Active |",
+            paths.manifest
+        ),
+        format!(
+            "| `{}` | Current project map and active focus | Active |",
+            paths.project_map
+        ),
+        format!(
+            "| `{}` | Documentation rules and update policy | Stable |",
+            format!("{}/DOCUMENTATION_SYSTEM.md", schema.managed_root)
+        ),
+        format!(
+            "| `{}` | Validation and operating commands | Active |",
+            paths.commands
+        ),
     ];
     rows.sort();
     rows.join("\n")
@@ -6663,15 +7609,27 @@ fn collection_title(spec: &DocCollectionSpec) -> String {
 
 fn collection_purpose(spec: &DocCollectionSpec) -> String {
     match spec.name.as_str() {
-        "product_specs" => "User-visible behavior, product intent, and feature boundaries.".to_string(),
+        "product_specs" => {
+            "User-visible behavior, product intent, and feature boundaries.".to_string()
+        }
         "design_docs" => "Technical designs, tradeoffs, and implementation boundaries.".to_string(),
         "decisions" => "Durable decisions and their consequences.".to_string(),
-        "exec_plans_active" => "Current multi-step work that may need recovery or continuation.".to_string(),
-        "exec_plans_completed" => "Archived execution plans kept for history and recovery reference.".to_string(),
-        "worklog_active" => "Ongoing change logs, validation notes, and handoff context.".to_string(),
-        "worklog_archive" => "Archived worklogs kept for traceability, not first-pass reading.".to_string(),
+        "exec_plans_active" => {
+            "Current multi-step work that may need recovery or continuation.".to_string()
+        }
+        "exec_plans_completed" => {
+            "Archived execution plans kept for history and recovery reference.".to_string()
+        }
+        "worklog_active" => {
+            "Ongoing change logs, validation notes, and handoff context.".to_string()
+        }
+        "worklog_archive" => {
+            "Archived worklogs kept for traceability, not first-pass reading.".to_string()
+        }
         "operations" => "Operational procedures, runbooks, and maintenance guidance.".to_string(),
-        "generated" => "Generated reports, inventories, and machine-produced artifacts.".to_string(),
+        "generated" => {
+            "Generated reports, inventories, and machine-produced artifacts.".to_string()
+        }
         "references" => "External or imported material used as supporting reference.".to_string(),
         _ => format!("Focused docs for `{}`.", spec.path),
     }
@@ -6731,7 +7689,11 @@ fn build_render_paths(schema: &Schema) -> RenderPaths {
         product_specs_index: collection_index_path(schema, "product_specs", "product-specs"),
         design_docs_index: collection_index_path(schema, "design_docs", "design-docs"),
         decisions_index: collection_index_path(schema, "decisions", "decisions"),
-        exec_plans_active_index: collection_index_path(schema, "exec_plans_active", "exec-plans/active"),
+        exec_plans_active_index: collection_index_path(
+            schema,
+            "exec_plans_active",
+            "exec-plans/active",
+        ),
         worklog_active_index: collection_index_path(schema, "worklog_active", "worklog/active"),
         generated_index: collection_index_path(schema, "generated", "generated"),
         references_index: collection_index_path(schema, "references", "references"),
@@ -6802,7 +7764,9 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn bundled_schema() -> Schema {
-        let raw = fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(BUNDLED_SCHEMA_PATH)).unwrap();
+        let raw =
+            fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(BUNDLED_SCHEMA_PATH))
+                .unwrap();
         parse_schema(&raw).unwrap()
     }
 
@@ -6811,7 +7775,12 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let path = env::temp_dir().join(format!("harnesskit-{}-{}-{}", name, std::process::id(), nanos));
+        let path = env::temp_dir().join(format!(
+            "harnesskit-{}-{}-{}",
+            name,
+            std::process::id(),
+            nanos
+        ));
         fs::create_dir_all(&path).unwrap();
         path
     }
@@ -6821,12 +7790,19 @@ mod tests {
         let schema = bundled_schema();
 
         assert_eq!(schema.managed_root, "docs");
-        assert_eq!(schema.entrypoints.architecture.as_deref(), Some("ARCHITECTURE.md"));
+        assert_eq!(
+            schema.entrypoints.architecture.as_deref(),
+            Some("ARCHITECTURE.md")
+        );
         assert!(schema
             .core_files
             .iter()
-            .any(|spec| spec.template == "architecture" && spec.root_path.as_deref() == Some("ARCHITECTURE.md")));
-        assert!(schema.doc_collections.iter().any(|spec| spec.name == "product_specs" && spec.path == "product-specs"));
+            .any(|spec| spec.template == "architecture"
+                && spec.root_path.as_deref() == Some("ARCHITECTURE.md")));
+        assert!(schema
+            .doc_collections
+            .iter()
+            .any(|spec| spec.name == "product_specs" && spec.path == "product-specs"));
         assert!(schema
             .doc_collections
             .iter()
@@ -6980,22 +7956,37 @@ rules:
         .unwrap();
         let artifact = build_index_artifact(&target, &schema).unwrap();
 
-        assert!(artifact.docs.iter().any(|doc| doc.path == "docs/product-specs/example.md"));
-        assert!(artifact.docs.iter().any(|doc| doc.path == "docs/design-docs/example-design.md"));
+        assert!(artifact
+            .docs
+            .iter()
+            .any(|doc| doc.path == "docs/product-specs/example.md"));
+        assert!(artifact
+            .docs
+            .iter()
+            .any(|doc| doc.path == "docs/design-docs/example-design.md"));
         assert!(artifact
             .relations
             .iter()
-            .any(|relation| relation.relation_type == "doc_indexes_doc" && relation.dst_path == "docs/product-specs/example.md"));
+            .any(|relation| relation.relation_type == "doc_indexes_doc"
+                && relation.dst_path == "docs/product-specs/example.md"));
         assert!(artifact
             .relations
             .iter()
-            .any(|relation| relation.relation_type == "doc_scopes_code" && relation.dst_path == "src/example"));
+            .any(|relation| relation.relation_type == "doc_scopes_code"
+                && relation.dst_path == "src/example"));
         assert!(artifact
             .relations
             .iter()
-            .any(|relation| relation.relation_type == "supersedes" && relation.dst_path == "docs/design-docs/older.md"));
-        assert!(artifact.docs.iter().any(|doc| doc.path == "AGENTS.md" && doc.is_entrypoint));
-        assert!(artifact.docs.iter().any(|doc| doc.path == "docs/index.md" && doc.role == "manifest"));
+            .any(|relation| relation.relation_type == "supersedes"
+                && relation.dst_path == "docs/design-docs/older.md"));
+        assert!(artifact
+            .docs
+            .iter()
+            .any(|doc| doc.path == "AGENTS.md" && doc.is_entrypoint));
+        assert!(artifact
+            .docs
+            .iter()
+            .any(|doc| doc.path == "docs/index.md" && doc.role == "manifest"));
 
         let json = render_index_json(&artifact);
         assert!(json.contains("\"docs\""));
@@ -7055,10 +8046,7 @@ rules:
             "---\nstatus: active\nauthority: canonical\n---\n\n# Source\n\n`` [Target](target.md)\n",
         );
 
-        assert_eq!(
-            parsed.links,
-            vec!["docs/design-docs/target.md".to_string()]
-        );
+        assert_eq!(parsed.links, vec!["docs/design-docs/target.md".to_string()]);
     }
 
     #[test]
@@ -7078,8 +8066,14 @@ rules:
             "---\nstatus: active\nauthority: canonical\n---",
         );
 
-        assert_eq!(parsed.frontmatter.get("status").map(String::as_str), Some("active"));
-        assert_eq!(parsed.frontmatter.get("authority").map(String::as_str), Some("canonical"));
+        assert_eq!(
+            parsed.frontmatter.get("status").map(String::as_str),
+            Some("active")
+        );
+        assert_eq!(
+            parsed.frontmatter.get("authority").map(String::as_str),
+            Some("canonical")
+        );
         assert!(parsed.body_text.is_empty());
     }
 
@@ -7090,8 +8084,14 @@ rules:
             "---\r\nstatus: active\r\nauthority: canonical\r\nscope_paths:\r\n  - src/example\r\n---\r\n\r\n# CRLF Doc\r\n\r\nSummary line.\r\n",
         );
 
-        assert_eq!(parsed.frontmatter.get("status").map(String::as_str), Some("active"));
-        assert_eq!(parsed.frontmatter.get("authority").map(String::as_str), Some("canonical"));
+        assert_eq!(
+            parsed.frontmatter.get("status").map(String::as_str),
+            Some("active")
+        );
+        assert_eq!(
+            parsed.frontmatter.get("authority").map(String::as_str),
+            Some("canonical")
+        );
         assert_eq!(parsed.scope_paths, vec!["src/example".to_string()]);
         assert_eq!(parsed.title.as_deref(), Some("CRLF Doc"));
     }
@@ -7211,7 +8211,10 @@ rules:
 
         let artifact = build_index_artifact(&target, &schema).unwrap();
 
-        assert!(artifact.docs.iter().any(|doc| doc.path == "docs/design-docs/non-utf8.md"));
+        assert!(artifact
+            .docs
+            .iter()
+            .any(|doc| doc.path == "docs/design-docs/non-utf8.md"));
 
         fs::remove_dir_all(target).unwrap();
     }
@@ -7246,7 +8249,10 @@ rules:
             .collect::<Vec<_>>();
 
         assert_eq!(matching_relations.len(), 1);
-        assert_eq!(matching_relations[0].relation_type, "doc_mentions_code_path");
+        assert_eq!(
+            matching_relations[0].relation_type,
+            "doc_mentions_code_path"
+        );
         assert_eq!(matching_relations[0].reason, "inline-code-path");
 
         fs::remove_dir_all(target).unwrap();
@@ -7254,7 +8260,8 @@ rules:
 
     #[test]
     fn inline_code_triple_backticks_do_not_toggle_fence() {
-        let mentions = extract_inline_code_path_mentions("Inline `src/lib.rs ``` docs/project.md` mention.\n");
+        let mentions =
+            extract_inline_code_path_mentions("Inline `src/lib.rs ``` docs/project.md` mention.\n");
 
         assert!(mentions.contains(&"src/lib.rs".to_string()));
         assert!(mentions.contains(&"docs/project.md".to_string()));
@@ -7277,15 +8284,18 @@ rules:
         assert!(artifact
             .checks
             .iter()
-            .any(|check| check.rule_id == "missing-entrypoint-doc" && check.subject_path == "CLAUDE.md"));
+            .any(|check| check.rule_id == "missing-entrypoint-doc"
+                && check.subject_path == "CLAUDE.md"));
         assert!(artifact
             .checks
             .iter()
-            .any(|check| check.rule_id == "missing-required-doc" && check.subject_path == "docs/commands.md"));
+            .any(|check| check.rule_id == "missing-required-doc"
+                && check.subject_path == "docs/commands.md"));
         assert!(artifact
             .checks
             .iter()
-            .any(|check| check.rule_id == "missing-collection-index" && check.subject_path == "docs/generated/index.md"));
+            .any(|check| check.rule_id == "missing-collection-index"
+                && check.subject_path == "docs/generated/index.md"));
 
         fs::remove_dir_all(target).unwrap();
     }
@@ -7311,7 +8321,10 @@ rules:
             .query("SELECT path, content_hash, file_size_bytes, mtime_unix FROM file_states WHERE path = 'docs/design-docs/example-design.md';")
             .unwrap();
         assert_eq!(file_states.rows.len(), 1);
-        assert_eq!(cell(&file_states.rows[0], 0), "docs/design-docs/example-design.md");
+        assert_eq!(
+            cell(&file_states.rows[0], 0),
+            "docs/design-docs/example-design.md"
+        );
         assert!(!cell(&file_states.rows[0], 1).is_empty());
         assert!(cell(&file_states.rows[0], 2).parse::<u64>().unwrap() > 0);
 
@@ -7525,7 +8538,10 @@ rules:
             ))
             .unwrap();
 
-        assert!(result.rows.iter().any(|row| cell(row, 0) == "docs/design-docs/schema-engine.md"));
+        assert!(result
+            .rows
+            .iter()
+            .any(|row| cell(row, 0) == "docs/design-docs/schema-engine.md"));
         let row = result
             .rows
             .iter()
@@ -7567,7 +8583,9 @@ rules:
         let delta = compute_fact_store_delta(&context).unwrap();
 
         assert!(delta.changed_paths.contains(&"docs/project.md".to_string()));
-        assert!(delta.added_paths.contains(&"docs/design-docs/new-one.md".to_string()));
+        assert!(delta
+            .added_paths
+            .contains(&"docs/design-docs/new-one.md".to_string()));
         assert!(delta
             .removed_paths
             .contains(&"docs/commands.md".to_string()));
@@ -7607,7 +8625,11 @@ rules:
 
         let db = open_fact_store(&target).unwrap();
         assert_eq!(
-            scalar_count(&db, "SELECT COUNT(*) FROM docs WHERE path = 'docs/DOCUMENTATION_SYSTEM.md';").unwrap(),
+            scalar_count(
+                &db,
+                "SELECT COUNT(*) FROM docs WHERE path = 'docs/DOCUMENTATION_SYSTEM.md';"
+            )
+            .unwrap(),
             1
         );
         assert_eq!(
@@ -7647,7 +8669,10 @@ rules:
             .query("SELECT summary FROM docs WHERE path = 'docs/project.md';")
             .unwrap();
         assert!(!cell(&commands_row.rows[0], 0).is_empty());
-        assert_eq!(unchanged_before, fs::read_to_string(target.join("docs/project.md")).unwrap());
+        assert_eq!(
+            unchanged_before,
+            fs::read_to_string(target.join("docs/project.md")).unwrap()
+        );
 
         fs::remove_dir_all(target).unwrap();
     }
@@ -7659,7 +8684,11 @@ rules:
         let schema_copy = render_schema_copy(&schema);
 
         materialize_from_schema(&target, &schema, &schema_copy, false).unwrap();
-        Command::new("git").arg("init").current_dir(&target).output().unwrap();
+        Command::new("git")
+            .arg("init")
+            .current_dir(&target)
+            .output()
+            .unwrap();
         Command::new("git")
             .args(["config", "user.email", "test@example.com"])
             .current_dir(&target)
@@ -7670,7 +8699,11 @@ rules:
             .current_dir(&target)
             .output()
             .unwrap();
-        Command::new("git").args(["add", "."]).current_dir(&target).output().unwrap();
+        Command::new("git")
+            .args(["add", "."])
+            .current_dir(&target)
+            .output()
+            .unwrap();
         Command::new("git")
             .args(["commit", "-m", "baseline"])
             .current_dir(&target)
@@ -7945,7 +8978,8 @@ rules:
                 format!("pub fn fresher_{}() {{}}\n", attempt),
             )
             .unwrap();
-            if newest_existing_path_mtime(&target.join("src/fresh")).unwrap_or(0) > stale_doc_mtime {
+            if newest_existing_path_mtime(&target.join("src/fresh")).unwrap_or(0) > stale_doc_mtime
+            {
                 break;
             }
         }
@@ -7960,13 +8994,17 @@ rules:
         assert!(artifact
             .relations
             .iter()
-            .any(|relation| relation.relation_type == "code_mentions_doc" && relation.dst_path == "docs/design-docs/stale.md"));
+            .any(|relation| relation.relation_type == "code_mentions_doc"
+                && relation.dst_path == "docs/design-docs/stale.md"));
         assert!(rule_ids.contains("manifest-missing-doc"));
         assert!(rule_ids.contains("stale-explicit-anchor"));
         assert!(rule_ids.contains("overlap-heading-fingerprint"));
         assert!(rule_ids.contains("canonical-links-generated"));
         assert!(rule_ids.contains("frontmatter-field-not-allowed"));
-        assert!(artifact.checks.iter().all(|check| !check.evidence_json.is_empty()));
+        assert!(artifact
+            .checks
+            .iter()
+            .all(|check| !check.evidence_json.is_empty()));
 
         fs::remove_dir_all(target).unwrap();
     }
@@ -8035,7 +9073,10 @@ suppressions:
 
         assert_eq!(checks.len(), 1);
         assert!(checks[0].suppressed);
-        assert_eq!(checks[0].suppression_reason.as_deref(), Some("accepted during migration"));
+        assert_eq!(
+            checks[0].suppression_reason.as_deref(),
+            Some("accepted during migration")
+        );
     }
 
     #[test]
@@ -8050,7 +9091,10 @@ suppressions:
         let context = load_engine_context(&args, 0).unwrap();
 
         assert_eq!(context.schema.suppressions.len(), 1);
-        assert_eq!(context.schema.suppressions[0].reason, "local project config");
+        assert_eq!(
+            context.schema.suppressions[0].reason,
+            "local project config"
+        );
 
         fs::remove_dir_all(target).unwrap();
     }
@@ -8210,7 +9254,8 @@ suppressions:
         write_fact_store(&target, &artifact).unwrap();
         let db = open_fact_store(&target).unwrap();
 
-        let packet = context_packet_for_doc(&db, &target, "docs/design-docs/semantic-layer.md").unwrap();
+        let packet =
+            context_packet_for_doc(&db, &target, "docs/design-docs/semantic-layer.md").unwrap();
 
         assert!(packet
             .incoming
@@ -8230,7 +9275,8 @@ suppressions:
             packet.recommended_reading_order.first().map(String::as_str),
             Some("docs/design-docs/semantic-layer.md")
         );
-        assert!(render_context_packet_json("context", "semantic", &packet).contains("\"recommended_reading_order\""));
+        assert!(render_context_packet_json("context", "semantic", &packet)
+            .contains("\"recommended_reading_order\""));
 
         fs::remove_dir_all(target).unwrap();
     }
@@ -8318,11 +9364,15 @@ suppressions:
         let status = compute_history_status(&target, &schema).unwrap();
         assert_eq!(status.latest_snapshot.as_deref(), Some(first.id.as_str()));
         assert!(status.changed.contains(&"docs/project.md".to_string()));
-        assert!(status.added.contains(&"docs/design-docs/history-added.md".to_string()));
+        assert!(status
+            .added
+            .contains(&"docs/design-docs/history-added.md".to_string()));
 
         let diff = diff_snapshot_to_worktree(&target, &schema, &first).unwrap();
         assert!(diff.changed.contains(&"docs/project.md".to_string()));
-        assert!(diff.added.contains(&"docs/design-docs/history-added.md".to_string()));
+        assert!(diff
+            .added
+            .contains(&"docs/design-docs/history-added.md".to_string()));
 
         let plan = restore_plan(&target, &schema, &first).unwrap();
         assert!(plan
@@ -8330,7 +9380,10 @@ suppressions:
             .contains(&"docs/design-docs/history-added.md".to_string()));
         apply_restore_plan(&target, &plan).unwrap();
 
-        assert_eq!(fs::read_to_string(target.join("docs/project.md")).unwrap(), original_project);
+        assert_eq!(
+            fs::read_to_string(target.join("docs/project.md")).unwrap(),
+            original_project
+        );
         assert!(!target.join("docs/design-docs/history-added.md").exists());
 
         fs::remove_dir_all(target).unwrap();
@@ -8407,7 +9460,10 @@ suppressions:
         .unwrap();
 
         let artifact = build_index_artifact(&target, &schema).unwrap();
-        assert_eq!(artifact.history_latest_snapshot.as_deref(), Some(snapshot.id.as_str()));
+        assert_eq!(
+            artifact.history_latest_snapshot.as_deref(),
+            Some(snapshot.id.as_str())
+        );
         assert!(artifact.history_dirty);
         assert!(artifact.history_tracked_files_count > 0);
         assert!(artifact
