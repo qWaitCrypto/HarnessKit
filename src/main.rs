@@ -563,7 +563,15 @@ fn run_update(args: &[String]) -> Result<()> {
     let current_exe = env::current_exe()?;
     let tmp_dir = env::temp_dir().join(format!("harnesskit-update-{}-{}", std::process::id(), now_unix()));
     fs::create_dir_all(&tmp_dir)?;
-    let result = update_from_release(&asset_base_url, &archive, &package, &tmp_dir, &current_exe, &version, &target);
+    let result = update_from_release(
+        &asset_base_url,
+        &archive,
+        &package,
+        &tmp_dir,
+        &current_exe,
+        &version,
+        &target,
+    );
     let _ = fs::remove_dir_all(&tmp_dir);
     result
 }
@@ -595,7 +603,10 @@ fn update_from_release(
     let archive_path = tmp_dir.join(archive);
     let sums_path = tmp_dir.join("SHA256SUMS");
     println!("Downloading HarnessKit {} for {}...", version, target);
-    download_to_file(&format!("{}/{}", asset_base_url.trim_end_matches('/'), archive), &archive_path)?;
+    download_to_file(
+        &format!("{}/{}", asset_base_url.trim_end_matches('/'), archive),
+        &archive_path,
+    )?;
     download_to_file(&format!("{}/SHA256SUMS", asset_base_url.trim_end_matches('/')), &sums_path)?;
     verify_sha256(tmp_dir, "SHA256SUMS")?;
     run_command(
@@ -1601,7 +1612,11 @@ fn query_candidates(db: &SqliteConnection, target_dir: &Path, query_terms: &str)
     })
 }
 
-fn query_rows_to_candidates(result: &QueryResult, target_dir: &Path, query_terms: &str) -> Vec<QueryCandidate> {
+fn query_rows_to_candidates(
+    result: &QueryResult,
+    target_dir: &Path,
+    query_terms: &str,
+) -> Vec<QueryCandidate> {
     result
         .rows
         .iter()
@@ -1613,7 +1628,8 @@ fn query_rows_to_candidates(result: &QueryResult, target_dir: &Path, query_terms
             let snippet = cell(row, 10).to_string();
             let (snippet_heading, snippet_location, snippet) =
                 if snippet_heading.is_empty() || snippet_location.is_empty() || snippet.is_empty() {
-                    let computed = fallback.get_or_insert_with(|| snippet_for_doc(target_dir, &path, query_terms));
+                    let computed =
+                        fallback.get_or_insert_with(|| snippet_for_doc(target_dir, &path, query_terms));
                     (
                         if snippet_heading.is_empty() {
                             computed.0.clone()
@@ -1913,7 +1929,11 @@ fn ensure_writable_dir(path: &Path, purpose: &str) -> Result<()> {
         )
     })?;
 
-    let probe = path.join(format!(".harnesskit-write-test-{}-{}", std::process::id(), now_unix()));
+    let probe = path.join(format!(
+        ".harnesskit-write-test-{}-{}",
+        std::process::id(),
+        now_unix()
+    ));
     match fs::write(&probe, b"ok") {
         Ok(()) => {
             let _ = fs::remove_file(&probe);
@@ -8110,7 +8130,10 @@ suppressions:
         let rows = query_candidates(&db, &target, "sample").unwrap();
 
         assert_eq!(rows.rows.len(), 12);
-        assert!(rows.rows.iter().all(|row| split_pipe_list(cell(row, 7)).len() <= 8));
+        assert!(rows
+            .rows
+            .iter()
+            .all(|row| split_pipe_list(cell(row, 7)).len() <= 8));
 
         fs::remove_dir_all(target).unwrap();
     }

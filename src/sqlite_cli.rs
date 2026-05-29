@@ -1,7 +1,7 @@
 use crate::Result;
 use std::fs;
-use std::path::{Path, PathBuf};
 use std::io::{ErrorKind, Write};
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 const COLUMN_SEPARATOR: &str = "\u{001f}";

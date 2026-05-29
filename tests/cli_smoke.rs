@@ -12,7 +12,12 @@ fn temp_dir(name: &str) -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let path = std::env::temp_dir().join(format!("harnesskit-cli-{}-{}-{}", name, std::process::id(), nanos));
+    let path = std::env::temp_dir().join(format!(
+        "harnesskit-cli-{}-{}-{}",
+        name,
+        std::process::id(),
+        nanos
+    ));
     fs::create_dir_all(&path).unwrap();
     path
 }
@@ -30,7 +35,11 @@ fn run(args: &[&str]) -> String {
 }
 
 fn run_in(dir: &Path, program: &str, args: &[&str]) {
-    let output = Command::new(program).args(args).current_dir(dir).output().unwrap();
+    let output = Command::new(program)
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .unwrap();
     assert!(
         output.status.success(),
         "command failed: {} {}\nstdout:\n{}\nstderr:\n{}",
@@ -88,7 +97,12 @@ fn cli_init_preview_local_tracked_and_context_json_smoke() {
     let doctor = run(&["doctor", tracked.to_str().unwrap(), "--json"]);
     assert!(doctor.contains("\"sqlite3\""));
     assert!(doctor.contains("\"state_writable\""));
-    let context = run(&["context", "architecture", tracked.to_str().unwrap(), "--json"]);
+    let context = run(&[
+        "context",
+        "architecture",
+        tracked.to_str().unwrap(),
+        "--json",
+    ]);
     assert!(context.contains("\"kind\": \"context\""));
     assert!(context.contains("\"recommended_reading_order\""));
 }
