@@ -7518,8 +7518,8 @@ fn render_core_rows(schema: &Schema, paths: &RenderPaths) -> String {
             paths.project_map
         ),
         format!(
-            "| `{}` | Documentation rules and update policy | Stable |",
-            format!("{}/DOCUMENTATION_SYSTEM.md", schema.managed_root)
+            "| `{}/DOCUMENTATION_SYSTEM.md` | Documentation rules and update policy | Stable |",
+            schema.managed_root
         ),
         format!(
             "| `{}` | Validation and operating commands | Active |",
