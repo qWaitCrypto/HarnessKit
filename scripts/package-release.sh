@@ -11,6 +11,7 @@ fi
 target_triple="x86_64-unknown-linux-gnu"
 version=""
 dist_dir=""
+use_target_dir=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -60,17 +61,33 @@ dist_dir="$(cd "${dist_dir}" && pwd)"
 package_name="harnesskit-${target_triple}"
 package_dir="${dist_dir}/${package_name}"
 archive="${dist_dir}/${package_name}.tar.gz"
+sums_file="${dist_dir}/SHA256SUMS"
 
 if [[ -x /usr/bin/rustc && -z "${RUSTC:-}" ]]; then
-  CARGO_TARGET_DIR="${target_dir}" RUSTC=/usr/bin/rustc "${cargo_bin}" build --release --manifest-path "${repo_root}/Cargo.toml"
+  if [[ "${target_triple}" == "x86_64-unknown-linux-gnu" ]]; then
+    CARGO_TARGET_DIR="${target_dir}" RUSTC=/usr/bin/rustc "${cargo_bin}" build --release --manifest-path "${repo_root}/Cargo.toml"
+  else
+    use_target_dir=1
+    CARGO_TARGET_DIR="${target_dir}" RUSTC=/usr/bin/rustc "${cargo_bin}" build --release --target "${target_triple}" --manifest-path "${repo_root}/Cargo.toml"
+  fi
 else
-  CARGO_TARGET_DIR="${target_dir}" "${cargo_bin}" build --release --manifest-path "${repo_root}/Cargo.toml"
+  if [[ "${target_triple}" == "x86_64-unknown-linux-gnu" ]]; then
+    CARGO_TARGET_DIR="${target_dir}" "${cargo_bin}" build --release --manifest-path "${repo_root}/Cargo.toml"
+  else
+    use_target_dir=1
+    CARGO_TARGET_DIR="${target_dir}" "${cargo_bin}" build --release --target "${target_triple}" --manifest-path "${repo_root}/Cargo.toml"
+  fi
+fi
+
+binary_path="${target_dir}/release/harnesskit"
+if [[ "${use_target_dir}" -eq 1 ]]; then
+  binary_path="${target_dir}/${target_triple}/release/harnesskit"
 fi
 
 rm -rf "${package_dir}" "${archive}"
 mkdir -p "${package_dir}"
 
-cp "${target_dir}/release/harnesskit" "${package_dir}/harnesskit"
+cp "${binary_path}" "${package_dir}/harnesskit"
 cp "${repo_root}/README.md" "${package_dir}/README.md"
 cp "${repo_root}/LICENSE" "${package_dir}/LICENSE"
 cp -R "${repo_root}/agent-surfaces" "${package_dir}/agent-surfaces"
@@ -85,8 +102,22 @@ EOF
 tar -czf "${archive}" -C "${dist_dir}" "${package_name}"
 (
   cd "${dist_dir}"
-  sha256sum "${package_name}.tar.gz" > SHA256SUMS
+  if [[ ! -f SHA256SUMS ]]; then
+    : > SHA256SUMS
+  fi
+  if [[ -f SHA256SUMS.tmp ]]; then
+    rm -f SHA256SUMS.tmp
+  fi
+  if [[ -f SHA256SUMS ]]; then
+    grep -v "  ${package_name}.tar.gz\$" SHA256SUMS > SHA256SUMS.tmp || true
+    mv SHA256SUMS.tmp SHA256SUMS
+  fi
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "${package_name}.tar.gz" >> SHA256SUMS
+  else
+    shasum -a 256 "${package_name}.tar.gz" >> SHA256SUMS
+  fi
 )
 
 echo "Packaged ${archive}"
-echo "Wrote ${dist_dir}/SHA256SUMS"
+echo "Wrote ${sums_file}"

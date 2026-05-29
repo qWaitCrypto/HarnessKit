@@ -128,7 +128,7 @@ When entering a repo that already has `.harnesskit/` or `AGENTS.md` / `CLAUDE.md
 
 All commands accept optional `[target_dir]`, `[--schema <path>]`, `[--docs-root <path>]` arguments. Defaults: target_dir = `.`, schema = bundled `file-first-v0.yaml`.
 
-In normal local shells, the default `.` is fine. In agent sandboxes, WSL/DrvFs mounts, or repositories whose path casing differs between the shell and the sandbox writable root, prefer passing the explicit project path:
+In most cases, the default `.` is fine. If HarnessKit diagnostics show that `target_dir`, `current_dir`, `PWD`, or `.harnesskit/state` do not refer to the intended writable project root, pass the project root explicitly:
 
 ```bash
 harnesskit check /absolute/project/path --json
@@ -136,7 +136,7 @@ harnesskit index /absolute/project/path
 harnesskit context "auth" /absolute/project/path --json
 ```
 
-Do this especially when a command reports `.harnesskit/state` as read-only or unable to open, while the project is expected to be writable. Some sandboxes bind-mount only the lexical project path as writable; a bare `.` can resolve through a differently cased or canonical path that is read-only. Do not fix this by deleting history. Retry with the explicit writable target path first.
+Use this to correct target selection before treating state as corrupt. Do not delete `.harnesskit/history` unless the user intentionally wants to discard local doc checkpoints.
 
 ### CLI Reference
 

@@ -111,12 +111,30 @@ detect_target() {
     Linux:x86_64|Linux:amd64)
       echo "x86_64-unknown-linux-gnu"
       ;;
+    Darwin:x86_64|Darwin:amd64)
+      echo "x86_64-apple-darwin"
+      ;;
+    Darwin:arm64|Darwin:aarch64)
+      echo "aarch64-apple-darwin"
+      ;;
     *)
       echo "unsupported platform: ${os} ${arch}" >&2
-      echo "This alpha installer currently supports Linux x86_64 only." >&2
+      echo "This alpha installer currently supports Linux x86_64 and macOS x86_64/arm64." >&2
       exit 1
       ;;
   esac
+}
+
+verify_sha256_file() {
+  local sums_file="$1"
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum -c "${sums_file}"
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 -c "${sums_file}"
+  else
+    echo "missing required command: sha256sum or shasum" >&2
+    exit 1
+  fi
 }
 
 download() {
@@ -178,7 +196,6 @@ PY
 }
 
 need_cmd tar
-need_cmd sha256sum
 if [[ "${install_codex_plugin}" -eq 1 ]]; then
   need_cmd python3
 fi
@@ -223,7 +240,7 @@ download "${asset_base_url}/SHA256SUMS" "${tmp_dir}/SHA256SUMS"
 
 (
   cd "${tmp_dir}"
-  sha256sum -c SHA256SUMS
+  verify_sha256_file SHA256SUMS
 )
 
 tar -xzf "${tmp_dir}/${archive}" -C "${tmp_dir}"

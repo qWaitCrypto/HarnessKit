@@ -2,6 +2,7 @@
 
 This repository uses HarnessKit.
 Use the HarnessKit skill for project docs, design, plans, and durable project memory.
+For documentation-related work, use the HarnessKit skill first.
 
 ## Start Here
 

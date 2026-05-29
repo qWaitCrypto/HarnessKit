@@ -573,8 +573,10 @@ fn detect_release_target() -> Result<String> {
     let arch = env::consts::ARCH;
     match (os, arch) {
         ("linux", "x86_64") => Ok("x86_64-unknown-linux-gnu".to_string()),
+        ("macos", "x86_64") => Ok("x86_64-apple-darwin".to_string()),
+        ("macos", "aarch64") => Ok("aarch64-apple-darwin".to_string()),
         _ => Err(format!(
-            "unsupported platform: {} {}. This alpha updater currently supports Linux x86_64 only.",
+            "unsupported platform: {} {}. This alpha updater currently supports Linux x86_64 and macOS x86_64/arm64.",
             os, arch
         )
         .into()),
@@ -675,13 +677,27 @@ fn download_to_file(url: &str, out: &Path) -> Result<()> {
 }
 
 fn verify_sha256(dir: &Path, sums_file: &str) -> Result<()> {
-    run_command(
-        Command::new("sha256sum")
-            .arg("-c")
-            .arg(sums_file)
-            .current_dir(dir),
-        "sha256 verification failed",
-    )
+    if command_exists("sha256sum") {
+        run_command(
+            Command::new("sha256sum")
+                .arg("-c")
+                .arg(sums_file)
+                .current_dir(dir),
+            "sha256 verification failed",
+        )
+    } else if command_exists("shasum") {
+        run_command(
+            Command::new("shasum")
+                .arg("-a")
+                .arg("256")
+                .arg("-c")
+                .arg(sums_file)
+                .current_dir(dir),
+            "sha256 verification failed",
+        )
+    } else {
+        Err("missing required command: sha256sum or shasum".into())
+    }
 }
 
 fn run_command(command: &mut Command, message: &str) -> Result<()> {
@@ -1503,31 +1519,45 @@ fn query_candidates(db: &SqliteConnection, target_dir: &Path, query_terms: &str)
             FROM base
             GROUP BY path
         ),
+        ranked AS (
+            SELECT path,
+                   title,
+                   role,
+                   status,
+                   summary,
+                   incoming_links,
+                   lexical_score,
+                   why,
+                   (lexical_score + (incoming_links * 0.05)) AS score
+            FROM merged
+            ORDER BY score DESC, path ASC
+            LIMIT 12
+        ),
         expanded AS (
-            SELECT m.path AS anchor_path,
+            SELECT rnk.path AS anchor_path,
                    r.dst_path AS neighbor_path
-            FROM merged m
-            JOIN relations r ON r.src_path = m.path
+            FROM ranked rnk
+            JOIN relations r ON r.src_path = rnk.path
             WHERE r.dst_path LIKE '%.md'
             UNION
-            SELECT m.path AS anchor_path,
+            SELECT rnk.path AS anchor_path,
                    r.src_path AS neighbor_path
-            FROM merged m
-            JOIN relations r ON r.dst_path = m.path
+            FROM ranked rnk
+            JOIN relations r ON r.dst_path = rnk.path
             WHERE r.src_path LIKE '%.md'
             UNION
-            SELECT m.path AS anchor_path,
+            SELECT rnk.path AS anchor_path,
                    sibling.dst_path AS neighbor_path
-            FROM merged m
-            JOIN relations parent ON parent.dst_path = m.path AND parent.relation_type = 'doc_indexes_doc'
+            FROM ranked rnk
+            JOIN relations parent ON parent.dst_path = rnk.path AND parent.relation_type = 'doc_indexes_doc'
             JOIN relations sibling ON sibling.src_path = parent.src_path AND sibling.relation_type = 'doc_indexes_doc'
-            WHERE sibling.dst_path LIKE '%.md' AND sibling.dst_path != m.path
+            WHERE sibling.dst_path LIKE '%.md' AND sibling.dst_path != rnk.path
             UNION
-            SELECT m.path AS anchor_path,
+            SELECT rnk.path AS anchor_path,
                    scoped.doc_path AS neighbor_path
-            FROM merged m
-            JOIN scope_paths base_scope ON base_scope.doc_path = m.path
-            JOIN scope_paths scoped ON scoped.scope_path = base_scope.scope_path AND scoped.doc_path != m.path
+            FROM ranked rnk
+            JOIN scope_paths base_scope ON base_scope.doc_path = rnk.path
+            JOIN scope_paths scoped ON scoped.scope_path = base_scope.scope_path AND scoped.doc_path != rnk.path
         ),
         neighbor_summary AS (
             SELECT anchor_path,
@@ -1545,18 +1575,17 @@ fn query_candidates(db: &SqliteConnection, target_dir: &Path, query_terms: &str)
             )
             GROUP BY anchor_path
         )
-        SELECT m.path,
-               m.title,
-               m.role,
-               m.status,
-               printf('%.2f', m.lexical_score + (m.incoming_links * 0.05)) AS score,
-               m.why,
-               m.summary,
+        SELECT rnk.path,
+               rnk.title,
+               rnk.role,
+               rnk.status,
+               printf('%.2f', rnk.score) AS score,
+               rnk.why,
+               rnk.summary,
                COALESCE(n.neighbors, '')
-        FROM merged m
-        LEFT JOIN neighbor_summary n ON n.anchor_path = m.path
-        ORDER BY (m.lexical_score + (m.incoming_links * 0.05)) DESC, m.path ASC
-        LIMIT 12;",
+        FROM ranked rnk
+        LEFT JOIN neighbor_summary n ON n.anchor_path = rnk.path
+        ORDER BY rnk.score DESC, rnk.path ASC;",
         escaped_terms,
         fts_match_clause
     ))
@@ -1578,22 +1607,33 @@ fn query_rows_to_candidates(result: &QueryResult, target_dir: &Path, query_terms
         .iter()
         .map(|row| {
             let path = cell(row, 0).to_string();
-            let fallback = snippet_for_doc(target_dir, &path, query_terms);
-            let snippet_heading = if !cell(row, 8).is_empty() {
-                cell(row, 8).to_string()
-            } else {
-                fallback.0
-            };
-            let snippet_location = if !cell(row, 9).is_empty() {
-                cell(row, 9).to_string()
-            } else {
-                fallback.1
-            };
-            let snippet = if !cell(row, 10).is_empty() {
-                cell(row, 10).to_string()
-            } else {
-                fallback.2
-            };
+            let mut fallback = None;
+            let snippet_heading = cell(row, 8).to_string();
+            let snippet_location = cell(row, 9).to_string();
+            let snippet = cell(row, 10).to_string();
+            let (snippet_heading, snippet_location, snippet) =
+                if snippet_heading.is_empty() || snippet_location.is_empty() || snippet.is_empty() {
+                    let computed = fallback.get_or_insert_with(|| snippet_for_doc(target_dir, &path, query_terms));
+                    (
+                        if snippet_heading.is_empty() {
+                            computed.0.clone()
+                        } else {
+                            snippet_heading
+                        },
+                        if snippet_location.is_empty() {
+                            computed.1.clone()
+                        } else {
+                            snippet_location
+                        },
+                        if snippet.is_empty() {
+                            computed.2.clone()
+                        } else {
+                            snippet
+                        },
+                    )
+                } else {
+                    (snippet_heading, snippet_location, snippet)
+                };
             QueryCandidate {
                 path,
                 title: cell(row, 1).to_string(),
@@ -1912,7 +1952,7 @@ fn fact_store_path_hint(target_dir: &Path, state_dir: Option<&Path>, facts_path:
     ));
     out.push_str(&format!("- state_dir: {}\n", diagnostics.state_dir));
     out.push_str(&format!("- facts_path: {}\n", diagnostics.facts_path));
-    out.push_str("Hint: in WSL, Codex sandbox, or path-casing/bind-mount environments, a bare `.` can resolve to a read-only view. Retry with an explicit writable absolute target path, for example `harnesskit check /path/to/repo --json` or `harnesskit index /path/to/repo`.\n");
+    out.push_str("Hint: run `harnesskit doctor --json` to verify sqlite3, git, PATH, and HarnessKit state directories. If diagnostics do not point at the intended writable project root, pass the project root explicitly, for example `harnesskit check /path/to/repo --json` or `harnesskit index /path/to/repo`.\n");
     out.push_str("Do not delete `.harnesskit/history` unless you intentionally want to discard local doc checkpoints.");
     out
 }
@@ -2110,7 +2150,7 @@ fn print_doctor_report(report: &DoctorReport) {
     println!(".harnesskit/state writable or creatable: {}", yes_no_bool(report.state_writable));
     if let Some(error) = &report.state_error {
         println!("State write check: {}", error);
-        println!("Hint: in WSL/Codex sandbox/path-casing bind mounts, retry HarnessKit commands with an explicit writable absolute target path.");
+        println!("Hint: if diagnostics do not point at the intended writable project root, pass the project root explicitly, for example `harnesskit doctor /path/to/repo --json` or `harnesskit index /path/to/repo`.");
     }
     println!(".harnesskit/history exists: {}", yes_no_bool(report.history_exists));
     println!(".harnesskit/schema.yaml exists: {}", yes_no_bool(report.schema_exists));
@@ -2177,7 +2217,7 @@ fn render_doctor_json(report: &DoctorReport) -> String {
     out.push_str("  \"notes\": [\n");
     out.push_str("    \"HarnessKit alpha requires sqlite3 CLI on PATH for fact-store-backed commands.\",\n");
     out.push_str("    \".harnesskit/state is derived and rebuildable; .harnesskit/history stores local doc checkpoints.\",\n");
-    out.push_str("    \"In WSL/Codex sandbox/path-casing bind mounts, retry commands with an explicit writable absolute target path if . reports read-only.\"\n");
+    out.push_str("    \"If diagnostics do not point at the intended writable project root, pass the project root explicitly.\"\n");
     out.push_str("  ]\n");
     out.push_str("}");
     out
@@ -7314,7 +7354,7 @@ rules:
         assert!(err.contains("current_dir:"));
         assert!(err.contains("PWD:"));
         assert!(err.contains("facts_path:"));
-        assert!(err.contains("explicit writable absolute target path"));
+        assert!(err.contains("intended writable project root"));
         assert!(err.contains("Do not delete `.harnesskit/history`"));
 
         fs::remove_dir_all(target).unwrap();
@@ -8040,6 +8080,37 @@ suppressions:
 
         let rows = query_candidates(&db, &target, "--- ?! ::").unwrap();
         assert!(rows.rows.is_empty());
+
+        fs::remove_dir_all(target).unwrap();
+    }
+
+    #[test]
+    fn query_candidates_limits_before_neighbor_expansion() {
+        let target = unique_temp_dir("query-neighbor-limit");
+        let schema = bundled_schema();
+        let schema_copy = render_schema_copy(&schema);
+
+        materialize_from_schema(&target, &schema, &schema_copy, false).unwrap();
+        for idx in 0..30 {
+            fs::write(
+                target
+                    .join("docs/references")
+                    .join(format!("sample-{:02}.md", idx)),
+                format!(
+                    "---\nstatus: active\nauthority: reference\n---\n\n# Sample {:02}\n\nShared sample body.\n",
+                    idx
+                ),
+            )
+            .unwrap();
+        }
+        let artifact = build_index_artifact(&target, &schema).unwrap();
+        write_fact_store(&target, &artifact).unwrap();
+        let db = open_fact_store(&target).unwrap();
+
+        let rows = query_candidates(&db, &target, "sample").unwrap();
+
+        assert_eq!(rows.rows.len(), 12);
+        assert!(rows.rows.iter().all(|row| split_pipe_list(cell(row, 7)).len() <= 8));
 
         fs::remove_dir_all(target).unwrap();
     }

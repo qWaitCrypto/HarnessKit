@@ -92,7 +92,7 @@ scripts/install-codex-skill.sh         # Codex
 
 Alpha notes:
 
-- The public binary release currently supports Linux x86_64.
+- The public binary release currently supports Linux x86_64 and macOS x86_64/arm64.
 - Fact-store-backed commands currently require `sqlite3` on `PATH`: `index`, `query`, `check`, `context`, `graph`, `inspect`, `refs`, `rank`, and `list-docs`.
 - The installer writes the Codex skill directly; Codex plugin packaging is optional.
 - The installer can be rerun with a newer `--version` tag to upgrade.
