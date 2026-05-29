@@ -2543,7 +2543,7 @@ fn render_doctor_json(report: &DoctorReport) -> String {
     out.push_str("    \".harnesskit/state is derived and rebuildable; .harnesskit/history stores local doc checkpoints.\",\n");
     out.push_str("    \"If diagnostics do not point at the intended writable project root, pass the project root explicitly.\"\n");
     out.push_str("  ]\n");
-    out.push_str("}");
+    out.push('}');
     out
 }
 
@@ -3183,7 +3183,7 @@ fn render_schema_copy(schema: &Schema) -> String {
     lines.join("\n") + "\n"
 }
 
-fn non_empty<'a>(value: Option<&'a str>) -> Option<&'a str> {
+fn non_empty(value: Option<&str>) -> Option<&str> {
     value.filter(|item| !item.trim().is_empty())
 }
 
@@ -4208,6 +4208,7 @@ fn update_doc_link_counts_in_db(db: &SqliteConnection, docs: &[IndexedDoc]) -> R
     exec_sql_batches(db, &statements, 500)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn replace_checks_and_meta(
     db: &SqliteConnection,
     repo_root: &str,
@@ -4708,15 +4709,16 @@ fn empty_as_none(value: &str) -> Option<String> {
 fn collect_managed_doc_paths(repo_root: &Path, schema: &Schema) -> Result<Vec<String>> {
     let mut paths = Vec::new();
 
-    for entry in [
+    for path in [
         schema.entrypoints.agents.as_ref(),
         schema.entrypoints.claude.as_ref(),
         schema.entrypoints.architecture.as_ref(),
-    ] {
-        if let Some(path) = entry {
-            if repo_root.join(path).is_file() {
-                paths.push(path.clone());
-            }
+    ]
+    .into_iter()
+    .flatten()
+    {
+        if repo_root.join(path).is_file() {
+            paths.push(path.clone());
         }
     }
 
@@ -5067,7 +5069,7 @@ fn extract_summary(body: &str) -> String {
     paragraph.join(" ")
 }
 
-fn collection_lookup<'a>(schema: &'a Schema) -> BTreeMap<String, &'a DocCollectionSpec> {
+fn collection_lookup(schema: &Schema) -> BTreeMap<String, &DocCollectionSpec> {
     let mut map = BTreeMap::new();
     for spec in &schema.doc_collections {
         map.insert(spec.name.clone(), spec);
@@ -5279,7 +5281,9 @@ fn extract_inline_code_path_mentions(text: &str) -> Vec<String> {
                 if !in_inline_code {
                     in_fence = !in_fence;
                 } else {
-                    current.extend(std::iter::repeat('`').take(run));
+                    for _ in 0..run {
+                        current.push('`');
+                    }
                 }
                 index += run;
                 continue;
@@ -5302,7 +5306,9 @@ fn extract_inline_code_path_mentions(text: &str) -> Vec<String> {
             }
 
             if in_inline_code {
-                current.extend(std::iter::repeat('`').take(run));
+                for _ in 0..run {
+                    current.push('`');
+                }
             }
             index += run;
             continue;
@@ -5508,25 +5514,26 @@ fn build_index_checks(
         }
     }
 
-    for entrypoint in [
+    for path in [
         schema.entrypoints.agents.as_deref(),
         schema.entrypoints.claude.as_deref(),
-    ] {
-        if let Some(path) = entrypoint {
-            if doc_map.contains_key(path) {
-                let points_to_manifest = relations.iter().any(|relation| {
-                    relation.src_path == path && relation.dst_path == manifest_path
-                });
-                if !points_to_manifest {
-                    push_check(
-                        &mut checks,
-                        "entrypoint-manifest-link",
-                        "warning",
-                        path,
-                        &format!("{} does not point to {}", path, manifest_path),
-                        &[("entrypoint", path), ("manifest", &manifest_path)],
-                    );
-                }
+    ]
+    .into_iter()
+    .flatten()
+    {
+        if doc_map.contains_key(path) {
+            let points_to_manifest = relations
+                .iter()
+                .any(|relation| relation.src_path == path && relation.dst_path == manifest_path);
+            if !points_to_manifest {
+                push_check(
+                    &mut checks,
+                    "entrypoint-manifest-link",
+                    "warning",
+                    path,
+                    &format!("{} does not point to {}", path, manifest_path),
+                    &[("entrypoint", path), ("manifest", &manifest_path)],
+                );
             }
         }
     }
@@ -6205,19 +6212,20 @@ fn list_history_snapshots(target_dir: &Path) -> Result<Vec<HistorySnapshot>> {
 fn parse_history_snapshot_json(text: &str) -> Result<HistorySnapshot> {
     let mut cursor = JsonCursor::default();
     let root = parse_json_object(text, &mut cursor)?;
-    let mut snapshot = HistorySnapshot::default();
-    snapshot.id = json_object_required_string(&root, "id")?;
-    snapshot.created_at_unix = json_object_required_u64(&root, "created_at_unix")?;
-    snapshot.message = json_object_required_string(&root, "message")?;
-    snapshot.docs_root = json_object_required_string(&root, "docs_root")?;
-    snapshot.schema_hash = json_object_required_string(&root, "schema_hash")?;
-    snapshot.host_git_head = json_object_optional_string(&root, "host_git_head")?;
-    snapshot.host_git_branch = json_object_optional_string(&root, "host_git_branch")?;
-    snapshot.host_git_dirty = json_object_required_bool(&root, "host_git_dirty")?;
-    snapshot.files = json_object_required_array(&root, "files")?
-        .iter()
-        .map(|value| history_file_record_from_json(value))
-        .collect::<Result<Vec<_>>>()?;
+    let snapshot = HistorySnapshot {
+        id: json_object_required_string(&root, "id")?,
+        created_at_unix: json_object_required_u64(&root, "created_at_unix")?,
+        message: json_object_required_string(&root, "message")?,
+        docs_root: json_object_required_string(&root, "docs_root")?,
+        schema_hash: json_object_required_string(&root, "schema_hash")?,
+        host_git_head: json_object_optional_string(&root, "host_git_head")?,
+        host_git_branch: json_object_optional_string(&root, "host_git_branch")?,
+        host_git_dirty: json_object_required_bool(&root, "host_git_dirty")?,
+        files: json_object_required_array(&root, "files")?
+            .iter()
+            .map(|value| history_file_record_from_json(value))
+            .collect::<Result<Vec<_>>>()?,
+    };
     if snapshot.id.is_empty() {
         return Err("invalid history snapshot: missing id".into());
     }
@@ -7330,7 +7338,7 @@ fn render_relations_json(relations: &[DocRelation]) -> String {
     out
 }
 
-fn cell<'a>(row: &'a [Option<String>], index: usize) -> &'a str {
+fn cell(row: &[Option<String>], index: usize) -> &str {
     row.get(index)
         .and_then(|value| value.as_deref())
         .unwrap_or("")
@@ -7496,7 +7504,7 @@ fn render_template_rows(schema: &Schema) -> String {
 }
 
 fn render_core_rows(schema: &Schema, paths: &RenderPaths) -> String {
-    let mut rows = vec![
+    let mut rows = [
         format!(
             "| `{}` | Project orientation and stable boundaries | Active |",
             paths.architecture
@@ -7587,7 +7595,7 @@ fn collection_label(name: &str, path: &str) -> String {
         "operations" => "operation".to_string(),
         "generated" => "generated artifact".to_string(),
         "references" => "reference".to_string(),
-        _ => path.replace('-', " ").replace('/', " "),
+        _ => path.replace(['-', '/'], " "),
     }
 }
 
