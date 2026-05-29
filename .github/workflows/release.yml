@@ -34,7 +34,7 @@ jobs:
 
       - name: Package
         run: |
-          scripts/package-release.sh \
+          bash scripts/package-release.sh \
             --target "${{ matrix.target }}" \
             --version "${{ inputs.version }}" \
             --dist-dir dist
