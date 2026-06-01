@@ -641,7 +641,8 @@ fn update_from_release(
         &format!("{}/SHA256SUMS", asset_base_url.trim_end_matches('/')),
         &sums_path,
     )?;
-    verify_sha256(tmp_dir, "SHA256SUMS")?;
+    let archive_sums = write_archive_sha256_file(tmp_dir, "SHA256SUMS", archive)?;
+    verify_sha256(tmp_dir, &archive_sums)?;
     run_command(
         Command::new("tar")
             .arg("-xzf")
@@ -676,6 +677,21 @@ fn update_from_release(
 
     sync_existing_installed_skills(&package_dir)?;
     Ok(())
+}
+
+fn write_archive_sha256_file(dir: &Path, sums_file: &str, archive: &str) -> Result<String> {
+    let sums = fs::read_to_string(dir.join(sums_file))?;
+    let line = sums
+        .lines()
+        .find(|line| {
+            line.split_whitespace()
+                .nth(1)
+                .is_some_and(|name| name == archive)
+        })
+        .ok_or_else(|| format!("{} did not contain checksum for {}", sums_file, archive))?;
+    let archive_sums = format!("{}.sha256", archive);
+    fs::write(dir.join(&archive_sums), format!("{}\n", line))?;
+    Ok(archive_sums)
 }
 
 fn download_to_file(url: &str, out: &Path) -> Result<()> {
@@ -7815,6 +7831,47 @@ mod tests {
             .doc_collections
             .iter()
             .any(|spec| spec.name == "exec_plans_active" && spec.path == "exec-plans/active"));
+    }
+
+    #[test]
+    fn update_checksum_file_is_scoped_to_downloaded_archive() {
+        let target = unique_temp_dir("archive-checksum");
+        fs::write(
+            target.join("SHA256SUMS"),
+            "aaaa  harnesskit-aarch64-apple-darwin.tar.gz\nbbbb  harnesskit-x86_64-apple-darwin.tar.gz\ncccc  harnesskit-x86_64-unknown-linux-gnu.tar.gz\n",
+        )
+        .unwrap();
+
+        let scoped = write_archive_sha256_file(
+            &target,
+            "SHA256SUMS",
+            "harnesskit-x86_64-unknown-linux-gnu.tar.gz",
+        )
+        .unwrap();
+
+        assert_eq!(scoped, "harnesskit-x86_64-unknown-linux-gnu.tar.gz.sha256");
+        assert_eq!(
+            fs::read_to_string(target.join(scoped)).unwrap(),
+            "cccc  harnesskit-x86_64-unknown-linux-gnu.tar.gz\n"
+        );
+        fs::remove_dir_all(target).unwrap();
+    }
+
+    #[test]
+    fn update_checksum_file_requires_downloaded_archive_entry() {
+        let target = unique_temp_dir("archive-checksum-missing");
+        fs::write(target.join("SHA256SUMS"), "aaaa  other.tar.gz\n").unwrap();
+
+        let err = write_archive_sha256_file(
+            &target,
+            "SHA256SUMS",
+            "harnesskit-x86_64-unknown-linux-gnu.tar.gz",
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(err.contains("did not contain checksum"));
+        fs::remove_dir_all(target).unwrap();
     }
 
     #[test]

@@ -137,6 +137,17 @@ verify_sha256_file() {
   fi
 }
 
+write_archive_sha256_file() {
+  local sums_file="$1"
+  local archive="$2"
+  local archive_sums="${archive}.sha256"
+  awk -v archive="${archive}" '$2 == archive { print; found = 1 } END { exit found ? 0 : 1 }' "${sums_file}" > "${archive_sums}" || {
+    echo "${sums_file} did not contain checksum for ${archive}" >&2
+    exit 1
+  }
+  echo "${archive_sums}"
+}
+
 download() {
   local url="$1"
   local out="$2"
@@ -240,7 +251,8 @@ download "${asset_base_url}/SHA256SUMS" "${tmp_dir}/SHA256SUMS"
 
 (
   cd "${tmp_dir}"
-  verify_sha256_file SHA256SUMS
+  archive_sums="$(write_archive_sha256_file SHA256SUMS "${archive}")"
+  verify_sha256_file "${archive_sums}"
 )
 
 tar -xzf "${tmp_dir}/${archive}" -C "${tmp_dir}"
