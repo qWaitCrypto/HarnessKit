@@ -59,7 +59,9 @@ jobs:
       - name: Generate SHA256SUMS
         run: |
           cd dist
-          sha256sum harnesskit-*.tar.gz > SHA256SUMS
+          # Keep the legacy latest/download/SHA256SUMS file Linux-only so
+          # alpha.4 and older updaters can bootstrap into the fixed updater.
+          sha256sum harnesskit-x86_64-unknown-linux-gnu.tar.gz > SHA256SUMS
 
       - name: Upload checksums
         uses: actions/upload-artifact@v4
