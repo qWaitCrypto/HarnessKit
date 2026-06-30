@@ -106,3 +106,30 @@ fn cli_init_preview_local_tracked_and_context_json_smoke() {
     assert!(context.contains("\"kind\": \"context\""));
     assert!(context.contains("\"recommended_reading_order\""));
 }
+
+#[test]
+fn cli_init_local_succeeds_without_git_repo() {
+    let non_git = temp_dir("non-git-local");
+
+    let preview = run(&["init", non_git.to_str().unwrap(), "--local", "--preview"]);
+    assert!(preview.contains("Git repository: not found"));
+    assert!(preview.contains("Git exclude: no git repository found; would skip"));
+
+    let output = run(&["init", non_git.to_str().unwrap(), "--local"]);
+    assert!(output.contains("Initialized HarnessKit scaffold"));
+    assert!(output.contains(
+        "No git repository found; generated local docs without git exclude entries."
+    ));
+    assert!(non_git.join("AGENTS.md").exists());
+    assert!(non_git.join("CLAUDE.md").exists());
+    assert!(non_git.join("ARCHITECTURE.md").exists());
+    assert!(non_git.join("docs/index.md").exists());
+    assert!(non_git.join("docs/templates/design-doc.md").exists());
+    assert!(non_git.join(".harnesskit/schema.yaml").exists());
+    assert!(non_git.join(".harnesskit/state").is_dir());
+    assert!(non_git.join(".harnesskit/history/objects").is_dir());
+    assert!(!non_git.join(".git").exists());
+
+    let check = run(&["check", non_git.to_str().unwrap(), "--json"]);
+    assert!(check.contains("\"docs_count\""));
+}

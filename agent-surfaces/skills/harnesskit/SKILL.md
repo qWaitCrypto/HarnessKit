@@ -86,12 +86,18 @@ Files that already exist are skipped unless `--force` is passed.
 
 ### Git Exclude
 
-In local mode, init adds HarnessKit-managed paths (`docs/`, `AGENTS.md`, `CLAUDE.md`, `ARCHITECTURE.md`, `.harnesskit/`) to `.git/info/exclude` for local isolation.
+In local mode, init creates the docs scaffold without requiring git.
+
+When the target directory is inside a git repository, init also adds HarnessKit-managed paths (`docs/`, `AGENTS.md`, `CLAUDE.md`, `ARCHITECTURE.md`, `.harnesskit/`) to `.git/info/exclude` for local isolation.
+
+When no git repository is found, init skips `.git/info/exclude` and should report that it generated local docs without git exclude entries. Do not require the user to run `git init` first unless they specifically want git visibility or local exclude behavior.
 
 In tracked mode, init does not write `.git/info/exclude`. Generated docs remain visible to `git status` and can be committed.
 
 When init reports this, explain to the user:
 > HarnessKit local mode added its managed paths to your local git exclude (`.git/info/exclude`). This keeps them out of git status locally without modifying `.gitignore`. If you want these paths tracked by git, rerun or initialize with `harnesskit init --tracked` in a clean target and commit the files normally.
+
+If init reports that no git repository was found, explain that docs were still created and no git exclude entries were written.
 
 Do not write `.gitignore` entries unless the user explicitly asks.
 

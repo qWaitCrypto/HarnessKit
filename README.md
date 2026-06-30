@@ -93,6 +93,7 @@ scripts/install-codex-skill.sh         # Codex
 Alpha notes:
 
 - The public binary release currently supports Linux x86_64 and macOS x86_64/arm64.
+- The binary includes the default schema and templates, so `harnesskit init` works from ordinary project directories without a checked-out HarnessKit source tree.
 - Fact-store-backed commands currently require `sqlite3` on `PATH`: `index`, `query`, `check`, `context`, `graph`, `inspect`, `refs`, `rank`, and `list-docs`.
 - The installer writes the Codex skill directly; Codex plugin packaging is optional.
 - The installer can be rerun with a newer `--version` tag to upgrade.
@@ -106,7 +107,7 @@ Alpha notes:
 
 The agent runs `harnesskit init`, reads the entrypoint, and starts managing your project docs. That's it.
 
-By default, init uses **local mode**: generated docs are added to `.git/info/exclude` so a trial does not change `git status`. For team-visible or open-source project memory, use `harnesskit init --tracked`. To inspect what would be written first, use `harnesskit init --preview`.
+By default, init uses **local mode**. In a git repository, generated docs are added to `.git/info/exclude` so a trial does not change `git status`. Outside a git repository, init still creates the docs scaffold and skips git exclude setup with an explicit message. For team-visible or open-source project memory, use `harnesskit init --tracked`. To inspect what would be written first, use `harnesskit init --preview`.
 
 **Step 3** — Work naturally:
 
@@ -188,7 +189,7 @@ Agents navigate this through **progressive disclosure**: entrypoint → architec
 harnesskit init [target_dir] [--schema <path>] [--docs-root <path>] [--force] [--local|--tracked] [--preview]
 ```
 
-Creates the docs scaffold. Existing files are skipped unless `--force` is passed. Default `--local` mode adds managed paths to `.git/info/exclude` for local isolation. Use `--tracked` to leave generated docs visible to git status, or `--preview` to print the plan without writing files.
+Creates the docs scaffold. Existing files are skipped unless `--force` is passed. Default `--local` mode adds managed paths to `.git/info/exclude` when the target is inside a git repository; non-git directories are initialized without git exclude entries. Use `--tracked` to leave generated docs visible to git status, or `--preview` to print the plan without writing files.
 
 #### Indexing
 

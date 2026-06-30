@@ -7,10 +7,38 @@ on:
         description: Release version, for example 0.1.0-alpha.4
         required: true
         type: string
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
 
 jobs:
+  metadata:
+    name: Resolve release metadata
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+      version: ${{ steps.meta.outputs.version }}
+    steps:
+      - name: Resolve tag and version
+        id: meta
+        env:
+          RAW_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
+        run: |
+          tag="${RAW_VERSION}"
+          if [[ "${tag}" != v* ]]; then
+            tag="v${tag}"
+          fi
+          version="${tag#v}"
+
+          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+
   package:
     name: Package ${{ matrix.target }}
+    needs: metadata
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -36,7 +64,7 @@ jobs:
         run: |
           bash scripts/package-release.sh \
             --target "${{ matrix.target }}" \
-            --version "${{ inputs.version }}" \
+            --version "${{ needs.metadata.outputs.version }}" \
             --dist-dir dist
 
       - name: Upload package
@@ -59,12 +87,44 @@ jobs:
       - name: Generate SHA256SUMS
         run: |
           cd dist
-          # Keep the legacy latest/download/SHA256SUMS file Linux-only so
-          # alpha.4 and older updaters can bootstrap into the fixed updater.
-          sha256sum harnesskit-x86_64-unknown-linux-gnu.tar.gz > SHA256SUMS
+          sha256sum harnesskit-*.tar.gz > SHA256SUMS
 
       - name: Upload checksums
         uses: actions/upload-artifact@v4
         with:
           name: SHA256SUMS
           path: dist/SHA256SUMS
+
+  release:
+    name: Publish GitHub release
+    runs-on: ubuntu-latest
+    needs:
+      - checksums
+      - metadata
+    steps:
+      - name: Download packages
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.metadata.outputs.tag }}
+        run: |
+          tag="${RELEASE_TAG}"
+          notes="HarnessKit ${tag} release artifacts."
+
+          if gh release view "${tag}" >/dev/null 2>&1; then
+            gh release upload "${tag}" dist/harnesskit-*.tar.gz dist/SHA256SUMS --clobber
+            gh release edit "${tag}" --latest
+          else
+            gh release create "${tag}" \
+              dist/harnesskit-*.tar.gz \
+              dist/SHA256SUMS \
+              --target "${GITHUB_SHA}" \
+              --title "HarnessKit ${tag}" \
+              --notes "${notes}" \
+              --latest
+          fi

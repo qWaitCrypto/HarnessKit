@@ -13,6 +13,8 @@ use sqlite_cli::{QueryResult, SqliteConnection};
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 const BUNDLED_SCHEMA_PATH: &str = "schemas/file-first-v0.yaml";
+const BUNDLED_SCHEMA_LABEL: &str = "bundled:schemas/file-first-v0.yaml";
+const BUNDLED_SCHEMA_TEXT: &str = include_str!("../schemas/file-first-v0.yaml");
 const FACT_SCHEMA_VERSION: &str = "3";
 static SNAPSHOT_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -85,6 +87,11 @@ struct CommandOptions {
     json: bool,
     strict: bool,
     rules: Option<BTreeSet<String>>,
+}
+
+struct SchemaLoad {
+    text: String,
+    source: String,
 }
 
 #[derive(Default)]
@@ -419,18 +426,18 @@ fn run_init(args: &[String]) -> Result<()> {
         InitMode::Local
     };
 
-    let schema_path = resolve_schema_path(&target_dir, &schema_arg)?;
-    let raw_schema_text = fs::read_to_string(&schema_path)?;
-    let mut schema = parse_schema(&raw_schema_text)?;
+    let schema_load = load_schema(&target_dir, &schema_arg)?;
+    let mut schema = parse_schema(&schema_load.text)?;
     let original_managed_root = schema.managed_root.clone();
     if let Some(ref docs_root) = docs_root_override {
         schema.managed_root = docs_root.clone();
         rewrite_docs_root_bound_paths(&mut schema, &original_managed_root, docs_root);
     }
     let schema_copy_text = render_schema_copy(&schema);
+    validate_init_templates(&schema)?;
 
     if preview {
-        print_init_preview(&target_dir, &schema, &schema_path, mode, force);
+        print_init_preview(&target_dir, &schema, &schema_load.source, mode, force);
         return Ok(());
     }
 
@@ -446,7 +453,7 @@ fn run_init(args: &[String]) -> Result<()> {
     println!(
         "Initialized HarnessKit scaffold at {} using schema {} (created {}, skipped {})",
         target_dir.display(),
-        schema_path.display(),
+        schema_load.source,
         stats.created_files,
         stats.skipped_files
     );
@@ -1256,16 +1263,24 @@ fn init_plan_paths(schema: &Schema) -> Vec<String> {
 fn print_init_preview(
     target_dir: &Path,
     schema: &Schema,
-    schema_path: &Path,
+    schema_source: &str,
     mode: InitMode,
     force: bool,
 ) {
     println!("HarnessKit init preview");
     println!("Target: {}", target_dir.display());
-    println!("Schema: {}", schema_path.display());
+    println!("Schema: {}", schema_source);
     println!("Mode: {}", init_mode_label(mode));
     println!("Docs root: {}", schema.managed_root);
     println!("Force overwrite: {}", yes_no_bool(force));
+    let host_git_dir = find_host_git_dir(target_dir);
+    println!(
+        "Git repository: {}",
+        host_git_dir
+            .as_ref()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "not found".to_string())
+    );
     println!();
     println!("Would create or update:");
     for path in init_plan_paths(schema) {
@@ -1280,8 +1295,13 @@ fn print_init_preview(
     println!();
     match mode {
         InitMode::Local => {
-            println!("Git exclude: would add HarnessKit-managed paths to .git/info/exclude when a git repo is present.");
-            println!("Local mode keeps generated docs out of git status. Use --tracked for team-visible repo memory.");
+            if host_git_dir.is_some() {
+                println!("Git exclude: would add HarnessKit-managed paths to .git/info/exclude.");
+                println!("Local mode keeps generated docs out of git status. Use --tracked for team-visible repo memory.");
+            } else {
+                println!("Git exclude: no git repository found; would skip .git/info/exclude.");
+                println!("Local mode can still generate the docs scaffold without git local exclude entries.");
+            }
         }
         InitMode::Tracked => {
             println!("Git exclude: would not write HarnessKit-managed paths to .git/info/exclude.");
@@ -1324,7 +1344,10 @@ fn print_init_summary(
                 );
                 println!("Generated docs are local project memory and will not appear in git status. Use `harnesskit init --tracked` for team-visible docs.");
             }
-            None => println!("Git visibility: local mode selected, but no host git repo was found; skipped .git/info/exclude update."),
+            None => {
+                println!("Git visibility: No git repository found; generated local docs without git exclude entries.");
+                println!("Generated docs are local files in this directory. Run `git init` first or rerun in a git repository if you want HarnessKit to add local exclude rules.");
+            }
         },
         InitMode::Tracked => {
             println!("Git visibility: tracked mode selected; .git/info/exclude was not changed.");
@@ -1371,19 +1394,28 @@ fn ensure_host_git_exclude(target_dir: &Path, schema: &Schema) -> Result<Option<
 }
 
 fn find_host_git_dir(target_dir: &Path) -> Option<PathBuf> {
-    let mut current = target_dir
-        .canonicalize()
-        .unwrap_or_else(|_| target_dir.to_path_buf());
-    loop {
-        let dot_git = current.join(".git");
-        if dot_git.is_dir() {
-            return Some(dot_git);
-        }
-        if !current.pop() {
-            break;
-        }
+    let probe_dir = nearest_existing_parent(target_dir)?;
+    let output = Command::new("git")
+        .arg("rev-parse")
+        .arg("--git-dir")
+        .current_dir(&probe_dir)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
     }
-    None
+
+    let raw = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if raw.is_empty() {
+        return None;
+    }
+
+    let git_dir = PathBuf::from(raw);
+    if git_dir.is_absolute() {
+        Some(git_dir)
+    } else {
+        Some(probe_dir.join(git_dir))
+    }
 }
 
 fn host_git_info(target_dir: &Path, mode: HostGitMode) -> HostGitInfo {
@@ -2578,9 +2610,8 @@ fn load_engine_context(args: &[String], positional_index: usize) -> Result<Engin
     let schema_arg =
         option_value(args, "--schema").unwrap_or_else(|| default_context_schema_arg(&target_dir));
 
-    let schema_path = resolve_schema_path(&target_dir, &schema_arg)?;
-    let raw_schema_text = fs::read_to_string(&schema_path)?;
-    let mut schema = parse_schema(&raw_schema_text)?;
+    let schema_load = load_schema(&target_dir, &schema_arg)?;
+    let mut schema = parse_schema(&schema_load.text)?;
     let original_managed_root = schema.managed_root.clone();
     if let Some(ref docs_root) = docs_root_override {
         schema.managed_root = docs_root.clone();
@@ -2599,25 +2630,35 @@ fn default_context_schema_arg(target_dir: &Path) -> String {
     }
 }
 
-fn resolve_schema_path(target_dir: &Path, schema_path: &str) -> Result<PathBuf> {
+fn load_schema(target_dir: &Path, schema_path: &str) -> Result<SchemaLoad> {
+    match resolve_schema_path(target_dir, schema_path)? {
+        Some(path) => Ok(SchemaLoad {
+            text: fs::read_to_string(&path)?,
+            source: absolute_display_path(&path),
+        }),
+        None if schema_path == BUNDLED_SCHEMA_PATH => Ok(SchemaLoad {
+            text: BUNDLED_SCHEMA_TEXT.to_string(),
+            source: BUNDLED_SCHEMA_LABEL.to_string(),
+        }),
+        None => Err(format!("schema not found: {}", schema_path).into()),
+    }
+}
+
+fn resolve_schema_path(target_dir: &Path, schema_path: &str) -> Result<Option<PathBuf>> {
     let requested = PathBuf::from(schema_path);
     let candidates = if requested.is_absolute() {
         vec![requested]
     } else {
-        vec![
-            env::current_dir()?.join(schema_path),
-            target_dir.join(schema_path),
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(schema_path),
-        ]
+        vec![env::current_dir()?.join(schema_path), target_dir.join(schema_path)]
     };
 
     for candidate in candidates {
         if candidate.exists() {
-            return Ok(candidate);
+            return Ok(Some(candidate));
         }
     }
 
-    Err(format!("schema not found: {}", schema_path).into())
+    Ok(None)
 }
 
 fn parse_schema(text: &str) -> Result<Schema> {
@@ -3201,6 +3242,41 @@ fn render_schema_copy(schema: &Schema) -> String {
 
 fn non_empty(value: Option<&str>) -> Option<&str> {
     value.filter(|item| !item.trim().is_empty())
+}
+
+fn validate_init_templates(schema: &Schema) -> Result<()> {
+    if schema.entrypoints.agents.is_some() {
+        ensure_bundled_text("templates/entrypoints/AGENTS.md.tpl")?;
+    }
+    if schema.entrypoints.claude.is_some() {
+        ensure_bundled_text("templates/entrypoints/CLAUDE.md.tpl")?;
+    }
+
+    for spec in &schema.core_files {
+        let template_path = core_template_path(&spec.template)
+            .ok_or_else(|| format!("unknown core template: {} ({})", spec.template, spec.name))?;
+        ensure_bundled_text(template_path)?;
+    }
+
+    ensure_bundled_text("templates/core/collection-index.md.tpl")?;
+
+    let mut seen_templates = BTreeSet::new();
+    for spec in &schema.doc_collections {
+        if seen_templates.insert(spec.template.clone()) {
+            let template_path = doc_template_path(&spec.template).ok_or_else(|| {
+                format!("unknown doc template: {} ({})", spec.template, spec.name)
+            })?;
+            ensure_bundled_text(template_path)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn ensure_bundled_text(rel_path: &str) -> Result<()> {
+    bundled_text(rel_path)
+        .map(|_| ())
+        .ok_or_else(|| format!("bundled template not found: {}", rel_path).into())
 }
 
 fn push_optional_line(lines: &mut Vec<String>, indent: usize, key: &str, value: Option<&str>) {
@@ -7753,8 +7829,52 @@ fn resolve_architecture_path(schema: &Schema, fallback: &str) -> String {
 }
 
 fn load_bundled_text(rel_path: &str) -> Result<String> {
+    if let Some(text) = bundled_text(rel_path) {
+        return Ok(text.to_string());
+    }
+
     let abs = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(rel_path);
-    Ok(fs::read_to_string(abs)?)
+    if let Ok(text) = fs::read_to_string(&abs) {
+        return Ok(text);
+    }
+    Err(format!("bundled template not found: {}", rel_path).into())
+}
+
+fn bundled_text(rel_path: &str) -> Option<&'static str> {
+    match rel_path {
+        BUNDLED_SCHEMA_PATH => Some(BUNDLED_SCHEMA_TEXT),
+        "templates/core/ARCHITECTURE.md.tpl" => {
+            Some(include_str!("../templates/core/ARCHITECTURE.md.tpl"))
+        }
+        "templates/core/DOCUMENTATION_SYSTEM.md.tpl" => Some(include_str!(
+            "../templates/core/DOCUMENTATION_SYSTEM.md.tpl"
+        )),
+        "templates/core/collection-index.md.tpl" => Some(include_str!(
+            "../templates/core/collection-index.md.tpl"
+        )),
+        "templates/core/commands.md.tpl" => Some(include_str!("../templates/core/commands.md.tpl")),
+        "templates/core/index.md.tpl" => Some(include_str!("../templates/core/index.md.tpl")),
+        "templates/core/project.md.tpl" => Some(include_str!("../templates/core/project.md.tpl")),
+        "templates/docs/decision.md.tpl" => Some(include_str!("../templates/docs/decision.md.tpl")),
+        "templates/docs/design-doc.md.tpl" => {
+            Some(include_str!("../templates/docs/design-doc.md.tpl"))
+        }
+        "templates/docs/exec-plan.md.tpl" => Some(include_str!("../templates/docs/exec-plan.md.tpl")),
+        "templates/docs/generated.md.tpl" => Some(include_str!("../templates/docs/generated.md.tpl")),
+        "templates/docs/operation.md.tpl" => Some(include_str!("../templates/docs/operation.md.tpl")),
+        "templates/docs/product-spec.md.tpl" => {
+            Some(include_str!("../templates/docs/product-spec.md.tpl"))
+        }
+        "templates/docs/reference.md.tpl" => Some(include_str!("../templates/docs/reference.md.tpl")),
+        "templates/docs/worklog.md.tpl" => Some(include_str!("../templates/docs/worklog.md.tpl")),
+        "templates/entrypoints/AGENTS.md.tpl" => Some(include_str!(
+            "../templates/entrypoints/AGENTS.md.tpl"
+        )),
+        "templates/entrypoints/CLAUDE.md.tpl" => Some(include_str!(
+            "../templates/entrypoints/CLAUDE.md.tpl"
+        )),
+        _ => None,
+    }
 }
 
 fn core_template_path(name: &str) -> Option<&'static str> {
@@ -7788,10 +7908,7 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn bundled_schema() -> Schema {
-        let raw =
-            fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(BUNDLED_SCHEMA_PATH))
-                .unwrap();
-        parse_schema(&raw).unwrap()
+        parse_schema(BUNDLED_SCHEMA_TEXT).unwrap()
     }
 
     fn unique_temp_dir(name: &str) -> PathBuf {
@@ -9349,7 +9466,7 @@ suppressions:
     #[test]
     fn init_writes_host_git_exclude_and_history_dirs() {
         let target = unique_temp_dir("git-exclude");
-        fs::create_dir_all(target.join(".git/info")).unwrap();
+        run_git_capture(&target, &["init"]).unwrap();
         let schema = bundled_schema();
         let schema_copy = render_schema_copy(&schema);
 
@@ -9371,9 +9488,24 @@ suppressions:
     }
 
     #[test]
+    fn init_does_not_treat_stray_git_directory_as_repo() {
+        let target = unique_temp_dir("stray-git-dir");
+        fs::create_dir_all(target.join(".git/info")).unwrap();
+        let schema = bundled_schema();
+        let schema_copy = render_schema_copy(&schema);
+
+        materialize_from_schema(&target, &schema, &schema_copy, false).unwrap();
+
+        assert!(ensure_host_git_exclude(&target, &schema).unwrap().is_none());
+        assert!(!target.join(".git/info/exclude").exists());
+
+        fs::remove_dir_all(target).unwrap();
+    }
+
+    #[test]
     fn init_tracked_mode_leaves_git_exclude_unchanged() {
         let target = unique_temp_dir("git-tracked");
-        fs::create_dir_all(target.join(".git/info")).unwrap();
+        run_git_capture(&target, &["init"]).unwrap();
         fs::write(target.join(".git/info/exclude"), "# local excludes\n").unwrap();
         let schema = bundled_schema();
         let schema_copy = render_schema_copy(&schema);
