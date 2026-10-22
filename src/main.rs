@@ -11,7 +11,7 @@ mod parse;
 mod query;
 mod render;
 mod schema;
-mod sqlite_cli;
+mod sqlite;
 mod templates;
 mod update;
 

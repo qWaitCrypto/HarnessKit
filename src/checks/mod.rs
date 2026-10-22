@@ -12,9 +12,8 @@ use std::path::Path;
 
 use crate::cli::CommandOptions;
 use crate::index::{cell, DocRelation, IndexedDoc};
-use crate::render::json_string;
 use crate::schema::Schema;
-use crate::sqlite_cli::QueryResult;
+use crate::sqlite::QueryResult;
 
 use self::contamination::add_contamination_checks;
 use self::duplicate::add_duplicate_checks;
@@ -23,12 +22,13 @@ use self::history::add_history_checks;
 use self::manifest::build_manifest_checks;
 use self::stale::add_stale_anchor_checks;
 
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize)]
 pub(crate) struct IndexCheck {
     pub(crate) rule_id: String,
     pub(crate) severity: String,
     pub(crate) subject_path: String,
     pub(crate) message: String,
+    #[serde(skip_serializing)]
     pub(crate) evidence_json: String,
 }
 
@@ -86,12 +86,13 @@ fn push_check(
 }
 
 fn evidence_object_json(items: &[(&str, &str)]) -> String {
-    let entries = items
-        .iter()
-        .map(|(key, value)| format!("{}:{}", json_string(key), json_string(value)))
-        .collect::<Vec<_>>()
-        .join(",");
-    format!("{{{}}}", entries)
+    struct Evidence<'a>(&'a [(&'a str, &'a str)]);
+    impl serde::Serialize for Evidence<'_> {
+        fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            serializer.collect_map(self.0.iter().copied())
+        }
+    }
+    serde_json::to_string(&Evidence(items)).expect("serialize check evidence")
 }
 
 pub(crate) fn filter_and_suppress_checks(

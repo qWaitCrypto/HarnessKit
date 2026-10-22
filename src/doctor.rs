@@ -5,12 +5,14 @@ use std::{env, fs};
 use crate::fs_utils::{absolute_display_path, nearest_existing_parent, now_unix};
 use crate::git::git_repo_check;
 
+#[derive(serde::Serialize)]
 pub(crate) struct CommandCheck {
     pub(crate) present: bool,
     pub(crate) version: Option<String>,
     pub(crate) error: Option<String>,
 }
 
+#[derive(serde::Serialize)]
 pub(crate) struct DoctorReport {
     pub(crate) cli_version: String,
     pub(crate) os: String,
@@ -19,7 +21,9 @@ pub(crate) struct DoctorReport {
     pub(crate) current_dir: String,
     pub(crate) pwd: Option<String>,
     pub(crate) pwd_differs_from_current_dir: bool,
+    #[serde(serialize_with = "crate::render::serialize_inline")]
     pub(crate) sqlite3: CommandCheck,
+    #[serde(serialize_with = "crate::render::serialize_inline")]
     pub(crate) git: CommandCheck,
     pub(crate) inside_git_repo: Option<bool>,
     pub(crate) git_repo_error: Option<String>,
@@ -32,8 +36,8 @@ pub(crate) struct DoctorReport {
     pub(crate) claude_skill_installed: bool,
     pub(crate) codex_skill_path: String,
     pub(crate) codex_skill_installed: bool,
-    pub(crate) path_contains_cli_dir: bool,
     pub(crate) current_exe: Option<String>,
+    pub(crate) path_contains_cli_dir: bool,
 }
 
 pub(crate) fn build_doctor_report(target_dir: &Path) -> DoctorReport {

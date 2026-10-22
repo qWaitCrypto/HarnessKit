@@ -1,9 +1,9 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use crate::index::{cell, scalar_count, sql_string_literal, DocRelation};
+use crate::index::{cell, DocRelation};
 use crate::query::{snippet_for_doc, QueryCandidate};
-use crate::sqlite_cli::SqliteConnection;
+use crate::sqlite::SqliteConnection;
 use crate::Result;
 
 pub(crate) struct ContextPacket {
@@ -16,13 +16,10 @@ pub(crate) struct ContextPacket {
 }
 
 pub(crate) fn doc_exists(db: &SqliteConnection, doc_path: &str) -> Result<bool> {
-    Ok(scalar_count(
-        db,
-        &format!(
-            "SELECT COUNT(*) FROM docs WHERE path = {};",
-            sql_string_literal(doc_path)
-        ),
-    )? > 0)
+    Ok(!db
+        .query("SELECT path FROM docs WHERE path = ?1;", [doc_path])?
+        .rows
+        .is_empty())
 }
 
 pub(crate) fn context_packet_for_doc(
@@ -30,11 +27,11 @@ pub(crate) fn context_packet_for_doc(
     target_dir: &Path,
     doc_path: &str,
 ) -> Result<ContextPacket> {
-    let doc = db.query(&format!(
+    let doc = db.query(
         "SELECT path, title, role, COALESCE(status, ''), summary, incoming_links
-         FROM docs WHERE path = {};",
-        sql_string_literal(doc_path)
-    ))?;
+         FROM docs WHERE path = ?1;",
+        [doc_path],
+    )?;
     let Some(row) = doc.rows.first() else {
         return Err(format!("doc not found in fact store: {}", doc_path).into());
     };
@@ -79,12 +76,11 @@ fn relation_rows(db: &SqliteConnection, side: &str, doc_path: &str) -> Result<Ve
     let sql = format!(
         "SELECT src_path, dst_path, relation_type, reason, explicit, confidence, evidence_json
          FROM relations
-         WHERE {side} = {}
+         WHERE {side} = ?1
          ORDER BY relation_type ASC, src_path ASC, dst_path ASC;",
-        sql_string_literal(doc_path),
         side = side
     );
-    let rows = db.query(&sql)?;
+    let rows = db.query(&sql, [doc_path])?;
     Ok(rows
         .rows
         .iter()
@@ -101,17 +97,17 @@ fn relation_rows(db: &SqliteConnection, side: &str, doc_path: &str) -> Result<Ve
 }
 
 fn collection_siblings(db: &SqliteConnection, doc_path: &str) -> Result<Vec<String>> {
-    let rows = db.query(&format!(
+    let rows = db.query(
         "SELECT sibling.path
          FROM docs target
          JOIN docs sibling ON sibling.collection_name = target.collection_name
-         WHERE target.path = {}
+         WHERE target.path = ?1
            AND sibling.path != target.path
            AND sibling.path NOT LIKE '%/index.md'
          ORDER BY sibling.path ASC
          LIMIT 12;",
-        sql_string_literal(doc_path)
-    ))?;
+        [doc_path],
+    )?;
     Ok(rows
         .rows
         .iter()
@@ -120,16 +116,16 @@ fn collection_siblings(db: &SqliteConnection, doc_path: &str) -> Result<Vec<Stri
 }
 
 fn same_scope_docs(db: &SqliteConnection, doc_path: &str) -> Result<Vec<String>> {
-    let rows = db.query(&format!(
+    let rows = db.query(
         "SELECT DISTINCT scoped.doc_path
          FROM scope_paths base
          JOIN scope_paths scoped ON scoped.scope_path = base.scope_path
-         WHERE base.doc_path = {}
+         WHERE base.doc_path = ?1
            AND scoped.doc_path != base.doc_path
          ORDER BY scoped.doc_path ASC
          LIMIT 12;",
-        sql_string_literal(doc_path)
-    ))?;
+        [doc_path],
+    )?;
     Ok(rows
         .rows
         .iter()

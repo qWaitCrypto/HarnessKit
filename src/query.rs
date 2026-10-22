@@ -1,12 +1,12 @@
 use std::fs;
 use std::path::Path;
 
-use crate::index::{cell, split_pipe_list, sql_string_literal};
+use crate::index::{cell, split_pipe_list};
 use crate::parse::parse_heading;
-use crate::sqlite_cli::{QueryResult, SqliteConnection};
+use crate::sqlite::{QueryResult, SqliteConnection};
 use crate::Result;
 
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize)]
 pub(crate) struct QueryCandidate {
     pub(crate) path: String,
     pub(crate) title: String,
@@ -15,6 +15,7 @@ pub(crate) struct QueryCandidate {
     pub(crate) score: String,
     pub(crate) why: String,
     pub(crate) summary: String,
+    #[serde(serialize_with = "crate::render::serialize_inline")]
     pub(crate) neighbors: Vec<String>,
     pub(crate) snippet_heading: String,
     pub(crate) snippet_location: String,
@@ -39,13 +40,11 @@ pub(crate) fn query_candidates(
     target_dir: &Path,
     query_terms: &str,
 ) -> Result<QueryResult> {
-    let escaped_terms = sql_string_literal(query_terms);
     let sanitized_fts_terms = sanitize_fts_query(query_terms);
-    let escaped_fts_terms = sql_string_literal(&sanitized_fts_terms);
     let fts_match_clause = if sanitized_fts_terms.is_empty() {
-        "0".to_string()
+        "0 AND ?2 IS NOT NULL"
     } else {
-        format!("docs_fts MATCH {}", escaped_fts_terms)
+        "docs_fts MATCH ?2"
     };
     db.query(&format!(
         "WITH lexical AS (
@@ -56,24 +55,24 @@ pub(crate) fn query_candidates(
                    d.summary,
                    d.incoming_links,
                    CASE
-                       WHEN lower(d.title) LIKE '%' || lower({0}) || '%' THEN 4.0
-                       WHEN lower(d.path) LIKE '%' || lower({0}) || '%' THEN 3.0
-                       WHEN lower(d.headings_text) LIKE '%' || lower({0}) || '%' THEN 2.0
-                       WHEN lower(d.summary) LIKE '%' || lower({0}) || '%' THEN 1.5
+                       WHEN lower(d.title) LIKE '%' || lower(?1) || '%' THEN 4.0
+                       WHEN lower(d.path) LIKE '%' || lower(?1) || '%' THEN 3.0
+                       WHEN lower(d.headings_text) LIKE '%' || lower(?1) || '%' THEN 2.0
+                       WHEN lower(d.summary) LIKE '%' || lower(?1) || '%' THEN 1.5
                        ELSE 0.0
                    END AS lexical_score,
                    CASE
-                       WHEN lower(d.title) LIKE '%' || lower({0}) || '%' THEN 'title matched query'
-                       WHEN lower(d.path) LIKE '%' || lower({0}) || '%' THEN 'path matched query'
-                       WHEN lower(d.headings_text) LIKE '%' || lower({0}) || '%' THEN 'heading matched query'
-                       WHEN lower(d.summary) LIKE '%' || lower({0}) || '%' THEN 'summary matched query'
+                       WHEN lower(d.title) LIKE '%' || lower(?1) || '%' THEN 'title matched query'
+                       WHEN lower(d.path) LIKE '%' || lower(?1) || '%' THEN 'path matched query'
+                       WHEN lower(d.headings_text) LIKE '%' || lower(?1) || '%' THEN 'heading matched query'
+                       WHEN lower(d.summary) LIKE '%' || lower(?1) || '%' THEN 'summary matched query'
                        ELSE ''
                    END AS why
             FROM docs d
-            WHERE lower(d.path) LIKE '%' || lower({0}) || '%'
-               OR lower(d.title) LIKE '%' || lower({0}) || '%'
-               OR lower(d.headings_text) LIKE '%' || lower({0}) || '%'
-               OR lower(d.summary) LIKE '%' || lower({0}) || '%'
+            WHERE lower(d.path) LIKE '%' || lower(?1) || '%'
+               OR lower(d.title) LIKE '%' || lower(?1) || '%'
+               OR lower(d.headings_text) LIKE '%' || lower(?1) || '%'
+               OR lower(d.summary) LIKE '%' || lower(?1) || '%'
         ),
         fts AS (
             SELECT d.path,
@@ -86,7 +85,7 @@ pub(crate) fn query_candidates(
                    'full-text matched query' AS why
             FROM docs_fts f
             JOIN docs d ON d.path = f.path
-            WHERE {1}
+            WHERE {fts_match_clause}
         ),
         base AS (
             SELECT * FROM lexical
@@ -172,9 +171,7 @@ pub(crate) fn query_candidates(
         FROM ranked rnk
         LEFT JOIN neighbor_summary n ON n.anchor_path = rnk.path
         ORDER BY rnk.score DESC, rnk.path ASC;",
-        escaped_terms,
-        fts_match_clause
-    ))
+    ), rusqlite::params![query_terms, sanitized_fts_terms])
     .map(|mut result| {
         for row in &mut result.rows {
             let path = cell(row, 0).to_string();

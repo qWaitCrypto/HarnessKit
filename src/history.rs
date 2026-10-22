@@ -1,3 +1,5 @@
+use serde::{Deserialize, Serialize};
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -13,7 +15,7 @@ use crate::Result;
 
 static SNAPSHOT_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-#[derive(Clone, Default)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
 pub(crate) struct HistoryFileRecord {
     pub(crate) path: String,
     pub(crate) hash: String,
@@ -21,17 +23,17 @@ pub(crate) struct HistoryFileRecord {
     pub(crate) mtime_unix: u64,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
 pub(crate) struct HistorySnapshot {
     pub(crate) id: String,
     pub(crate) created_at_unix: u64,
     pub(crate) message: String,
     pub(crate) docs_root: String,
     pub(crate) schema_hash: String,
-    pub(crate) files: Vec<HistoryFileRecord>,
     pub(crate) host_git_head: Option<String>,
     pub(crate) host_git_branch: Option<String>,
     pub(crate) host_git_dirty: bool,
+    pub(crate) files: Vec<HistoryFileRecord>,
 }
 
 #[derive(Default)]
@@ -176,11 +178,6 @@ fn write_history_snapshot(target_dir: &Path, snapshot: &HistorySnapshot) -> Resu
     Ok(())
 }
 
-#[derive(Default)]
-pub(crate) struct JsonCursor {
-    pub(crate) pos: usize,
-}
-
 pub(crate) fn history_content_hash(bytes: &[u8]) -> String {
     let mut left: u64 = 0xcbf29ce484222325;
     let mut right: u64 = 0x84222325cbf29ce4;
@@ -217,325 +214,11 @@ pub(crate) fn list_history_snapshots(target_dir: &Path) -> Result<Vec<HistorySna
 }
 
 pub(crate) fn parse_history_snapshot_json(text: &str) -> Result<HistorySnapshot> {
-    let mut cursor = JsonCursor::default();
-    let root = parse_json_object(text, &mut cursor)?;
-    let snapshot = HistorySnapshot {
-        id: json_object_required_string(&root, "id")?,
-        created_at_unix: json_object_required_u64(&root, "created_at_unix")?,
-        message: json_object_required_string(&root, "message")?,
-        docs_root: json_object_required_string(&root, "docs_root")?,
-        schema_hash: json_object_required_string(&root, "schema_hash")?,
-        host_git_head: json_object_optional_string(&root, "host_git_head")?,
-        host_git_branch: json_object_optional_string(&root, "host_git_branch")?,
-        host_git_dirty: json_object_required_bool(&root, "host_git_dirty")?,
-        files: json_object_required_array(&root, "files")?
-            .iter()
-            .map(|value| history_file_record_from_json(value))
-            .collect::<Result<Vec<_>>>()?,
-    };
+    let snapshot: HistorySnapshot = serde_json::from_str(text)?;
     if snapshot.id.is_empty() {
         return Err("invalid history snapshot: missing id".into());
     }
     Ok(snapshot)
-}
-
-pub(crate) fn parse_json_string_value(value: &str) -> String {
-    let mut cursor = JsonCursor::default();
-    parse_json_string_token(value.trim(), &mut cursor).unwrap_or_default()
-}
-
-fn history_file_record_from_json(value: &str) -> Result<HistoryFileRecord> {
-    let object = parse_json_object(value, &mut JsonCursor::default())?;
-    Ok(HistoryFileRecord {
-        path: json_object_required_string(&object, "path")?,
-        hash: json_object_required_string(&object, "hash")?,
-        size: json_object_required_u64(&object, "size")?,
-        mtime_unix: json_object_required_u64(&object, "mtime_unix")?,
-    })
-}
-
-fn parse_json_object(text: &str, cursor: &mut JsonCursor) -> Result<Vec<(String, String)>> {
-    skip_json_ws(text, cursor);
-    expect_json_char(text, cursor, '{')?;
-    let mut entries = Vec::new();
-    loop {
-        skip_json_ws(text, cursor);
-        if try_consume_json_char(text, cursor, '}') {
-            break;
-        }
-        let key = parse_json_string_token(text, cursor)?;
-        skip_json_ws(text, cursor);
-        expect_json_char(text, cursor, ':')?;
-        skip_json_ws(text, cursor);
-        let value = parse_json_value_token(text, cursor)?;
-        entries.push((key, value));
-        skip_json_ws(text, cursor);
-        if try_consume_json_char(text, cursor, ',') {
-            continue;
-        }
-        expect_json_char(text, cursor, '}')?;
-        break;
-    }
-    Ok(entries)
-}
-
-fn parse_json_array_tokens(text: &str, cursor: &mut JsonCursor) -> Result<Vec<String>> {
-    skip_json_ws(text, cursor);
-    expect_json_char(text, cursor, '[')?;
-    let mut items = Vec::new();
-    loop {
-        skip_json_ws(text, cursor);
-        if try_consume_json_char(text, cursor, ']') {
-            break;
-        }
-        items.push(parse_json_value_token(text, cursor)?);
-        skip_json_ws(text, cursor);
-        if try_consume_json_char(text, cursor, ',') {
-            continue;
-        }
-        expect_json_char(text, cursor, ']')?;
-        break;
-    }
-    Ok(items)
-}
-
-pub(crate) fn parse_json_value_token(text: &str, cursor: &mut JsonCursor) -> Result<String> {
-    skip_json_ws(text, cursor);
-    let Some(ch) = peek_json_char(text, cursor) else {
-        return Err("invalid json: unexpected end of input".into());
-    };
-    match ch {
-        '"' => parse_json_string_literal(text, cursor),
-        '{' => parse_json_balanced_block(text, cursor, '{', '}'),
-        '[' => parse_json_balanced_block(text, cursor, '[', ']'),
-        _ => parse_json_scalar_literal(text, cursor),
-    }
-}
-
-fn parse_json_string_literal(text: &str, cursor: &mut JsonCursor) -> Result<String> {
-    let start = cursor.pos;
-    let _ = parse_json_string_token(text, cursor)?;
-    Ok(text[start..cursor.pos].to_string())
-}
-
-fn parse_json_string_token(text: &str, cursor: &mut JsonCursor) -> Result<String> {
-    expect_json_char(text, cursor, '"')?;
-    let mut out = String::new();
-    while let Some(ch) = next_json_char(text, cursor) {
-        match ch {
-            '"' => return Ok(out),
-            '\\' => match next_json_char(text, cursor) {
-                Some('n') => out.push('\n'),
-                Some('r') => out.push('\r'),
-                Some('t') => out.push('\t'),
-                Some('b') => out.push('\u{0008}'),
-                Some('f') => out.push('\u{000c}'),
-                Some('"') => out.push('"'),
-                Some('\\') => out.push('\\'),
-                Some('/') => out.push('/'),
-                Some('u') => {
-                    let code = read_json_hex_escape(text, cursor)?;
-                    push_json_unicode_escape(text, cursor, code, &mut out)?;
-                }
-                Some(other) => out.push(other),
-                None => return Err("invalid json: unterminated escape".into()),
-            },
-            other => out.push(other),
-        }
-    }
-    Err("invalid json: unterminated string".into())
-}
-
-fn push_json_unicode_escape(
-    text: &str,
-    cursor: &mut JsonCursor,
-    code: u32,
-    out: &mut String,
-) -> Result<()> {
-    if (0xD800..=0xDBFF).contains(&code) {
-        let saved = cursor.pos;
-        if next_json_char(text, cursor) == Some('\\') && next_json_char(text, cursor) == Some('u') {
-            let low = read_json_hex_escape(text, cursor)?;
-            if (0xDC00..=0xDFFF).contains(&low) {
-                let combined = 0x10000 + (((code - 0xD800) << 10) | (low - 0xDC00));
-                if let Some(decoded) = char::from_u32(combined) {
-                    out.push(decoded);
-                    return Ok(());
-                }
-            }
-        }
-        cursor.pos = saved;
-        out.push('\u{FFFD}');
-        return Ok(());
-    }
-    if (0xDC00..=0xDFFF).contains(&code) {
-        out.push('\u{FFFD}');
-        return Ok(());
-    }
-    if let Some(decoded) = char::from_u32(code) {
-        out.push(decoded);
-    } else {
-        out.push('\u{FFFD}');
-    }
-    Ok(())
-}
-
-fn parse_json_balanced_block(
-    text: &str,
-    cursor: &mut JsonCursor,
-    open: char,
-    close: char,
-) -> Result<String> {
-    let start = cursor.pos;
-    let mut depth = 0usize;
-    let mut in_string = false;
-    let mut escaped = false;
-    while let Some(ch) = next_json_char(text, cursor) {
-        if in_string {
-            if escaped {
-                escaped = false;
-                continue;
-            }
-            match ch {
-                '\\' => escaped = true,
-                '"' => in_string = false,
-                _ => {}
-            }
-            continue;
-        }
-        match ch {
-            '"' => in_string = true,
-            c if c == open => depth += 1,
-            c if c == close => {
-                depth = depth.saturating_sub(1);
-                if depth == 0 {
-                    return Ok(text[start..cursor.pos].to_string());
-                }
-            }
-            _ => {}
-        }
-    }
-    Err("invalid json: unterminated object or array".into())
-}
-
-fn parse_json_scalar_literal(text: &str, cursor: &mut JsonCursor) -> Result<String> {
-    let start = cursor.pos;
-    while let Some(ch) = peek_json_char(text, cursor) {
-        if ch == ',' || ch == '}' || ch == ']' || ch.is_whitespace() {
-            break;
-        }
-        let _ = next_json_char(text, cursor);
-    }
-    let token = text[start..cursor.pos].trim();
-    if token.is_empty() {
-        Err("invalid json: empty scalar".into())
-    } else {
-        Ok(token.to_string())
-    }
-}
-
-fn json_object_required_string(entries: &[(String, String)], key: &str) -> Result<String> {
-    let value = json_object_value(entries, key)
-        .ok_or_else(|| format!("invalid json object: missing key `{}`", key))?;
-    Ok(parse_json_string_value(value))
-}
-
-fn json_object_optional_string(entries: &[(String, String)], key: &str) -> Result<Option<String>> {
-    match json_object_value(entries, key) {
-        Some(value) => Ok(parse_json_opt_string_value(value)),
-        None => Ok(None),
-    }
-}
-
-fn json_object_required_u64(entries: &[(String, String)], key: &str) -> Result<u64> {
-    let value = json_object_value(entries, key)
-        .ok_or_else(|| format!("invalid json object: missing key `{}`", key))?;
-    value
-        .trim()
-        .parse::<u64>()
-        .map_err(|_| format!("invalid json object: expected u64 for `{}`", key).into())
-}
-
-fn json_object_required_bool(entries: &[(String, String)], key: &str) -> Result<bool> {
-    let value = json_object_value(entries, key)
-        .ok_or_else(|| format!("invalid json object: missing key `{}`", key))?;
-    match value.trim() {
-        "true" => Ok(true),
-        "false" => Ok(false),
-        _ => Err(format!("invalid json object: expected bool for `{}`", key).into()),
-    }
-}
-
-fn json_object_required_array(entries: &[(String, String)], key: &str) -> Result<Vec<String>> {
-    let value = json_object_value(entries, key)
-        .ok_or_else(|| format!("invalid json object: missing key `{}`", key))?;
-    parse_json_array_tokens(value, &mut JsonCursor::default())
-}
-
-fn json_object_value<'a>(entries: &'a [(String, String)], key: &str) -> Option<&'a str> {
-    entries
-        .iter()
-        .find(|(entry_key, _)| entry_key == key)
-        .map(|(_, value)| value.as_str())
-}
-
-fn skip_json_ws(text: &str, cursor: &mut JsonCursor) {
-    while let Some(ch) = peek_json_char(text, cursor) {
-        if ch.is_whitespace() {
-            let _ = next_json_char(text, cursor);
-        } else {
-            break;
-        }
-    }
-}
-
-fn expect_json_char(text: &str, cursor: &mut JsonCursor, expected: char) -> Result<()> {
-    match next_json_char(text, cursor) {
-        Some(ch) if ch == expected => Ok(()),
-        Some(ch) => Err(format!("invalid json: expected `{}`, got `{}`", expected, ch).into()),
-        None => Err(format!("invalid json: expected `{}`, got end of input", expected).into()),
-    }
-}
-
-fn try_consume_json_char(text: &str, cursor: &mut JsonCursor, expected: char) -> bool {
-    if peek_json_char(text, cursor) == Some(expected) {
-        let _ = next_json_char(text, cursor);
-        true
-    } else {
-        false
-    }
-}
-
-fn peek_json_char(text: &str, cursor: &JsonCursor) -> Option<char> {
-    text[cursor.pos..].chars().next()
-}
-
-fn next_json_char(text: &str, cursor: &mut JsonCursor) -> Option<char> {
-    let ch = peek_json_char(text, cursor)?;
-    cursor.pos += ch.len_utf8();
-    Some(ch)
-}
-
-fn read_json_hex_escape(text: &str, cursor: &mut JsonCursor) -> Result<u32> {
-    let mut value = 0u32;
-    for _ in 0..4 {
-        let Some(ch) = next_json_char(text, cursor) else {
-            return Err("invalid json: truncated unicode escape".into());
-        };
-        let digit = ch
-            .to_digit(16)
-            .ok_or_else(|| format!("invalid json: bad unicode escape digit `{}`", ch))?;
-        value = (value << 4) | digit;
-    }
-    Ok(value)
-}
-
-fn parse_json_opt_string_value(value: &str) -> Option<String> {
-    if value.trim() == "null" {
-        None
-    } else {
-        Some(parse_json_string_value(value))
-    }
 }
 
 pub(crate) fn latest_history_snapshot_id(target_dir: &Path) -> Option<String> {
@@ -552,7 +235,7 @@ pub(crate) fn resolve_snapshot_arg(target_dir: &Path, value: &str) -> Result<His
         value.to_string()
     };
     let path = history_snapshots_dir(target_dir).join(format!("{}.json", id));
-    let text = fs::read_to_string(&path)?;
+    let text = fs::read_to_string(path)?;
     parse_history_snapshot_json(&text)
 }
 
@@ -783,4 +466,42 @@ fn atomic_copy_file(src: &Path, dst: &Path) -> Result<()> {
         .into());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn frozen_alpha6_snapshot_roundtrips_byte_for_byte() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/compat/alpha6-history/snapshots");
+        for entry in fs::read_dir(dir).unwrap() {
+            let text = fs::read_to_string(entry.unwrap().path()).unwrap();
+            let snapshot = parse_history_snapshot_json(&text).unwrap();
+            assert_eq!(render_history_snapshot_json(&snapshot), text);
+            assert_eq!(
+                parse_history_snapshot_json(&render_history_snapshot_json(&snapshot)).unwrap(),
+                snapshot
+            );
+        }
+    }
+
+    #[test]
+    fn snapshot_roundtrip_preserves_unicode_controls_optional_fields_and_u64() {
+        let raw = r#"{"files":[],"host_git_dirty":false,"unknown_future_field":{"nested":[1,2]},"schema_hash":"","docs_root":"资料","message":"emoji \uD83D\uDE00 \u0000 \u001f \"quoted\" \\ \b\f\n\r\t","created_at_unix":18446744073709551615,"id":"snapshot"}"#;
+        let snapshot = parse_history_snapshot_json(raw).unwrap();
+        assert_eq!(snapshot.created_at_unix, u64::MAX);
+        assert_eq!(snapshot.host_git_head, None);
+        assert_eq!(snapshot.host_git_branch, None);
+        assert!(snapshot.message.contains('😀'));
+        assert_eq!(
+            parse_history_snapshot_json(&render_history_snapshot_json(&snapshot)).unwrap(),
+            snapshot
+        );
+        assert_eq!(
+            parse_history_snapshot_json(&serde_json::to_string(&snapshot).unwrap()).unwrap(),
+            snapshot
+        );
+    }
 }

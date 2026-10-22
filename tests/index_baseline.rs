@@ -4,8 +4,7 @@ use serde_json::Value;
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
-use std::process::Command;
-use support::{assert_success, TestRepo};
+use support::TestRepo;
 
 fn index_json(repo: &TestRepo) -> Value {
     serde_json::from_slice(&fs::read(repo.root.join(".harnesskit/state/doc-index.json")).unwrap())
@@ -148,21 +147,23 @@ fn incompatible_fact_store_is_automatically_rebuilt() {
     repo.run(&["index"]);
     let before = query_paths(&repo, "lantern");
     let database = repo.root.join(".harnesskit/state/facts.sqlite");
-    let downgrade = Command::new("sqlite3")
-        .arg(&database)
-        .arg("UPDATE meta SET value = 'legacy' WHERE key = 'fact_schema_version'; DROP TABLE raw_links;")
-        .output()
-        .unwrap();
-    assert_success(&downgrade, &["sqlite3", "downgrade fact store metadata"]);
+    let db = rusqlite::Connection::open(&database).unwrap();
+    db.execute_batch(
+        "UPDATE meta SET value = 'legacy' WHERE key = 'fact_schema_version'; DROP TABLE raw_links;",
+    )
+    .unwrap();
+    drop(db);
 
     repo.run(&["index"]);
     assert_eq!(query_paths(&repo, "lantern"), before);
     assert!(repo.run(&["list-docs"]).contains("- docs/project.md ["));
-    let restored = Command::new("sqlite3")
-        .arg(database)
-        .arg("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'raw_links';")
-        .output()
+    let db = rusqlite::Connection::open(database).unwrap();
+    let restored: usize = db
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'raw_links';",
+            [],
+            |row| row.get(0),
+        )
         .unwrap();
-    assert_success(&restored, &["sqlite3", "inspect rebuilt fact store"]);
-    assert_eq!(String::from_utf8(restored.stdout).unwrap().trim(), "1");
+    assert_eq!(restored, 1);
 }

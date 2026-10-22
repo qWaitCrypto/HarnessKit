@@ -13,7 +13,7 @@ pub(super) fn add_history_checks(schema: &Schema, repo_root: &Path, checks: &mut
     match find_host_git_dir(repo_root) {
         Some(git_dir) => {
             let exclude_path = git_dir.join("info").join("exclude");
-            let exclude_text = fs::read_to_string(&exclude_path).unwrap_or_default();
+            let exclude_text = fs::read_to_string(exclude_path).unwrap_or_default();
             if exclude_text.trim().is_empty() {
                 push_check(
                     checks,

@@ -63,7 +63,7 @@ Users install a skill. Their agent handles everything else — initializing docs
 | **SQLite is derived** | `.harnesskit/state` is built from docs and can be rebuilt. `.harnesskit/history` is local checkpoint state; deleting it discards local doc snapshots. |
 | **Built for agents** | The CLI is a tool surface that agents call. Users talk to their agent in natural language; the agent picks the right command. |
 | **Not a runtime** | HarnessKit does not run models, manage conversations, or execute tools. It's the engineering harness, not the agent harness. |
-| **Lightweight** | Rust CLI, no daemons, no MCP servers, no background processes. Alpha fact-store commands require the system `sqlite3` CLI. |
+| **Lightweight** | Rust CLI with bundled SQLite, no daemons, no MCP servers, no background processes. No system `sqlite3` installation is needed. |
 
 ## Quick Start
 
@@ -94,7 +94,8 @@ Alpha notes:
 
 - The public binary release currently supports Linux x86_64 and macOS x86_64/arm64.
 - The binary includes the default schema and templates, so `harnesskit init` works from ordinary project directories without a checked-out HarnessKit source tree.
-- Fact-store-backed commands currently require `sqlite3` on `PATH`: `index`, `query`, `check`, `context`, `graph`, `inspect`, `refs`, `rank`, and `list-docs`.
+- SQLite is compiled into the binary. Indexing, search, checks, context, and history work without `sqlite3` or a SQLite shared library. Building from source requires Rust/Cargo and a C compiler for bundled SQLite.
+- For CLI output compatibility, `doctor` still reports the optional system `sqlite3` command and retains its legacy requirement text; that text does not apply to this build. Existing history snapshots and schemas remain compatible.
 - The installer writes the Codex skill directly; Codex plugin packaging is optional.
 - The installer can be rerun with a newer `--version` tag to upgrade.
 - After alpha.2, `harnesskit update` can update the CLI and already-installed skills from GitHub releases.
@@ -235,7 +236,7 @@ Validates all managed docs — missing required files, broken links, stale ancho
 harnesskit doctor [--json]
 ```
 
-Checks the CLI, `sqlite3`, git, target path, `.harnesskit/state`, `.harnesskit/history`, installed agent skills, and PATH status. Use this when first installing or when a sandboxed environment reports a read-only fact store.
+Checks the CLI, optional system `sqlite3`, git, target path, `.harnesskit/state`, `.harnesskit/history`, installed agent skills, and PATH status. The legacy `sqlite3` requirement message is retained for output compatibility; SQLite is now bundled. Use this when first installing or when a sandboxed environment reports a read-only fact store.
 
 #### Local History
 

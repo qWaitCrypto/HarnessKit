@@ -5,32 +5,30 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use std::{env, fs};
 
 use crate::checks::{filter_and_suppress_checks, newest_existing_path_mtime, CheckView};
-use crate::cli::{command_options, load_engine_context, CommandOptions};
+use crate::cli::{command_options, load_engine_context, CommandOptions, CommonArgs, TargetArgs};
 use crate::context::context_packet_for_doc;
 use crate::discover::infer_index_role;
 use crate::git::{ensure_host_git_exclude, run_git_capture};
 use crate::history::{
     apply_restore_plan, compute_history_status, create_history_snapshot, diff_snapshot_to_worktree,
-    history_content_hash, history_object_path, parse_history_snapshot_json,
-    parse_json_string_value, restore_plan,
+    history_content_hash, history_object_path, parse_history_snapshot_json, restore_plan,
 };
 use crate::index::{
     build_index_artifact, cell, collect_current_file_states, compute_fact_store_delta, meta_value,
     open_fact_store, parse_file_state_rows, read_index_artifact_from_fact_store,
-    refresh_fact_store, scalar_count, split_pipe_list, sql_string_literal, write_fact_store,
-    write_index_artifact, EngineContext, FACT_SCHEMA_VERSION,
+    refresh_fact_store, scalar_count, split_pipe_list, write_fact_store, write_index_artifact,
+    EngineContext, FACT_SCHEMA_VERSION,
 };
 use crate::parse::{extract_inline_code_path_mentions, parse_doc_text};
 use crate::query::{query_candidates, query_rows_to_candidates};
 use crate::render::{
-    json_string, render_check_json, render_context_packet_json, render_index_json,
-    render_query_json,
+    render_check_json, render_context_packet_json, render_index_json, render_query_json,
 };
 use crate::schema::{
     parse_inline_list, parse_schema, render_schema_copy, rewrite_docs_root_bound_paths, Schema,
     BUNDLED_SCHEMA_TEXT,
 };
-use crate::sqlite_cli::QueryResult;
+use crate::sqlite::QueryResult;
 use crate::templates::{init_plan_paths, materialize_from_schema};
 use crate::update::write_archive_sha256_file;
 
@@ -238,7 +236,8 @@ fn parse_inline_list_respects_quoted_commas() {
 fn command_options_no_strict_overrides_schema_strict() {
     let mut schema = Schema::default();
     schema.rules.strict_checks = Some(true);
-    let args = vec!["--no-strict".to_string()];
+    let mut args = CommonArgs::default();
+    args.no_strict = true;
 
     let options = command_options(&args, Some(&schema));
 
@@ -625,7 +624,7 @@ fn fact_store_persists_file_states_and_relations() {
 
     let db = open_fact_store(&target).unwrap();
     let file_states = db
-            .query("SELECT path, content_hash, file_size_bytes, mtime_unix FROM file_states WHERE path = 'docs/design-docs/example-design.md';")
+            .query("SELECT path, content_hash, file_size_bytes, mtime_unix FROM file_states WHERE path = 'docs/design-docs/example-design.md';", [])
             .unwrap();
     assert_eq!(file_states.rows.len(), 1);
     assert_eq!(
@@ -636,7 +635,7 @@ fn fact_store_persists_file_states_and_relations() {
     assert!(cell(&file_states.rows[0], 2).parse::<u64>().unwrap() > 0);
 
     let relations = db
-            .query("SELECT relation_type, confidence, evidence_json FROM relations WHERE src_path = 'docs/design-docs/example-design.md';")
+            .query("SELECT relation_type, confidence, evidence_json FROM relations WHERE src_path = 'docs/design-docs/example-design.md';", [])
             .unwrap();
     assert!(relations
         .rows
@@ -746,9 +745,8 @@ fn query_sql_returns_scores_and_neighbors() {
     write_fact_store(&target, &artifact).unwrap();
     let db = open_fact_store(&target).unwrap();
 
-    let query = sql_string_literal("schema");
     let result = db
-            .query(&format!(
+            .query(
                 "WITH lexical AS (
                     SELECT d.path,
                            d.title,
@@ -757,24 +755,24 @@ fn query_sql_returns_scores_and_neighbors() {
                            d.summary,
                            d.incoming_links,
                            CASE
-                               WHEN lower(d.title) LIKE '%' || lower({0}) || '%' THEN 4.0
-                               WHEN lower(d.path) LIKE '%' || lower({0}) || '%' THEN 3.0
-                               WHEN lower(d.headings_text) LIKE '%' || lower({0}) || '%' THEN 2.0
-                               WHEN lower(d.summary) LIKE '%' || lower({0}) || '%' THEN 1.5
+                               WHEN lower(d.title) LIKE '%' || lower(?1) || '%' THEN 4.0
+                               WHEN lower(d.path) LIKE '%' || lower(?1) || '%' THEN 3.0
+                               WHEN lower(d.headings_text) LIKE '%' || lower(?1) || '%' THEN 2.0
+                               WHEN lower(d.summary) LIKE '%' || lower(?1) || '%' THEN 1.5
                                ELSE 0.0
                            END AS lexical_score,
                            CASE
-                               WHEN lower(d.title) LIKE '%' || lower({0}) || '%' THEN 'title matched query'
-                               WHEN lower(d.path) LIKE '%' || lower({0}) || '%' THEN 'path matched query'
-                               WHEN lower(d.headings_text) LIKE '%' || lower({0}) || '%' THEN 'heading matched query'
-                               WHEN lower(d.summary) LIKE '%' || lower({0}) || '%' THEN 'summary matched query'
+                               WHEN lower(d.title) LIKE '%' || lower(?1) || '%' THEN 'title matched query'
+                               WHEN lower(d.path) LIKE '%' || lower(?1) || '%' THEN 'path matched query'
+                               WHEN lower(d.headings_text) LIKE '%' || lower(?1) || '%' THEN 'heading matched query'
+                               WHEN lower(d.summary) LIKE '%' || lower(?1) || '%' THEN 'summary matched query'
                                ELSE ''
                            END AS why
                     FROM docs d
-                    WHERE lower(d.path) LIKE '%' || lower({0}) || '%'
-                       OR lower(d.title) LIKE '%' || lower({0}) || '%'
-                       OR lower(d.headings_text) LIKE '%' || lower({0}) || '%'
-                       OR lower(d.summary) LIKE '%' || lower({0}) || '%'
+                    WHERE lower(d.path) LIKE '%' || lower(?1) || '%'
+                       OR lower(d.title) LIKE '%' || lower(?1) || '%'
+                       OR lower(d.headings_text) LIKE '%' || lower(?1) || '%'
+                       OR lower(d.summary) LIKE '%' || lower(?1) || '%'
                 ),
                 fts AS (
                     SELECT d.path,
@@ -787,7 +785,7 @@ fn query_sql_returns_scores_and_neighbors() {
                            'full-text matched query' AS why
                     FROM docs_fts f
                     JOIN docs d ON d.path = f.path
-                    WHERE docs_fts MATCH {0}
+                    WHERE docs_fts MATCH ?1
                 ),
                 base AS (
                     SELECT * FROM lexical
@@ -841,8 +839,8 @@ fn query_sql_returns_scores_and_neighbors() {
                 LEFT JOIN neighbor_summary n ON n.anchor_path = m.path
                 ORDER BY (m.lexical_score + (m.incoming_links * 0.05)) DESC, m.path ASC
                 LIMIT 12;",
-                query
-            ))
+                ["schema"],
+            )
             .unwrap();
 
     assert!(result
@@ -956,12 +954,15 @@ fn incremental_refresh_updates_fact_store_without_dropping_unchanged_docs() {
         1
     );
     let project_row = db
-        .query("SELECT summary FROM docs WHERE path = 'docs/DOCUMENTATION_SYSTEM.md';")
+        .query(
+            "SELECT summary FROM docs WHERE path = 'docs/DOCUMENTATION_SYSTEM.md';",
+            [],
+        )
         .unwrap();
     assert!(cell(&project_row.rows[0], 0).contains("Incrementally updated summary"));
 
     let meta_rows = db
-            .query("SELECT key, value FROM meta WHERE key IN ('last_refresh_mode', 'last_delta_changed') ORDER BY key ASC;")
+            .query("SELECT key, value FROM meta WHERE key IN ('last_refresh_mode', 'last_delta_changed') ORDER BY key ASC;", [])
             .unwrap();
     assert!(meta_rows
         .rows
@@ -973,7 +974,10 @@ fn incremental_refresh_updates_fact_store_without_dropping_unchanged_docs() {
         .any(|row| cell(row, 0) == "last_delta_changed" && cell(row, 1) == "1"));
 
     let commands_row = db
-        .query("SELECT summary FROM docs WHERE path = 'docs/project.md';")
+        .query(
+            "SELECT summary FROM docs WHERE path = 'docs/project.md';",
+            [],
+        )
         .unwrap();
     assert!(!cell(&commands_row.rows[0], 0).is_empty());
     assert_eq!(
@@ -1054,7 +1058,7 @@ fn delta_quick_check_reuses_hash_when_file_metadata_is_unchanged() {
 
     let db = open_fact_store(&target).unwrap();
     let rows = db
-            .query("SELECT path, content_hash, file_size_bytes, mtime_unix, mtime_ns FROM file_states WHERE path = 'docs/project.md';")
+            .query("SELECT path, content_hash, file_size_bytes, mtime_unix, mtime_ns FROM file_states WHERE path = 'docs/project.md';", [])
             .unwrap();
     let previous = parse_file_state_rows(&rows);
     let current = collect_current_file_states(&target, &schema, &previous).unwrap();
@@ -1094,11 +1098,17 @@ fn refresh_upgrades_older_fact_store_schema() {
 
     let db = open_fact_store(&target).unwrap();
     let table_rows = db
-        .query("SELECT name FROM sqlite_master WHERE type='table' AND name='path_mentions';")
+        .query(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='path_mentions';",
+            [],
+        )
         .unwrap();
     assert_eq!(table_rows.rows.len(), 1);
     let version_rows = db
-        .query("SELECT value FROM meta WHERE key='fact_schema_version';")
+        .query(
+            "SELECT value FROM meta WHERE key='fact_schema_version';",
+            [],
+        )
         .unwrap();
     assert_eq!(cell(&version_rows.rows[0], 0), FACT_SCHEMA_VERSION);
 
@@ -1117,7 +1127,10 @@ fn full_build_writes_fact_schema_version_meta() {
 
     let db = open_fact_store(&target).unwrap();
     let version_rows = db
-        .query("SELECT value FROM meta WHERE key='fact_schema_version';")
+        .query(
+            "SELECT value FROM meta WHERE key='fact_schema_version';",
+            [],
+        )
         .unwrap();
     assert_eq!(cell(&version_rows.rows[0], 0), FACT_SCHEMA_VERSION);
 
@@ -1393,8 +1406,11 @@ fn engine_context_prefers_project_schema_after_init() {
     schema_copy.push_str("\nsuppressions:\n  local_only:\n    rule_id: missing-required-doc\n    path: docs/commands.md\n    reason: local project config\n");
 
     materialize_from_schema(&target, &schema, &schema_copy, false).unwrap();
-    let args = vec![target.to_string_lossy().to_string()];
-    let context = load_engine_context(&args, 0).unwrap();
+    let args = TargetArgs {
+        target_dir: Some(target.to_string_lossy().to_string()),
+        ..Default::default()
+    };
+    let context = load_engine_context(&args).unwrap();
 
     assert_eq!(context.schema.suppressions.len(), 1);
     assert_eq!(
@@ -1509,15 +1525,16 @@ fn parse_history_snapshot_json_accepts_compact_json_layout() {
 
 #[test]
 fn json_parser_decodes_surrogate_pairs() {
-    let value = parse_json_string_value(r#""emoji \uD83D\uDE00""#);
+    let raw = r#"{"id":"snap-1","created_at_unix":123,"message":"emoji \uD83D\uDE00","docs_root":"docs","schema_hash":"","host_git_dirty":false,"files":[]}"#;
+    let snapshot = parse_history_snapshot_json(raw).unwrap();
 
-    assert_eq!(value, "emoji \u{1F600}");
+    assert_eq!(snapshot.message, "emoji \u{1F600}");
 }
 
 #[test]
 fn json_string_escapes_all_control_characters() {
-    let rendered = json_string("a\u{0001}\u{0008}\u{000c}z");
-    assert_eq!(rendered, "\"a\\u0001\\b\\fz\"");
+    let rendered = render_query_json("a\u{0001}\u{0008}\u{000c}z", &[]);
+    assert!(rendered.contains("\"query\": \"a\\u0001\\b\\fz\""));
 }
 
 #[test]
@@ -1795,7 +1812,10 @@ fn history_checks_and_index_meta_reflect_snapshot_state() {
     write_fact_store(&target, &artifact).unwrap();
     let db = open_fact_store(&target).unwrap();
     let meta = db
-        .query("SELECT value FROM meta WHERE key = 'history_latest_snapshot';")
+        .query(
+            "SELECT value FROM meta WHERE key = 'history_latest_snapshot';",
+            [],
+        )
         .unwrap();
     assert_eq!(cell(&meta.rows[0], 0), snapshot.id);
 

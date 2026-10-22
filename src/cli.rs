@@ -1,3 +1,9 @@
+mod args;
+
+use args::{option_value, Cli, Command, DiffArgs, HistoryCommand, InputArgs};
+pub(crate) use args::{CommonArgs, TargetArgs};
+use clap::{CommandFactory, Parser};
+
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::{env, fs};
@@ -11,9 +17,7 @@ use crate::history::{
     apply_restore_plan, compute_history_status, create_history_snapshot, diff_snapshot_to_worktree,
     diff_snapshots, is_history_dirty, list_history_snapshots, resolve_snapshot_arg, restore_plan,
 };
-use crate::index::{
-    open_fact_store, refresh_fact_store, scalar_count, sql_string_literal, EngineContext,
-};
+use crate::index::{open_fact_store, refresh_fact_store, scalar_count, EngineContext};
 use crate::query::{query_candidates, query_rows_to_candidates};
 use crate::render::{
     print_check_output, print_context_packet, print_doctor_report, print_history_diff,
@@ -21,7 +25,7 @@ use crate::render::{
     print_init_preview, print_init_result, print_init_summary, print_inspect_output,
     print_list_docs_rows, print_query_candidates, print_rank_rows, print_refs_output,
     print_restore_plan, render_check_json, render_context_packet_json, render_doctor_json,
-    render_query_json, usage,
+    render_query_json,
 };
 use crate::schema::{
     default_context_schema_arg, load_schema, parse_schema, render_schema_copy,
@@ -44,15 +48,15 @@ pub(crate) enum InitMode {
     Tracked,
 }
 
-fn run_init(args: &[String]) -> Result<()> {
-    let target_dir = PathBuf::from(positional_or_default(args, 0, "."));
-    let docs_root_override = option_value(args, "--docs-root");
-    let schema_arg =
-        option_value(args, "--schema").unwrap_or_else(|| BUNDLED_SCHEMA_PATH.to_string());
-    let force = has_flag(args, "--force");
-    let preview = has_flag(args, "--preview");
-    let local = has_flag(args, "--local");
-    let tracked = has_flag(args, "--tracked");
+fn run_init(args: &TargetArgs) -> Result<()> {
+    let target_dir = PathBuf::from(args.target_dir.as_deref().unwrap_or("."));
+    let docs_root_override = option_value(&args.options.docs_root, "--docs-root");
+    let schema_arg = option_value(&args.options.schema, "--schema")
+        .unwrap_or_else(|| BUNDLED_SCHEMA_PATH.to_string());
+    let force = args.options.force;
+    let preview = args.options.preview;
+    let local = args.options.local;
+    let tracked = args.options.tracked;
     if local && tracked {
         return Err("harnesskit init accepts only one of --local or --tracked".into());
     }
@@ -91,8 +95,8 @@ fn run_init(args: &[String]) -> Result<()> {
     Ok(())
 }
 
-fn run_index(args: &[String]) -> Result<()> {
-    let context = load_engine_context(args, 0)?;
+fn run_index(args: &TargetArgs) -> Result<()> {
+    let context = load_engine_context(args)?;
     refresh_fact_store(&context)?;
     let target_dir = context.target_dir;
     let db = open_fact_store(&target_dir)?;
@@ -103,9 +107,9 @@ fn run_index(args: &[String]) -> Result<()> {
     Ok(())
 }
 
-fn run_check(args: &[String]) -> Result<()> {
-    let context = load_engine_context(args, 0)?;
-    let options = command_options(args, Some(&context.schema));
+fn run_check(args: &TargetArgs) -> Result<()> {
+    let context = load_engine_context(args)?;
+    let options = command_options(&args.options, Some(&context.schema));
     refresh_fact_store(&context)?;
     let target_dir = context.target_dir;
     let db = open_fact_store(&target_dir)?;
@@ -116,6 +120,7 @@ fn run_check(args: &[String]) -> Result<()> {
             CASE severity WHEN 'error' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END,
             subject_path ASC,
             rule_id ASC;",
+        [],
     )?;
     let checks = filter_and_suppress_checks(&check_rows, &context.schema, &options);
     let warning_count = checks
@@ -146,9 +151,9 @@ fn run_check(args: &[String]) -> Result<()> {
     Ok(())
 }
 
-fn run_doctor(args: &[String]) -> Result<()> {
-    let target_dir = PathBuf::from(positional_or_default(args, 0, "."));
-    let json = has_flag(args, "--json");
+fn run_doctor(args: &TargetArgs) -> Result<()> {
+    let target_dir = PathBuf::from(args.target_dir.as_deref().unwrap_or("."));
+    let json = args.options.json;
     let report = build_doctor_report(&target_dir);
 
     if json {
@@ -159,10 +164,11 @@ fn run_doctor(args: &[String]) -> Result<()> {
     Ok(())
 }
 
-fn run_update(args: &[String]) -> Result<()> {
-    let version = option_value(args, "--version").unwrap_or_else(|| "latest".to_string());
-    let repo = option_value(args, "--repo").unwrap_or_else(|| "qWaitCrypto/HarnessKit".to_string());
-    let asset_base_url_arg = option_value(args, "--asset-base-url");
+fn run_update(args: &CommonArgs) -> Result<()> {
+    let version = option_value(&args.version, "--version").unwrap_or_else(|| "latest".to_string());
+    let repo =
+        option_value(&args.repo, "--repo").unwrap_or_else(|| "qWaitCrypto/HarnessKit".to_string());
+    let asset_base_url_arg = option_value(&args.asset_base_url, "--asset-base-url");
     if !repo.contains('/') {
         return Err("--repo must use owner/name format".into());
     }
@@ -198,8 +204,8 @@ fn run_update(args: &[String]) -> Result<()> {
     result
 }
 
-fn run_rank(args: &[String]) -> Result<()> {
-    let context = load_engine_context(args, 0)?;
+fn run_rank(args: &TargetArgs) -> Result<()> {
+    let context = load_engine_context(args)?;
     refresh_fact_store(&context)?;
     let db = open_fact_store(&context.target_dir)?;
     let result = db.query(
@@ -215,99 +221,88 @@ fn run_rank(args: &[String]) -> Result<()> {
          GROUP BY d.path, d.title, d.role, d.summary
          ORDER BY score DESC, d.path ASC
          LIMIT 20;",
+        [],
     )?;
 
     print_rank_rows(&result);
     Ok(())
 }
 
-fn run_list_docs(args: &[String]) -> Result<()> {
-    let context = load_engine_context(args, 0)?;
+fn run_list_docs(args: &TargetArgs) -> Result<()> {
+    let context = load_engine_context(args)?;
     refresh_fact_store(&context)?;
     let db = open_fact_store(&context.target_dir)?;
     let result = db.query(
         "SELECT path, title, role, COALESCE(status, ''), COALESCE(authority, ''), incoming_links, outgoing_links, COALESCE(collection_name, '')
          FROM docs
-         ORDER BY path ASC;",
-    )?;
+         ORDER BY path ASC;", [])?;
 
     print_list_docs_rows(&result);
     Ok(())
 }
 
-fn run_inspect(args: &[String]) -> Result<()> {
-    if args.is_empty() {
-        return Err("inspect requires <doc_path>".into());
-    }
-    let doc_path = args[0].clone();
-    let context = load_engine_context(&args[1..], 0)?;
+fn run_inspect(args: &InputArgs) -> Result<()> {
+    let doc_path = args.input.clone().ok_or("inspect requires <doc_path>")?;
+    let context = load_engine_context(&args.target)?;
     refresh_fact_store(&context)?;
     let db = open_fact_store(&context.target_dir)?;
 
-    let escaped = sql_string_literal(&doc_path);
-    let doc = db.query(&format!(
+    let doc = db.query(
         "SELECT path, title, role, COALESCE(status, ''), COALESCE(authority, ''), COALESCE(collection_name, ''), summary, incoming_links, outgoing_links, is_entrypoint, is_anchor_candidate, is_generated, is_reference, file_size_bytes, mtime_unix
-         FROM docs WHERE path = {};",
-        escaped
-    ))?;
+         FROM docs WHERE path = ?1;",
+        [&doc_path],
+    )?;
     if doc.rows.is_empty() {
         return Err(format!("doc not found in fact store: {}", doc_path).into());
     }
 
-    let outgoing = db.query(&format!(
+    let outgoing = db.query(
         "SELECT relation_type, dst_path, reason, confidence
          FROM relations
-         WHERE src_path = {}
+         WHERE src_path = ?1
          ORDER BY relation_type ASC, dst_path ASC;",
-        escaped
-    ))?;
-    let incoming = db.query(&format!(
+        [&doc_path],
+    )?;
+    let incoming = db.query(
         "SELECT relation_type, src_path, reason, confidence
          FROM relations
-         WHERE dst_path = {}
+         WHERE dst_path = ?1
          ORDER BY relation_type ASC, src_path ASC;",
-        escaped
-    ))?;
-    let checks = db.query(&format!(
+        [&doc_path],
+    )?;
+    let checks = db.query(
         "SELECT severity, rule_id, message, evidence_json
          FROM checks
-         WHERE subject_path = {}
+         WHERE subject_path = ?1
          ORDER BY severity DESC, rule_id ASC;",
-        escaped
-    ))?;
+        [&doc_path],
+    )?;
 
     print_inspect_output(&doc, &outgoing, &incoming, &checks);
     Ok(())
 }
 
-fn run_refs(args: &[String]) -> Result<()> {
-    if args.is_empty() {
-        return Err("refs requires <doc_path>".into());
-    }
-    let doc_path = args[0].clone();
-    let context = load_engine_context(&args[1..], 0)?;
+fn run_refs(args: &InputArgs) -> Result<()> {
+    let doc_path = args.input.clone().ok_or("refs requires <doc_path>")?;
+    let context = load_engine_context(&args.target)?;
     refresh_fact_store(&context)?;
     let db = open_fact_store(&context.target_dir)?;
-    let result = db.query(&format!(
+    let result = db.query(
         "SELECT src_path, relation_type, reason, confidence
          FROM relations
-         WHERE dst_path = {}
+         WHERE dst_path = ?1
          ORDER BY relation_type ASC, src_path ASC;",
-        sql_string_literal(&doc_path)
-    ))?;
+        [&doc_path],
+    )?;
 
     print_refs_output(&doc_path, &result);
     Ok(())
 }
 
-fn run_query(args: &[String]) -> Result<()> {
-    if args.is_empty() {
-        return Err("query requires <terms>".into());
-    }
-
-    let query_terms = args[0].clone();
-    let context = load_engine_context(&args[1..], 0)?;
-    let options = command_options(args, Some(&context.schema));
+fn run_query(args: &InputArgs) -> Result<()> {
+    let query_terms = args.input.clone().ok_or("query requires <terms>")?;
+    let context = load_engine_context(&args.target)?;
+    let options = command_options(&args.target.options, Some(&context.schema));
     refresh_fact_store(&context)?;
     let db = open_fact_store(&context.target_dir)?;
 
@@ -322,13 +317,10 @@ fn run_query(args: &[String]) -> Result<()> {
     Ok(())
 }
 
-fn run_graph(args: &[String]) -> Result<()> {
-    if args.is_empty() {
-        return Err("graph requires <doc_path>".into());
-    }
-    let doc_path = args[0].clone();
-    let context = load_engine_context(&args[1..], 0)?;
-    let options = command_options(args, Some(&context.schema));
+fn run_graph(args: &InputArgs) -> Result<()> {
+    let doc_path = args.input.clone().ok_or("graph requires <doc_path>")?;
+    let context = load_engine_context(&args.target)?;
+    let options = command_options(&args.target.options, Some(&context.schema));
     refresh_fact_store(&context)?;
     let db = open_fact_store(&context.target_dir)?;
     let packet = context_packet_for_doc(&db, &context.target_dir, &doc_path)?;
@@ -344,13 +336,13 @@ fn run_graph(args: &[String]) -> Result<()> {
     Ok(())
 }
 
-fn run_context(args: &[String]) -> Result<()> {
-    if args.is_empty() {
-        return Err("context requires <terms-or-doc-path>".into());
-    }
-    let input = args[0].clone();
-    let context = load_engine_context(&args[1..], 0)?;
-    let options = command_options(args, Some(&context.schema));
+fn run_context(args: &InputArgs) -> Result<()> {
+    let input = args
+        .input
+        .clone()
+        .ok_or("context requires <terms-or-doc-path>")?;
+    let context = load_engine_context(&args.target)?;
+    let options = command_options(&args.target.options, Some(&context.schema));
     refresh_fact_store(&context)?;
     let db = open_fact_store(&context.target_dir)?;
     let anchor_path = if doc_exists(&db, &input)? {
@@ -373,55 +365,55 @@ fn run_context(args: &[String]) -> Result<()> {
     Ok(())
 }
 
-fn run_history(args: &[String]) -> Result<()> {
-    if args.is_empty() {
-        return Err("history requires a subcommand: snapshot, list, status, diff, restore".into());
-    }
-
-    match args[0].as_str() {
-        "snapshot" => run_history_snapshot(&args[1..]),
-        "list" => run_history_list(&args[1..]),
-        "status" => run_history_status(&args[1..]),
-        "diff" => run_history_diff(&args[1..]),
-        "restore" => run_history_restore(&args[1..]),
-        other => Err(format!("unknown history subcommand: {}", other).into()),
+fn run_history(command: Option<HistoryCommand>) -> Result<()> {
+    match command {
+        Some(HistoryCommand::Snapshot(args)) => run_history_snapshot(&args),
+        Some(HistoryCommand::List(args)) => run_history_list(&args),
+        Some(HistoryCommand::Status(args)) => run_history_status(&args),
+        Some(HistoryCommand::Diff(args)) => run_history_diff(&args),
+        Some(HistoryCommand::Restore(args)) => run_history_restore(&args),
+        Some(HistoryCommand::Unknown(args)) => {
+            Err(format!("unknown history subcommand: {}", args[0]).into())
+        }
+        None => Err("history requires a subcommand: snapshot, list, status, diff, restore".into()),
     }
 }
 
-fn run_history_snapshot(args: &[String]) -> Result<()> {
-    let message = option_value(args, "-m")
-        .or_else(|| option_value(args, "--message"))
+fn run_history_snapshot(args: &TargetArgs) -> Result<()> {
+    let message = option_value(&args.options.short_message, "-m")
+        .or_else(|| option_value(&args.options.message, "--message"))
         .unwrap_or_else(|| "snapshot".to_string());
-    let context = load_engine_context(args, 0)?;
+    let context = load_engine_context(args)?;
     let snapshot = create_history_snapshot(&context.target_dir, &context.schema, &message)?;
     print_history_snapshot_result(&snapshot);
     Ok(())
 }
 
-fn run_history_list(args: &[String]) -> Result<()> {
-    let context = load_engine_context(args, 0)?;
+fn run_history_list(args: &TargetArgs) -> Result<()> {
+    let context = load_engine_context(args)?;
     let snapshots = list_history_snapshots(&context.target_dir)?;
     print_history_list(&snapshots);
     Ok(())
 }
 
-fn run_history_status(args: &[String]) -> Result<()> {
-    let context = load_engine_context(args, 0)?;
+fn run_history_status(args: &TargetArgs) -> Result<()> {
+    let context = load_engine_context(args)?;
     let status = compute_history_status(&context.target_dir, &context.schema)?;
     print_history_status(&status);
     Ok(())
 }
 
-fn run_history_diff(args: &[String]) -> Result<()> {
-    if args.is_empty() {
-        return Err("history diff requires <snapshot-id|latest> or <a> <b>".into());
-    }
-    let positionals = positional_args(args);
+fn run_history_diff(args: &DiffArgs) -> Result<()> {
+    let positionals = &args.positionals;
     if positionals.is_empty() {
         return Err("history diff requires <snapshot-id|latest> or <a> <b>".into());
     }
-    let snapshot_args = history_diff_snapshot_args(&positionals);
-    let context = load_engine_context(args, snapshot_args.len())?;
+    let snapshot_args = history_diff_snapshot_args(positionals);
+    let target = TargetArgs {
+        target_dir: positionals.get(snapshot_args.len()).cloned(),
+        options: args.options.clone(),
+    };
+    let context = load_engine_context(&target)?;
     let first = resolve_snapshot_arg(&context.target_dir, &positionals[0])?;
     let second = if snapshot_args.len() >= 2 {
         Some(resolve_snapshot_arg(
@@ -453,18 +445,15 @@ fn history_diff_snapshot_args(positionals: &[String]) -> Vec<String> {
     }
 }
 
-fn run_history_restore(args: &[String]) -> Result<()> {
-    if args.is_empty() {
-        return Err("history restore requires <snapshot-id|latest>".into());
-    }
-    let apply = has_flag(args, "--apply");
-    let force = has_flag(args, "--force");
-    let positionals = positional_args(args);
-    if positionals.is_empty() {
-        return Err("history restore requires <snapshot-id|latest>".into());
-    }
-    let context = load_engine_context(args, 1)?;
-    let snapshot = resolve_snapshot_arg(&context.target_dir, &positionals[0])?;
+fn run_history_restore(args: &InputArgs) -> Result<()> {
+    let snapshot_arg = args
+        .input
+        .as_deref()
+        .ok_or("history restore requires <snapshot-id|latest>")?;
+    let apply = args.target.options.apply;
+    let force = args.target.options.force;
+    let context = load_engine_context(&args.target)?;
+    let snapshot = resolve_snapshot_arg(&context.target_dir, snapshot_arg)?;
     let dirty = compute_history_status(&context.target_dir, &context.schema)?;
 
     if apply && is_history_dirty(&dirty) && !force {
@@ -482,58 +471,14 @@ fn run_history_restore(args: &[String]) -> Result<()> {
     Ok(())
 }
 
-fn positional_or_default(args: &[String], index: usize, default: &str) -> String {
-    positional_args(args)
-        .get(index)
-        .cloned()
-        .unwrap_or_else(|| default.to_string())
-}
-
-fn positional_args(args: &[String]) -> Vec<String> {
-    let mut values = Vec::new();
-    let mut skip_next = false;
-    for arg in args {
-        if skip_next {
-            skip_next = false;
-            continue;
-        }
-        match arg.as_str() {
-            "--schema" | "--docs-root" | "--rules" | "--message" | "-m" | "--version"
-            | "--repo" | "--asset-base-url" => {
-                skip_next = true;
-            }
-            "--force"
-            | "--json"
-            | "--strict"
-            | "--no-strict"
-            | "--apply"
-            | "--cli-only"
-            | "--no-claude"
-            | "--no-codex"
-            | "--with-codex-plugin"
-            | "--local"
-            | "--tracked"
-            | "--preview" => {}
-            _ if arg.starts_with("--") => {}
-            _ if arg.starts_with('-') => {}
-            _ => values.push(arg.clone()),
-        }
-    }
-    values
-}
-
-fn has_flag(args: &[String], flag: &str) -> bool {
-    args.iter().any(|arg| arg == flag)
-}
-
-pub(crate) fn command_options(args: &[String], schema: Option<&Schema>) -> CommandOptions {
+pub(crate) fn command_options(args: &CommonArgs, schema: Option<&Schema>) -> CommandOptions {
     let schema_strict = schema
         .and_then(|schema| schema.rules.strict_checks)
         .unwrap_or(false);
     CommandOptions {
-        json: has_flag(args, "--json"),
-        strict: (has_flag(args, "--strict") || schema_strict) && !has_flag(args, "--no-strict"),
-        rules: option_value(args, "--rules").map(|value| {
+        json: args.json,
+        strict: (args.strict || schema_strict) && !args.no_strict,
+        rules: option_value(&args.rules, "--rules").map(|value| {
             value
                 .split(',')
                 .map(|item| item.trim())
@@ -544,26 +489,11 @@ pub(crate) fn command_options(args: &[String], schema: Option<&Schema>) -> Comma
     }
 }
 
-fn option_value(args: &[String], flag: &str) -> Option<String> {
-    let values = args
-        .windows(2)
-        .filter(|pair| pair[0] == flag)
-        .map(|pair| pair[1].clone())
-        .collect::<Vec<_>>();
-    if values.len() > 1 {
-        eprintln!("warning: duplicate {}; using last value", flag);
-    }
-    values.last().cloned()
-}
-
-pub(crate) fn load_engine_context(
-    args: &[String],
-    positional_index: usize,
-) -> Result<EngineContext> {
-    let target_dir = PathBuf::from(positional_or_default(args, positional_index, "."));
-    let docs_root_override = option_value(args, "--docs-root");
-    let schema_arg =
-        option_value(args, "--schema").unwrap_or_else(|| default_context_schema_arg(&target_dir));
+pub(crate) fn load_engine_context(args: &TargetArgs) -> Result<EngineContext> {
+    let target_dir = PathBuf::from(args.target_dir.as_deref().unwrap_or("."));
+    let docs_root_override = option_value(&args.options.docs_root, "--docs-root");
+    let schema_arg = option_value(&args.options.schema, "--schema")
+        .unwrap_or_else(|| default_context_schema_arg(&target_dir));
 
     let schema_load = load_schema(&target_dir, &schema_arg)?;
     let mut schema = parse_schema(&schema_load.text)?;
@@ -577,33 +507,25 @@ pub(crate) fn load_engine_context(
 }
 
 pub(crate) fn run() -> Result<()> {
-    let args: Vec<String> = env::args().collect();
-    if args.len() < 2 {
-        usage();
-        std::process::exit(2);
-    }
-
-    match args[1].as_str() {
-        "init" => run_init(&args[2..])?,
-        "index" => run_index(&args[2..])?,
-        "check" => run_check(&args[2..])?,
-        "rank" => run_rank(&args[2..])?,
-        "list-docs" => run_list_docs(&args[2..])?,
-        "inspect" => run_inspect(&args[2..])?,
-        "refs" => run_refs(&args[2..])?,
-        "query" => run_query(&args[2..])?,
-        "graph" => run_graph(&args[2..])?,
-        "context" => run_context(&args[2..])?,
-        "history" => run_history(&args[2..])?,
-        "doctor" => run_doctor(&args[2..])?,
-        "update" => run_update(&args[2..])?,
-        "help" | "--help" | "-h" => usage(),
-        "--version" | "-V" => println!("harnesskit {}", env!("CARGO_PKG_VERSION")),
-        _ => {
-            usage();
+    let cli = Cli::parse();
+    match cli.command {
+        Some(Command::Init(args)) => run_init(&args),
+        Some(Command::Index(args)) => run_index(&args),
+        Some(Command::Check(args)) => run_check(&args),
+        Some(Command::Rank(args)) => run_rank(&args),
+        Some(Command::ListDocs(args)) => run_list_docs(&args),
+        Some(Command::Inspect(args)) => run_inspect(&args),
+        Some(Command::Refs(args)) => run_refs(&args),
+        Some(Command::Query(args)) => run_query(&args),
+        Some(Command::Graph(args)) => run_graph(&args),
+        Some(Command::Context(args)) => run_context(&args),
+        Some(Command::History { command }) => run_history(command),
+        Some(Command::Doctor(args)) => run_doctor(&args),
+        Some(Command::Update(args)) => run_update(&args),
+        Some(Command::Unknown(_)) | None => {
+            Cli::command().write_help(&mut std::io::stderr())?;
+            eprintln!();
             std::process::exit(2);
         }
     }
-
-    Ok(())
 }

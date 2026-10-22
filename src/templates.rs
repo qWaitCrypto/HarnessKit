@@ -126,7 +126,7 @@ pub(crate) fn materialize_from_schema(
     let schema_dst = target_dir.join(".harnesskit").join("schema.yaml");
     let render_paths = build_render_paths(schema);
 
-    fs::create_dir_all(&harnesskit_state)?;
+    fs::create_dir_all(harnesskit_state)?;
     fs::create_dir_all(harnesskit_history.join("objects"))?;
     fs::create_dir_all(harnesskit_history.join("snapshots"))?;
     fs::create_dir_all(harnesskit_history.join("refs"))?;
@@ -518,7 +518,7 @@ fn load_bundled_text(rel_path: &str) -> Result<String> {
     }
 
     let abs = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(rel_path);
-    if let Ok(text) = fs::read_to_string(&abs) {
+    if let Ok(text) = fs::read_to_string(abs) {
         return Ok(text);
     }
     Err(format!("bundled template not found: {}", rel_path).into())

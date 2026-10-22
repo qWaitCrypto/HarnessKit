@@ -2,6 +2,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use rusqlite::params;
+use serde::Serialize;
+
 use crate::checks::{build_index_checks, IndexCheck};
 use crate::discover::{
     collect_managed_doc_paths, collection_lookup, collection_name_for_path, infer_index_role,
@@ -14,42 +17,50 @@ use crate::fs_utils::{
 use crate::git::{host_git_info, HostGitInfo, HostGitMode};
 use crate::history::{compute_history_status, is_history_dirty, HistoryStatus};
 use crate::parse::parse_doc_text;
-use crate::render::{json_string, render_index_json, render_index_summary};
+use crate::render::{render_index_json, render_index_summary};
 use crate::schema::{DocCollectionSpec, Schema};
-use crate::sqlite_cli::{QueryResult, SqliteConnection};
+use crate::sqlite::{QueryResult, SqliteConnection};
 use crate::Result;
 
 pub(crate) const FACT_SCHEMA_VERSION: &str = "3";
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Serialize)]
 pub(crate) struct IndexedDoc {
     pub(crate) path: String,
     pub(crate) title: String,
     pub(crate) summary: String,
+    #[serde(skip_serializing)]
     pub(crate) frontmatter_keys: Vec<String>,
+    #[serde(skip_serializing)]
     pub(crate) content_text: String,
     pub(crate) role: String,
     pub(crate) status: Option<String>,
     pub(crate) authority: Option<String>,
     pub(crate) collection: Option<String>,
+    #[serde(serialize_with = "crate::render::serialize_inline")]
     pub(crate) headings: Vec<String>,
+    #[serde(serialize_with = "crate::render::serialize_inline")]
     pub(crate) links: Vec<String>,
+    #[serde(skip_serializing)]
     pub(crate) path_mentions: Vec<String>,
+    #[serde(serialize_with = "crate::render::serialize_inline")]
     pub(crate) scope_paths: Vec<String>,
+    #[serde(serialize_with = "crate::render::serialize_inline")]
     pub(crate) supersedes: Vec<String>,
+    pub(crate) content_hash: String,
+    pub(crate) file_size_bytes: u64,
     pub(crate) incoming_links: usize,
     pub(crate) outgoing_links: usize,
     pub(crate) is_entrypoint: bool,
     pub(crate) is_anchor_candidate: bool,
     pub(crate) is_generated: bool,
     pub(crate) is_reference: bool,
-    pub(crate) content_hash: String,
-    pub(crate) file_size_bytes: u64,
     pub(crate) mtime_unix: u64,
+    #[serde(skip_serializing)]
     pub(crate) mtime_ns: u64,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize)]
 pub(crate) struct DocRelation {
     pub(crate) src_path: String,
     pub(crate) dst_path: String,
@@ -57,10 +68,11 @@ pub(crate) struct DocRelation {
     pub(crate) reason: String,
     pub(crate) explicit: bool,
     pub(crate) confidence: f32,
+    #[serde(serialize_with = "crate::render::serialize_evidence")]
     pub(crate) evidence_json: String,
 }
 
-#[derive(Default)]
+#[derive(Default, Serialize)]
 pub(crate) struct IndexArtifact {
     pub(crate) repo_root: String,
     pub(crate) managed_root: String,
@@ -280,15 +292,6 @@ pub(crate) fn open_fact_store(target_dir: &Path) -> Result<SqliteConnection> {
     }
     SqliteConnection::open(&db_path).map_err(|err| {
         let err_text = err.to_string();
-        if err_text.contains("sqlite3 CLI not found") {
-            return format!(
-                "cannot open HarnessKit fact store at {} because sqlite3 is unavailable: {}\n\n{}",
-                db_path.display(),
-                trim_trailing_period(&err_text),
-                fact_store_path_hint(target_dir, Some(&state_dir), Some(&db_path))
-            )
-            .into();
-        }
         format!(
             "cannot open HarnessKit fact store at {}: {}. Check that the project path and `.harnesskit/state` are writable.\n\n{}",
             db_path.display(),
@@ -299,12 +302,8 @@ pub(crate) fn open_fact_store(target_dir: &Path) -> Result<SqliteConnection> {
     })
 }
 
-fn trim_trailing_period(value: &str) -> &str {
-    value.strip_suffix('.').unwrap_or(value)
-}
-
 pub(crate) fn scalar_count(db: &SqliteConnection, sql: &str) -> Result<usize> {
-    let result = db.query(sql)?;
+    let result = db.query(sql, [])?;
     Ok(result
         .rows
         .first()
@@ -326,6 +325,7 @@ pub(crate) fn refresh_fact_store(context: &EngineContext) -> Result<()> {
     let db = open_fact_store(&context.target_dir)?;
     initialize_fact_store(&db)?;
     if !fact_store_is_compatible(&db)? {
+        drop(db);
         rebuild_fact_store_full(context)?;
         return Ok(());
     }
@@ -441,10 +441,10 @@ fn fact_store_is_compatible(db: &SqliteConnection) -> Result<bool> {
         "supersedes",
     ];
     for table in required_tables {
-        let exists = db.query(&format!(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = {};",
-            sql_string_literal(table)
-        ))?;
+        let exists = db.query(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1;",
+            [table],
+        )?;
         if exists
             .rows
             .first()
@@ -455,7 +455,7 @@ fn fact_store_is_compatible(db: &SqliteConnection) -> Result<bool> {
         }
     }
 
-    let file_state_columns = db.query("PRAGMA table_info(file_states);")?;
+    let file_state_columns = db.query("PRAGMA table_info(file_states);", [])?;
     let has_mtime_ns = file_state_columns
         .rows
         .iter()
@@ -468,16 +468,13 @@ fn fact_store_is_compatible(db: &SqliteConnection) -> Result<bool> {
 }
 
 pub(crate) fn meta_value(db: &SqliteConnection, key: &str) -> Result<Option<String>> {
-    let result = db.query(&format!(
-        "SELECT value FROM meta WHERE key = {};",
-        sql_string_literal(key)
-    ))?;
+    let result = db.query("SELECT value FROM meta WHERE key = ?1;", [key])?;
     Ok(result.rows.first().map(|row| cell(row, 0).to_string()))
 }
 
 pub(crate) fn compute_fact_store_delta(context: &EngineContext) -> Result<FactStoreDelta> {
     let db = open_fact_store(&context.target_dir)?;
-    let rows = db.query("SELECT path, content_hash, file_size_bytes, mtime_unix, mtime_ns FROM file_states ORDER BY path ASC;")?;
+    let rows = db.query("SELECT path, content_hash, file_size_bytes, mtime_unix, mtime_ns FROM file_states ORDER BY path ASC;", [])?;
     let previous_states = parse_file_state_rows(&rows);
     let current_states =
         collect_current_file_states(&context.target_dir, &context.schema, &previous_states)?;
@@ -851,29 +848,26 @@ fn apply_doc_fact_delta(
     touched_paths: &[String],
     changed_docs: &[IndexedDoc],
 ) -> Result<()> {
-    let mut sql = String::from("BEGIN IMMEDIATE;");
-    for path in touched_paths {
-        let escaped = sql_string_literal(path);
-        sql.push_str(&format!(
-            "DELETE FROM docs WHERE path = {p};
-             DELETE FROM file_states WHERE path = {p};
-             DELETE FROM headings WHERE doc_path = {p};
-             DELETE FROM raw_links WHERE src_doc = {p};
-             DELETE FROM path_mentions WHERE doc_path = {p};
-             DELETE FROM scope_paths WHERE doc_path = {p};
-             DELETE FROM supersedes WHERE doc_path = {p};
-             DELETE FROM docs_fts WHERE path = {p};",
-            p = escaped
-        ));
-    }
-
-    for doc in changed_docs {
-        sql.push_str(&render_doc_fact_sql(doc));
-    }
-
-    sql.push_str("COMMIT;");
-    db.exec(&sql)?;
-    Ok(())
+    db.transaction(|db| {
+        for path in touched_paths {
+            for sql in [
+                "DELETE FROM docs WHERE path = ?1;",
+                "DELETE FROM file_states WHERE path = ?1;",
+                "DELETE FROM headings WHERE doc_path = ?1;",
+                "DELETE FROM raw_links WHERE src_doc = ?1;",
+                "DELETE FROM path_mentions WHERE doc_path = ?1;",
+                "DELETE FROM scope_paths WHERE doc_path = ?1;",
+                "DELETE FROM supersedes WHERE doc_path = ?1;",
+                "DELETE FROM docs_fts WHERE path = ?1;",
+            ] {
+                db.execute(sql, [path])?;
+            }
+        }
+        for doc in changed_docs {
+            insert_doc_facts(db, doc)?;
+        }
+        Ok(())
+    })
 }
 
 fn collect_impacted_relation_sources(
@@ -927,11 +921,10 @@ fn collect_impacted_relation_sources(
     }
 
     for removed in &removed_paths {
-        let rows = db.query(&format!(
-            "SELECT DISTINCT src_path FROM relations WHERE dst_path = {} OR src_path = {};",
-            sql_string_literal(removed),
-            sql_string_literal(removed)
-        ))?;
+        let rows = db.query(
+            "SELECT DISTINCT src_path FROM relations WHERE dst_path = ?1 OR src_path = ?1;",
+            [removed],
+        )?;
         for row in &rows.rows {
             let path = cell(row, 0).to_string();
             if !path.is_empty() && path_set.contains(&path) {
@@ -971,40 +964,31 @@ fn replace_relations_for_sources(
     source_paths: &BTreeSet<String>,
     relations: &[DocRelation],
 ) -> Result<()> {
-    let mut statements = Vec::new();
-    let mut prelude = String::new();
-    for path in source_paths {
-        prelude.push_str(&format!(
-            "DELETE FROM relations WHERE src_path = {path};
-             DELETE FROM relations WHERE dst_path = {path} AND relation_type = 'code_mentions_doc';",
-            path = sql_string_literal(path)
-        ));
-    }
-    statements.push(prelude);
-
-    for relation in relations {
-        let mut statement = String::new();
-        append_relation_insert_sql(&mut statement, relation);
-        statements.push(statement);
-    }
-
-    exec_sql_batches(db, &statements, 500)
+    db.transaction(|db| {
+        for path in source_paths {
+            db.execute("DELETE FROM relations WHERE src_path = ?1;", [path])?;
+            db.execute(
+                "DELETE FROM relations WHERE dst_path = ?1 AND relation_type = 'code_mentions_doc';",
+                [path],
+            )?;
+        }
+        for relation in relations {
+            insert_relation(db, relation)?;
+        }
+        Ok(())
+    })
 }
 
 fn update_doc_link_counts_in_db(db: &SqliteConnection, docs: &[IndexedDoc]) -> Result<()> {
-    let mut statements = Vec::new();
-    for doc in docs {
-        statements.push(format!(
-            "UPDATE docs
-             SET incoming_links = {incoming_links},
-                 outgoing_links = {outgoing_links}
-             WHERE path = {path};",
-            incoming_links = doc.incoming_links,
-            outgoing_links = doc.outgoing_links,
-            path = sql_string_literal(&doc.path)
-        ));
-    }
-    exec_sql_batches(db, &statements, 500)
+    db.transaction(|db| {
+        for doc in docs {
+            db.execute(
+                "UPDATE docs SET incoming_links = ?1, outgoing_links = ?2 WHERE path = ?3;",
+                params![doc.incoming_links, doc.outgoing_links, doc.path],
+            )?;
+        }
+        Ok(())
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1019,333 +1003,218 @@ fn replace_checks_and_meta(
     host_git: &HostGitInfo,
     checks: &[IndexCheck],
 ) -> Result<()> {
-    let mut sql = String::from(
-        "BEGIN IMMEDIATE;
-         DELETE FROM checks;
-         DELETE FROM meta;",
-    );
-
-    sql.push_str(&format!(
-        "INSERT INTO meta(key, value) VALUES
-            ('repo_root', {repo_root}),
-            ('managed_root', {managed_root}),
-            ('generated_at_unix', {generated_at_unix}),
-            ('fact_schema_version', {fact_schema_version}),
-            ('last_refresh_mode', {mode}),
-            ('last_delta_added', {added}),
-            ('last_delta_changed', {changed}),
-            ('last_delta_removed', {removed}),
-            ('history_latest_snapshot', {history_latest_snapshot}),
-            ('history_dirty', {history_dirty}),
-            ('history_tracked_files_count', {history_tracked_files_count}),
-            ('host_git_head', {host_git_head}),
-            ('host_git_branch', {host_git_branch}),
-            ('host_git_dirty', {host_git_dirty});",
-        repo_root = sql_string_literal(repo_root),
-        managed_root = sql_string_literal(managed_root),
-        generated_at_unix = sql_string_literal(&generated_at_unix.to_string()),
-        fact_schema_version = sql_string_literal(FACT_SCHEMA_VERSION),
-        mode = sql_string_literal(mode),
-        added = sql_string_literal(&delta.added_paths.len().to_string()),
-        changed = sql_string_literal(&delta.changed_paths.len().to_string()),
-        removed = sql_string_literal(&delta.removed_paths.len().to_string()),
-        history_latest_snapshot =
-            sql_string_literal(history_status.latest_snapshot.as_deref().unwrap_or("")),
-        history_dirty = sql_string_literal(if is_history_dirty(history_status) {
-            "true"
-        } else {
-            "false"
-        }),
-        history_tracked_files_count =
-            sql_string_literal(&history_status.tracked_files_count.to_string()),
-        host_git_head = sql_string_literal(host_git.head.as_deref().unwrap_or("")),
-        host_git_branch = sql_string_literal(host_git.branch.as_deref().unwrap_or("")),
-        host_git_dirty = sql_string_literal(if host_git.dirty { "true" } else { "false" })
-    ));
-
-    for check in checks {
-        append_check_insert_sql(&mut sql, check);
-    }
-
-    sql.push_str("COMMIT;");
-    db.exec(&sql)?;
-    Ok(())
-}
-
-fn render_doc_secondary_fact_sql(doc: &IndexedDoc) -> String {
-    let mut sql = String::new();
-    sql.push_str(&format!(
-        "INSERT INTO file_states(path, content_hash, file_size_bytes, mtime_unix, mtime_ns) VALUES ({path}, {content_hash}, {file_size_bytes}, {mtime_unix}, {mtime_ns});",
-        path = sql_string_literal(&doc.path),
-        content_hash = sql_string_literal(&doc.content_hash),
-        file_size_bytes = doc.file_size_bytes,
-        mtime_unix = doc.mtime_unix,
-        mtime_ns = doc.mtime_ns
-    ));
-
-    sql.push_str(&format!(
-        "INSERT INTO docs_fts(path, title, headings_text, summary, body_tokens) VALUES ({path}, {title}, {headings_text}, {summary}, {body_tokens});",
-        path = sql_string_literal(&doc.path),
-        title = sql_string_literal(&doc.title),
-        headings_text = sql_string_literal(&doc.headings.join(" | ")),
-        summary = sql_string_literal(&doc.summary),
-        body_tokens = sql_string_literal(&doc.content_text)
-    ));
-
-    for (index, heading) in doc.headings.iter().enumerate() {
-        sql.push_str(&format!(
-            "INSERT INTO headings(doc_path, heading_index, heading_text) VALUES ({doc_path}, {heading_index}, {heading_text});",
-            doc_path = sql_string_literal(&doc.path),
-            heading_index = index,
-            heading_text = sql_string_literal(heading)
-        ));
-    }
-
-    for (index, link) in doc.links.iter().enumerate() {
-        sql.push_str(&format!(
-            "INSERT INTO raw_links(src_doc, link_index, normalized_target) VALUES ({src_doc}, {link_index}, {normalized_target});",
-            src_doc = sql_string_literal(&doc.path),
-            link_index = index,
-            normalized_target = sql_string_literal(link)
-        ));
-    }
-
-    for (index, mentioned_path) in doc.path_mentions.iter().enumerate() {
-        sql.push_str(&format!(
-            "INSERT INTO path_mentions(doc_path, mention_index, mentioned_path) VALUES ({doc_path}, {mention_index}, {mentioned_path});",
-            doc_path = sql_string_literal(&doc.path),
-            mention_index = index,
-            mentioned_path = sql_string_literal(mentioned_path)
-        ));
-    }
-
-    for scope_path in &doc.scope_paths {
-        sql.push_str(&format!(
-            "INSERT INTO scope_paths(doc_path, scope_path) VALUES ({doc_path}, {scope_path});",
-            doc_path = sql_string_literal(&doc.path),
-            scope_path = sql_string_literal(scope_path)
-        ));
-    }
-
-    for superseded in &doc.supersedes {
-        sql.push_str(&format!(
-            "INSERT INTO supersedes(doc_path, superseded_path) VALUES ({doc_path}, {superseded_path});",
-            doc_path = sql_string_literal(&doc.path),
-            superseded_path = sql_string_literal(superseded)
-        ));
-    }
-
-    sql
-}
-
-fn render_doc_fact_sql(doc: &IndexedDoc) -> String {
-    let mut sql = String::new();
-    sql.push_str(&format!(
-        "INSERT INTO docs(
-            path, title, role, status, authority, collection_name, summary, frontmatter_keys_text, headings_text, content_hash, file_size_bytes,
-            incoming_links, outgoing_links, is_entrypoint, is_anchor_candidate, is_generated, is_reference, mtime_unix
-         ) VALUES (
-            {path}, {title}, {role}, {status}, {authority}, {collection_name}, {summary}, {frontmatter_keys_text}, {headings_text}, {content_hash}, {file_size_bytes},
-            0, 0, {is_entrypoint}, {is_anchor_candidate}, {is_generated}, {is_reference}, {mtime_unix}
-         );",
-        path = sql_string_literal(&doc.path),
-        title = sql_string_literal(&doc.title),
-        role = sql_string_literal(&doc.role),
-        status = sql_opt_literal(doc.status.as_deref()),
-        authority = sql_opt_literal(doc.authority.as_deref()),
-        collection_name = sql_opt_literal(doc.collection.as_deref()),
-        summary = sql_string_literal(&doc.summary),
-        frontmatter_keys_text = sql_string_literal(&doc.frontmatter_keys.join(" | ")),
-        headings_text = sql_string_literal(&doc.headings.join(" | ")),
-        content_hash = sql_string_literal(&doc.content_hash),
-        file_size_bytes = doc.file_size_bytes,
-        is_entrypoint = sql_bool(doc.is_entrypoint),
-        is_anchor_candidate = sql_bool(doc.is_anchor_candidate),
-        is_generated = sql_bool(doc.is_generated),
-        is_reference = sql_bool(doc.is_reference),
-        mtime_unix = doc.mtime_unix
-    ));
-    sql.push_str(&render_doc_secondary_fact_sql(doc));
-    sql
-}
-
-fn render_doc_full_sql(doc: &IndexedDoc) -> String {
-    let mut sql = String::new();
-    sql.push_str(&format!(
-        "INSERT INTO docs(
-            path, title, role, status, authority, collection_name, summary, frontmatter_keys_text, headings_text, content_hash, file_size_bytes,
-            incoming_links, outgoing_links, is_entrypoint, is_anchor_candidate, is_generated, is_reference, mtime_unix
-         ) VALUES (
-            {path}, {title}, {role}, {status}, {authority}, {collection_name}, {summary}, {frontmatter_keys_text}, {headings_text}, {content_hash}, {file_size_bytes},
-            {incoming_links}, {outgoing_links}, {is_entrypoint}, {is_anchor_candidate}, {is_generated}, {is_reference}, {mtime_unix}
-         );",
-        path = sql_string_literal(&doc.path),
-        title = sql_string_literal(&doc.title),
-        role = sql_string_literal(&doc.role),
-        status = sql_opt_literal(doc.status.as_deref()),
-        authority = sql_opt_literal(doc.authority.as_deref()),
-        collection_name = sql_opt_literal(doc.collection.as_deref()),
-        summary = sql_string_literal(&doc.summary),
-        frontmatter_keys_text = sql_string_literal(&doc.frontmatter_keys.join(" | ")),
-        headings_text = sql_string_literal(&doc.headings.join(" | ")),
-        content_hash = sql_string_literal(&doc.content_hash),
-        file_size_bytes = doc.file_size_bytes,
-        incoming_links = doc.incoming_links,
-        outgoing_links = doc.outgoing_links,
-        is_entrypoint = sql_bool(doc.is_entrypoint),
-        is_anchor_candidate = sql_bool(doc.is_anchor_candidate),
-        is_generated = sql_bool(doc.is_generated),
-        is_reference = sql_bool(doc.is_reference),
-        mtime_unix = doc.mtime_unix
-    ));
-
-    sql.push_str(&render_doc_secondary_fact_sql(doc));
-    sql
-}
-
-fn append_relation_insert_sql(sql: &mut String, relation: &DocRelation) {
-    sql.push_str(&format!(
-        "INSERT INTO relations(src_path, dst_path, relation_type, reason, explicit, confidence, evidence_json) VALUES ({src_path}, {dst_path}, {relation_type}, {reason}, {explicit}, {confidence}, {evidence_json});",
-        src_path = sql_string_literal(&relation.src_path),
-        dst_path = sql_string_literal(&relation.dst_path),
-        relation_type = sql_string_literal(&relation.relation_type),
-        reason = sql_string_literal(&relation.reason),
-        explicit = sql_bool(relation.explicit),
-        confidence = relation.confidence,
-        evidence_json = sql_string_literal(&relation.evidence_json)
-    ));
-}
-
-fn append_check_insert_sql(sql: &mut String, check: &IndexCheck) {
-    sql.push_str(&format!(
-        "INSERT INTO checks(rule_id, severity, subject_path, message, evidence_json) VALUES ({rule_id}, {severity}, {subject_path}, {message}, {evidence_json});",
-        rule_id = sql_string_literal(&check.rule_id),
-        severity = sql_string_literal(&check.severity),
-        subject_path = sql_string_literal(&check.subject_path),
-        message = sql_string_literal(&check.message),
-        evidence_json = sql_string_literal(&check.evidence_json)
-    ));
-}
-
-fn exec_sql_batches(db: &SqliteConnection, statements: &[String], batch_size: usize) -> Result<()> {
-    if statements.is_empty() {
-        return Ok(());
-    }
-    let chunk_size = batch_size.max(1);
-    for chunk in statements.chunks(chunk_size) {
-        let mut sql = String::from("BEGIN IMMEDIATE;");
-        for statement in chunk {
-            sql.push_str(statement);
+    db.transaction(|db| {
+        db.exec("DELETE FROM checks; DELETE FROM meta;")?;
+        insert_meta(
+            db,
+            &[
+                ("repo_root", repo_root.to_string()),
+                ("managed_root", managed_root.to_string()),
+                ("generated_at_unix", generated_at_unix.to_string()),
+                ("fact_schema_version", FACT_SCHEMA_VERSION.to_string()),
+                ("last_refresh_mode", mode.to_string()),
+                ("last_delta_added", delta.added_paths.len().to_string()),
+                ("last_delta_changed", delta.changed_paths.len().to_string()),
+                ("last_delta_removed", delta.removed_paths.len().to_string()),
+                (
+                    "history_latest_snapshot",
+                    history_status.latest_snapshot.clone().unwrap_or_default(),
+                ),
+                (
+                    "history_dirty",
+                    is_history_dirty(history_status).to_string(),
+                ),
+                (
+                    "history_tracked_files_count",
+                    history_status.tracked_files_count.to_string(),
+                ),
+                ("host_git_head", host_git.head.clone().unwrap_or_default()),
+                (
+                    "host_git_branch",
+                    host_git.branch.clone().unwrap_or_default(),
+                ),
+                ("host_git_dirty", host_git.dirty.to_string()),
+            ],
+        )?;
+        for check in checks {
+            insert_check(db, check)?;
         }
-        sql.push_str("COMMIT;");
-        db.exec(&sql)?;
+        Ok(())
+    })
+}
+
+fn insert_meta(db: &SqliteConnection, entries: &[(&str, String)]) -> Result<()> {
+    for (key, value) in entries {
+        db.execute(
+            "INSERT INTO meta(key, value) VALUES (?1, ?2);",
+            params![key, value],
+        )?;
     }
     Ok(())
+}
+
+fn insert_doc_facts(db: &SqliteConnection, doc: &IndexedDoc) -> Result<()> {
+    db.execute(
+        "INSERT INTO docs(
+            path, title, role, status, authority, collection_name, summary, frontmatter_keys_text, headings_text, content_hash, file_size_bytes,
+            incoming_links, outgoing_links, is_entrypoint, is_anchor_candidate, is_generated, is_reference, mtime_unix
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18);",
+        params![
+            doc.path, doc.title, doc.role, doc.status, doc.authority, doc.collection,
+            doc.summary, doc.frontmatter_keys.join(" | "), doc.headings.join(" | "),
+            doc.content_hash, doc.file_size_bytes, doc.incoming_links, doc.outgoing_links,
+            doc.is_entrypoint, doc.is_anchor_candidate, doc.is_generated, doc.is_reference,
+            doc.mtime_unix,
+        ],
+    )?;
+    db.execute(
+        "INSERT INTO file_states(path, content_hash, file_size_bytes, mtime_unix, mtime_ns) VALUES (?1, ?2, ?3, ?4, ?5);",
+        params![doc.path, doc.content_hash, doc.file_size_bytes, doc.mtime_unix, doc.mtime_ns],
+    )?;
+    db.execute(
+        "INSERT INTO docs_fts(path, title, headings_text, summary, body_tokens) VALUES (?1, ?2, ?3, ?4, ?5);",
+        params![doc.path, doc.title, doc.headings.join(" | "), doc.summary, doc.content_text],
+    )?;
+    for (sql, values) in [
+        ("INSERT INTO headings(doc_path, heading_index, heading_text) VALUES (?1, ?2, ?3);", &doc.headings),
+        ("INSERT INTO raw_links(src_doc, link_index, normalized_target) VALUES (?1, ?2, ?3);", &doc.links),
+        ("INSERT INTO path_mentions(doc_path, mention_index, mentioned_path) VALUES (?1, ?2, ?3);", &doc.path_mentions),
+    ] {
+        for (index, value) in values.iter().enumerate() {
+            db.execute(sql, params![doc.path, index, value])?;
+        }
+    }
+    for (sql, values) in [
+        (
+            "INSERT INTO scope_paths(doc_path, scope_path) VALUES (?1, ?2);",
+            &doc.scope_paths,
+        ),
+        (
+            "INSERT INTO supersedes(doc_path, superseded_path) VALUES (?1, ?2);",
+            &doc.supersedes,
+        ),
+    ] {
+        for value in values {
+            db.execute(sql, params![doc.path, value])?;
+        }
+    }
+    Ok(())
+}
+
+fn insert_relation(db: &SqliteConnection, relation: &DocRelation) -> Result<()> {
+    db.execute(
+        "INSERT INTO relations(src_path, dst_path, relation_type, reason, explicit, confidence, evidence_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7);",
+        params![
+            relation.src_path, relation.dst_path, relation.relation_type, relation.reason,
+            relation.explicit,
+            // Preserve the decimal f32 value stored by the previous SQL writer.
+            relation.confidence.to_string(), relation.evidence_json,
+        ],
+    )
+}
+
+fn insert_check(db: &SqliteConnection, check: &IndexCheck) -> Result<()> {
+    db.execute(
+        "INSERT INTO checks(rule_id, severity, subject_path, message, evidence_json) VALUES (?1, ?2, ?3, ?4, ?5);",
+        params![check.rule_id, check.severity, check.subject_path, check.message, check.evidence_json],
+    )
 }
 
 fn replace_fact_store_contents(db: &SqliteConnection, artifact: &IndexArtifact) -> Result<()> {
-    let mut sql = String::from(
-        "BEGIN IMMEDIATE;
-         DELETE FROM meta;
-         DELETE FROM docs;
-         DELETE FROM file_states;
-         DELETE FROM headings;
-         DELETE FROM raw_links;
-         DELETE FROM path_mentions;
-         DELETE FROM relations;
-         DELETE FROM checks;
-         DELETE FROM scope_paths;
-         DELETE FROM supersedes;
-         DELETE FROM docs_fts;",
-    );
-
-    sql.push_str(&format!(
-        "INSERT INTO meta(key, value) VALUES
-            ('repo_root', {repo_root}),
-            ('managed_root', {managed_root}),
-            ('generated_at_unix', {generated_at}),
-            ('fact_schema_version', {fact_schema_version}),
-            ('last_refresh_mode', 'full'),
-            ('last_delta_added', '0'),
-            ('last_delta_changed', '0'),
-            ('last_delta_removed', '0'),
-            ('history_latest_snapshot', {history_latest_snapshot}),
-            ('history_dirty', {history_dirty}),
-            ('history_tracked_files_count', {history_tracked_files_count}),
-            ('host_git_head', {host_git_head}),
-            ('host_git_branch', {host_git_branch}),
-            ('host_git_dirty', {host_git_dirty});",
-        repo_root = sql_string_literal(&artifact.repo_root),
-        managed_root = sql_string_literal(&artifact.managed_root),
-        generated_at = sql_string_literal(&artifact.generated_at_unix.to_string()),
-        fact_schema_version = sql_string_literal(FACT_SCHEMA_VERSION),
-        history_latest_snapshot =
-            sql_string_literal(artifact.history_latest_snapshot.as_deref().unwrap_or("")),
-        history_dirty = sql_string_literal(if artifact.history_dirty {
-            "true"
-        } else {
-            "false"
-        }),
-        history_tracked_files_count =
-            sql_string_literal(&artifact.history_tracked_files_count.to_string()),
-        host_git_head = sql_string_literal(artifact.host_git_head.as_deref().unwrap_or("")),
-        host_git_branch = sql_string_literal(artifact.host_git_branch.as_deref().unwrap_or("")),
-        host_git_dirty = sql_string_literal(if artifact.host_git_dirty {
-            "true"
-        } else {
-            "false"
-        })
-    ));
-
-    for doc in &artifact.docs {
-        sql.push_str(&render_doc_full_sql(doc));
-    }
-
-    for relation in &artifact.relations {
-        append_relation_insert_sql(&mut sql, relation);
-    }
-
-    for check in &artifact.checks {
-        append_check_insert_sql(&mut sql, check);
-    }
-
-    sql.push_str("COMMIT;");
-    db.exec(&sql)
+    db.transaction(|db| {
+        db.exec(
+            "DELETE FROM meta;
+             DELETE FROM docs;
+             DELETE FROM file_states;
+             DELETE FROM headings;
+             DELETE FROM raw_links;
+             DELETE FROM path_mentions;
+             DELETE FROM relations;
+             DELETE FROM checks;
+             DELETE FROM scope_paths;
+             DELETE FROM supersedes;
+             DELETE FROM docs_fts;",
+        )?;
+        insert_meta(
+            db,
+            &[
+                ("repo_root", artifact.repo_root.clone()),
+                ("managed_root", artifact.managed_root.clone()),
+                ("generated_at_unix", artifact.generated_at_unix.to_string()),
+                ("fact_schema_version", FACT_SCHEMA_VERSION.to_string()),
+                ("last_refresh_mode", "full".to_string()),
+                ("last_delta_added", "0".to_string()),
+                ("last_delta_changed", "0".to_string()),
+                ("last_delta_removed", "0".to_string()),
+                (
+                    "history_latest_snapshot",
+                    artifact.history_latest_snapshot.clone().unwrap_or_default(),
+                ),
+                ("history_dirty", artifact.history_dirty.to_string()),
+                (
+                    "history_tracked_files_count",
+                    artifact.history_tracked_files_count.to_string(),
+                ),
+                (
+                    "host_git_head",
+                    artifact.host_git_head.clone().unwrap_or_default(),
+                ),
+                (
+                    "host_git_branch",
+                    artifact.host_git_branch.clone().unwrap_or_default(),
+                ),
+                ("host_git_dirty", artifact.host_git_dirty.to_string()),
+            ],
+        )?;
+        for doc in &artifact.docs {
+            insert_doc_facts(db, doc)?;
+        }
+        for relation in &artifact.relations {
+            insert_relation(db, relation)?;
+        }
+        for check in &artifact.checks {
+            insert_check(db, check)?;
+        }
+        Ok(())
+    })
 }
 
 pub(crate) fn read_index_artifact_from_fact_store(db: &SqliteConnection) -> Result<IndexArtifact> {
-    let meta = db.query("SELECT key, value FROM meta ORDER BY key ASC;")?;
+    let meta = db.query("SELECT key, value FROM meta ORDER BY key ASC;", [])?;
     let docs_rows = db.query(
         "SELECT path, title, role, COALESCE(status, ''), COALESCE(authority, ''), COALESCE(collection_name, ''),
                 summary, frontmatter_keys_text, headings_text, content_hash, file_size_bytes, incoming_links, outgoing_links,
                 is_entrypoint, is_anchor_candidate, is_generated, is_reference, mtime_unix
          FROM docs
-         ORDER BY path ASC;",
-    )?;
+         ORDER BY path ASC;", [])?;
     let headings_rows = db.query(
         "SELECT doc_path, heading_text FROM headings ORDER BY doc_path ASC, heading_index ASC;",
+        [],
     )?;
     let links_rows = db.query(
         "SELECT src_doc, normalized_target FROM raw_links ORDER BY src_doc ASC, link_index ASC;",
+        [],
     )?;
     let path_mentions_rows = db.query(
-        "SELECT doc_path, mentioned_path FROM path_mentions ORDER BY doc_path ASC, mention_index ASC;",
+        "SELECT doc_path, mentioned_path FROM path_mentions ORDER BY doc_path ASC, mention_index ASC;", [])?;
+    let file_state_rows = db.query(
+        "SELECT path, mtime_ns FROM file_states ORDER BY path ASC;",
+        [],
     )?;
-    let file_state_rows = db.query("SELECT path, mtime_ns FROM file_states ORDER BY path ASC;")?;
     let scope_rows = db.query(
         "SELECT doc_path, scope_path FROM scope_paths ORDER BY doc_path ASC, scope_path ASC;",
+        [],
     )?;
     let supersedes_rows = db.query(
-        "SELECT doc_path, superseded_path FROM supersedes ORDER BY doc_path ASC, superseded_path ASC;",
-    )?;
+        "SELECT doc_path, superseded_path FROM supersedes ORDER BY doc_path ASC, superseded_path ASC;", [])?;
     let relations_rows = db.query(
         "SELECT src_path, dst_path, relation_type, reason, explicit, confidence, evidence_json
          FROM relations
          ORDER BY src_path ASC, dst_path ASC, relation_type ASC;",
+        [],
     )?;
     let checks_rows = db.query(
-        "SELECT rule_id, severity, subject_path, message, evidence_json FROM checks ORDER BY subject_path ASC, rule_id ASC;",
-    )?;
+        "SELECT rule_id, severity, subject_path, message, evidence_json FROM checks ORDER BY subject_path ASC, rule_id ASC;", [])?;
 
     let mut meta_map = BTreeMap::new();
     for row in &meta.rows {
@@ -1669,7 +1538,8 @@ fn relation_confidence(relation_type: &str, explicit: bool) -> f32 {
 }
 
 fn relation_evidence_json(reason: &str) -> String {
-    format!("{{\"reason\":{}}}", json_string(reason))
+    serde_json::to_string(&serde_json::json!({ "reason": reason }))
+        .expect("serialize relation evidence")
 }
 
 fn annotate_link_counts(docs: &mut [IndexedDoc], relations: &[DocRelation]) {
@@ -1699,24 +1569,6 @@ fn counts_for_doc_navigation(relation: &DocRelation) -> bool {
         relation.relation_type.as_str(),
         "doc_indexes_doc" | "doc_links_doc" | "supersedes"
     )
-}
-
-pub(crate) fn sql_string_literal(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "''"))
-}
-
-fn sql_opt_literal(value: Option<&str>) -> String {
-    value
-        .map(sql_string_literal)
-        .unwrap_or_else(|| "NULL".to_string())
-}
-
-fn sql_bool(value: bool) -> i32 {
-    if value {
-        1
-    } else {
-        0
-    }
 }
 
 pub(crate) fn cell(row: &[Option<String>], index: usize) -> &str {

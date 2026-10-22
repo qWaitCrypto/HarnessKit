@@ -117,9 +117,8 @@ fn cli_init_local_succeeds_without_git_repo() {
 
     let output = run(&["init", non_git.to_str().unwrap(), "--local"]);
     assert!(output.contains("Initialized HarnessKit scaffold"));
-    assert!(output.contains(
-        "No git repository found; generated local docs without git exclude entries."
-    ));
+    assert!(output
+        .contains("No git repository found; generated local docs without git exclude entries."));
     assert!(non_git.join("AGENTS.md").exists());
     assert!(non_git.join("CLAUDE.md").exists());
     assert!(non_git.join("ARCHITECTURE.md").exists());

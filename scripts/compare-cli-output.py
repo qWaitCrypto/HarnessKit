@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Compare two Linux CLI builds byte for byte, including stderr and exit codes.
 
-Usage: python3 scripts/compare-cli-output.py BEFORE AFTER
-Requires Python 3, cc, git and sqlite3. All writes stay in a temporary directory.
+Usage: python3 scripts/compare-cli-output.py BEFORE AFTER [--allow-help-changes]
+Requires Python 3, cc, git and sqlite3 for the old build. All writes stay in a
+temporary directory. --allow-help-changes only exempts help/usage text; exit codes
+and file outputs are always compared.
 Both builds run at the same executable/repository paths with identical fixtures.
 A test-only LD_PRELOAD shim fixes snapshot IDs, timestamps and PIDs; output is never
 normalized, parsed or rewritten before comparison.
@@ -158,6 +160,22 @@ def scenarios():
         ["check", "--json"], ["history", "snapshot", "-m", "custom root"],
         ["history", "status"],
     ], False
+    yield "explicit-target-and-options", "standard", [
+        ["init", "{repo}", "--tracked"],
+        ["index", "--schema", ".harnesskit/schema.yaml", "{repo}"],
+        ["check", "--rules", "nonexistent-rule", "{repo}", "--json", "--json"],
+        ["query", "backoff", "{repo}", "--json"],
+        ["inspect", "docs/design-docs/lantern.md", "{repo}"],
+        ["refs", "docs/design-docs/lantern.md", "{repo}"],
+        ["graph", "docs/design-docs/lantern.md", "{repo}", "--json"],
+        ["context", "backoff", "{repo}", "--json"],
+        ["history", "snapshot", "-m", "--leading-hyphen", "{repo}"],
+        ["history", "snapshot", "--message", "long", "-m", "short", "-m", "last", "{repo}"],
+        ["history", "list", "{repo}"], ["history", "status", "{repo}"],
+        ["history", "diff", "latest", "{repo}"],
+        ["history", "diff", "latest", "latest", "{repo}"],
+        ["history", "restore", "latest", "{repo}", "--apply"],
+    ], False
     for fixture, query, doc in [
         ("standard", "backoff", "docs/design-docs/lantern.md"),
         ("flat", "Flat Courier Project", "docs/project.md"),
@@ -221,10 +239,61 @@ def scenarios():
         yield f"update-checksum-broken-{broken}", None, steps, False
 
 
+def compare_results(name, expected, actual, allow_help_changes=False):
+    assert len(expected) == len(actual), name
+    count = 0
+    for left, right in zip(expected, actual):
+        assert left[0] == right[0], name
+        help_text = allow_help_changes and name == "usage" and left[0] in (
+            [], ["help"], ["--help"], ["-h"], ["unknown"],
+        )
+        differences = []
+        for label, old, new in zip(("exit", "stdout", "stderr", "files"),
+                                   left[1:], right[1:]):
+            if old == new or (help_text and label in ("stdout", "stderr")):
+                continue
+            differences.append(label)
+            if label == "files":
+                for path in sorted(old.keys() | new.keys()):
+                    if old.get(path) != new.get(path):
+                        print(f"file differs: {path}")
+            else:
+                print(f"{label} before: {old!r}\n{label} after:  {new!r}")
+        if differences:
+            raise SystemExit(f"FAIL {name}: {left[0]!r}")
+        count += 1
+    print(f"PASS {name}: {count} commands")
+    return count
+
+
+def compare_interop(writer, reader, sandbox, clock, name):
+    def steps(next_binary):
+        return [
+            ["init", "--tracked"], ["index"],
+            ["history", "snapshot", "-m", "interop \"合成\" \\ 😀\n\t\b\f\r\x01"],
+            # Replace only the executable; keep the writer's database and history.
+            lambda repo: shutil.copy2(next_binary, sandbox / "harnesskit"),
+            ["history", "list"], ["history", "status"],
+            ["query", "backoff", "--json"], ["history", "diff", "latest"],
+            change_docs, ["index"], ["history", "diff", "latest"],
+            ["history", "restore", "latest"],
+            ["history", "restore", "latest", "--apply", "--force"],
+            ["history", "status"], ["history", "snapshot", "-m", "second"],
+            ["history", "list"],
+        ]
+
+    expected = run_scenario(writer, sandbox, clock, "standard", steps(writer))
+    actual = run_scenario(writer, sandbox, clock, "standard", steps(reader))
+    assert all(result[1] == 0 for result in expected), f"{name}: baseline failed"
+    assert all(result[1] == 0 for result in actual), f"{name}: cross-version operation failed"
+    return compare_results(name, expected, actual)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("before", type=Path)
     parser.add_argument("after", type=Path)
+    parser.add_argument("--allow-help-changes", action="store_true")
     args = parser.parse_args()
     before, after = args.before.resolve(), args.after.resolve()
     count = 0
@@ -238,22 +307,11 @@ def main():
         for name, fixture, steps, git in scenarios():
             expected = run_scenario(before, sandbox, clock, fixture, steps, git)
             actual = run_scenario(after, sandbox, clock, fixture, steps, git)
-            for left, right in zip(expected, actual):
-                if left != right:
-                    print(f"FAIL {name}: {left[0]!r}")
-                    for label, old, new in zip(("exit", "stdout", "stderr", "files"),
-                                               left[1:], right[1:]):
-                        if old != new:
-                            if label == "files":
-                                for path in sorted(old.keys() | new.keys()):
-                                    if old.get(path) != new.get(path):
-                                        print(f"file differs: {path}")
-                            else:
-                                print(f"{label} before: {old!r}\n{label} after:  {new!r}")
-                    raise SystemExit(1)
-                count += 1
-            print(f"PASS {name}: {len(expected)} commands")
-    print(f"PASS: {count} command comparisons; stdout, stderr, exit codes and file outputs identical")
+            count += compare_results(name, expected, actual, args.allow_help_changes)
+        count += compare_interop(before, after, sandbox, clock, "old-to-new-history-and-state")
+        count += compare_interop(after, before, sandbox, clock, "new-to-old-history-and-state")
+    exception = " (except help/usage text)" if args.allow_help_changes else ""
+    print(f"PASS: {count} command comparisons; stdout, stderr, exit codes and file outputs identical{exception}")
 
 
 if __name__ == "__main__":
