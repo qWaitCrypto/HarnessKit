@@ -10,14 +10,16 @@ use std::{env, fs};
 
 use crate::checks::filter_and_suppress_checks;
 use crate::context::{context_packet_for_doc, doc_exists};
+use crate::discover::{orphan_state_hints, project_hint};
 use crate::doctor::build_doctor_report;
-use crate::fs_utils::{ensure_dir, now_unix};
+use crate::fs_utils::{ensure_dir, now_unix, validate_target_dir};
 use crate::git::ensure_host_git_exclude;
 use crate::history::{
     apply_restore_plan, compute_history_status, create_history_snapshot, diff_snapshot_to_worktree,
     diff_snapshots, is_history_dirty, list_history_snapshots, resolve_snapshot_arg, restore_plan,
 };
 use crate::index::{open_fact_store, refresh_fact_store, scalar_count, EngineContext};
+use crate::output::{eprintln, finish_write, println};
 use crate::query::{query_candidates, query_rows_to_candidates};
 use crate::render::{
     print_check_output, print_context_packet, print_doctor_report, print_history_diff,
@@ -50,6 +52,7 @@ pub(crate) enum InitMode {
 
 fn run_init(args: &TargetArgs) -> Result<()> {
     let target_dir = PathBuf::from(args.target_dir.as_deref().unwrap_or("."));
+    validate_target_dir(&target_dir, true)?;
     let docs_root_override = option_value(&args.options.docs_root, "--docs-root");
     let schema_arg = option_value(&args.options.schema, "--schema")
         .unwrap_or_else(|| BUNDLED_SCHEMA_PATH.to_string());
@@ -73,6 +76,7 @@ fn run_init(args: &TargetArgs) -> Result<()> {
         schema.managed_root = docs_root.clone();
         rewrite_docs_root_bound_paths(&mut schema, &original_managed_root, docs_root);
     }
+    print_project_hint(&target_dir, &schema);
     let schema_copy_text = render_schema_copy(&schema);
     validate_init_templates(&schema)?;
 
@@ -110,6 +114,9 @@ fn run_index(args: &TargetArgs) -> Result<()> {
 fn run_check(args: &TargetArgs) -> Result<()> {
     let context = load_engine_context(args)?;
     let options = command_options(&args.options, Some(&context.schema));
+    let mut hints = project_hints(&context);
+    let orphan_hints = orphan_state_hints(&context.target_dir, &context.schema)?;
+    hints.extend(orphan_hints.iter().cloned());
     refresh_fact_store(&context)?;
     let target_dir = context.target_dir;
     let db = open_fact_store(&target_dir)?;
@@ -134,7 +141,7 @@ fn run_check(args: &TargetArgs) -> Result<()> {
     if options.json {
         println!(
             "{}",
-            render_check_json(&target_dir, docs_count, relation_count, &checks)
+            render_check_json(&target_dir, docs_count, relation_count, &checks, &hints)
         );
         if error_count > 0 || (options.strict && warning_count > 0) {
             std::process::exit(1);
@@ -143,6 +150,9 @@ fn run_check(args: &TargetArgs) -> Result<()> {
     }
 
     print_check_output(&target_dir, docs_count, relation_count, &checks);
+    for hint in orphan_hints {
+        println!("Hint: {}", hint);
+    }
 
     if error_count > 0 || (options.strict && warning_count > 0) {
         std::process::exit(1);
@@ -152,14 +162,22 @@ fn run_check(args: &TargetArgs) -> Result<()> {
 }
 
 fn run_doctor(args: &TargetArgs) -> Result<()> {
-    let target_dir = PathBuf::from(args.target_dir.as_deref().unwrap_or("."));
+    let context = load_engine_context(args)?;
     let json = args.options.json;
-    let report = build_doctor_report(&target_dir);
+    let mut report = build_doctor_report(&context.target_dir);
+    report.hints = orphan_state_hints(&context.target_dir, &context.schema)?;
 
     if json {
+        report.hints.extend(project_hints(&context));
         println!("{}", render_doctor_json(&report));
     } else {
         print_doctor_report(&report);
+    }
+    if !report.state_writable {
+        return Err(report
+            .state_error
+            .unwrap_or_else(|| "HarnessKit state is not writable".to_string())
+            .into());
     }
     Ok(())
 }
@@ -310,7 +328,10 @@ fn run_query(args: &InputArgs) -> Result<()> {
     let candidates = query_rows_to_candidates(&result, &context.target_dir, &query_terms);
 
     if options.json {
-        println!("{}", render_query_json(&query_terms, &candidates));
+        println!(
+            "{}",
+            render_query_json(&query_terms, &candidates, &project_hints(&context))
+        );
     } else {
         print_query_candidates(&query_terms, &candidates);
     }
@@ -328,7 +349,7 @@ fn run_graph(args: &InputArgs) -> Result<()> {
     if options.json {
         println!(
             "{}",
-            render_context_packet_json("graph", &doc_path, &packet)
+            render_context_packet_json("graph", &doc_path, &packet, &project_hints(&context))
         );
     } else {
         print_context_packet("Graph", &doc_path, &packet);
@@ -358,7 +379,10 @@ fn run_context(args: &InputArgs) -> Result<()> {
     let packet = context_packet_for_doc(&db, &context.target_dir, &anchor_path)?;
 
     if options.json {
-        println!("{}", render_context_packet_json("context", &input, &packet));
+        println!(
+            "{}",
+            render_context_packet_json("context", &input, &packet, &project_hints(&context))
+        );
     } else {
         print_context_packet("Context", &input, &packet);
     }
@@ -408,6 +432,9 @@ fn run_history_diff(args: &DiffArgs) -> Result<()> {
     if positionals.is_empty() {
         return Err("history diff requires <snapshot-id|latest> or <a> <b>".into());
     }
+    if positionals.len() > 3 {
+        return Err("history diff accepts <snapshot> [target_dir] or <a> <b> [target_dir]".into());
+    }
     let snapshot_args = history_diff_snapshot_args(positionals);
     let target = TargetArgs {
         target_dir: positionals.get(snapshot_args.len()).cloned(),
@@ -438,7 +465,15 @@ fn history_diff_snapshot_args(positionals: &[String]) -> Vec<String> {
         return positionals.to_vec();
     }
     let second = Path::new(&positionals[1]);
-    if second.exists() && second.is_dir() {
+    // With an explicit third argument the first two values are snapshot IDs.
+    // Otherwise preserve existing IDs (including legacy IDs), and validate an
+    // unknown second argument as a target instead of silently creating state.
+    let snapshot_exists = Path::new(".harnesskit/history/snapshots")
+        .join(format!("{}.json", positionals[1]))
+        .is_file();
+    if positionals.len() == 2
+        && (second.is_dir() || (positionals[1] != "latest" && !snapshot_exists))
+    {
         vec![positionals[0].clone()]
     } else {
         vec![positionals[0].clone(), positionals[1].clone()]
@@ -491,6 +526,7 @@ pub(crate) fn command_options(args: &CommonArgs, schema: Option<&Schema>) -> Com
 
 pub(crate) fn load_engine_context(args: &TargetArgs) -> Result<EngineContext> {
     let target_dir = PathBuf::from(args.target_dir.as_deref().unwrap_or("."));
+    validate_target_dir(&target_dir, false)?;
     let docs_root_override = option_value(&args.options.docs_root, "--docs-root");
     let schema_arg = option_value(&args.options.schema, "--schema")
         .unwrap_or_else(|| default_context_schema_arg(&target_dir));
@@ -502,12 +538,31 @@ pub(crate) fn load_engine_context(args: &TargetArgs) -> Result<EngineContext> {
         schema.managed_root = docs_root.clone();
         rewrite_docs_root_bound_paths(&mut schema, &original_managed_root, docs_root);
     }
+    print_project_hint(&target_dir, &schema);
 
     Ok(EngineContext { target_dir, schema })
 }
 
+fn print_project_hint(target_dir: &Path, schema: &Schema) {
+    if let Some(hint) = project_hint(target_dir, schema) {
+        eprintln!("Hint: {}", hint);
+    }
+}
+
+fn project_hints(context: &EngineContext) -> Vec<String> {
+    project_hint(&context.target_dir, &context.schema)
+        .into_iter()
+        .collect()
+}
+
 pub(crate) fn run() -> Result<()> {
-    let cli = Cli::parse();
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(error) => {
+            finish_write(error.print());
+            std::process::exit(error.exit_code());
+        }
+    };
     match cli.command {
         Some(Command::Init(args)) => run_init(&args),
         Some(Command::Index(args)) => run_index(&args),

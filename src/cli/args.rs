@@ -1,5 +1,7 @@
 use clap::{Args, Parser, Subcommand};
 
+use crate::output::eprintln;
+
 #[derive(Parser)]
 #[command(name = "harnesskit", version, about)]
 pub(super) struct Cli {

@@ -95,7 +95,7 @@ fn cli_init_preview_local_tracked_and_context_json_smoke() {
     assert!(check.contains("\"docs_count\""));
     assert!(check.contains("\"checks\""));
     let doctor = run(&["doctor", tracked.to_str().unwrap(), "--json"]);
-    assert!(doctor.contains("\"sqlite3\""));
+    assert!(!doctor.contains("sqlite3"));
     assert!(doctor.contains("\"state_writable\""));
     let context = run(&[
         "context",

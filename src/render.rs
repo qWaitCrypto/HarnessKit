@@ -16,6 +16,7 @@ use crate::doctor::{CommandCheck, DoctorReport};
 use crate::git::find_host_git_dir;
 use crate::history::{is_history_dirty, HistoryDiff, HistorySnapshot, HistoryStatus, RestorePlan};
 use crate::index::{cell, DocRelation, IndexArtifact};
+use crate::output::println;
 use crate::query::QueryCandidate;
 use crate::schema::Schema;
 use crate::sqlite::QueryResult;
@@ -144,7 +145,6 @@ pub(crate) fn print_doctor_report(report: &DoctorReport) {
         "PWD differs from current_dir: {}",
         yes_no_bool(report.pwd_differs_from_current_dir)
     );
-    println!("sqlite3: {}", command_check_label(&report.sqlite3));
     println!("git: {}", command_check_label(&report.git));
     println!(
         "Inside git repo: {}",
@@ -191,8 +191,8 @@ pub(crate) fn print_doctor_report(report: &DoctorReport) {
         "Current executable directory on PATH: {}",
         yes_no_bool(report.path_contains_cli_dir)
     );
-    if !report.sqlite3.present {
-        println!("Hint: HarnessKit alpha requires sqlite3 CLI on PATH for fact-store-backed commands such as index, query, check, context, graph, inspect, refs, rank, and list-docs.");
+    for hint in &report.hints {
+        println!("Hint: {}", hint);
     }
     println!("Note: `.harnesskit/state` is derived and rebuildable; `.harnesskit/history` stores local doc checkpoints.");
 }

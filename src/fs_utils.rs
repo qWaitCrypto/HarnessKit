@@ -27,6 +27,29 @@ pub(crate) fn ensure_dir(path: &Path) -> Result<()> {
     Ok(())
 }
 
+pub(crate) fn validate_target_dir(path: &Path, allow_missing: bool) -> Result<()> {
+    match fs::metadata(path) {
+        Ok(metadata) if metadata.is_dir() => Ok(()),
+        Ok(_) => Err(format!("target_dir is not a directory: {}", path.display()).into()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            if allow_missing {
+                return Ok(());
+            }
+            Err(format!(
+                "target_dir does not exist: {}. Was an argument mistaken for target_dir? Only `harnesskit init` can create a target directory.",
+                path.display()
+            )
+            .into())
+        }
+        Err(error) => Err(format!(
+            "cannot access target_dir {}: {}",
+            path.display(),
+            error
+        )
+        .into()),
+    }
+}
+
 fn ensure_writable_dir(path: &Path, purpose: &str) -> Result<()> {
     fs::create_dir_all(path).map_err(|err| {
         format!(
@@ -88,7 +111,7 @@ pub(crate) fn fact_store_path_hint(
     ));
     out.push_str(&format!("- state_dir: {}\n", diagnostics.state_dir));
     out.push_str(&format!("- facts_path: {}\n", diagnostics.facts_path));
-    out.push_str("Hint: run `harnesskit doctor --json` to verify sqlite3, git, PATH, and HarnessKit state directories. If diagnostics do not point at the intended writable project root, pass the project root explicitly, for example `harnesskit check /path/to/repo --json` or `harnesskit index /path/to/repo`.\n");
+    out.push_str("Hint: run `harnesskit doctor --json` to verify git, PATH, and HarnessKit state directories. If diagnostics do not point at the intended writable project root, pass the project root explicitly, for example `harnesskit check /path/to/repo --json` or `harnesskit index /path/to/repo`.\n");
     out.push_str("Do not delete `.harnesskit/history` unless you intentionally want to discard local doc checkpoints.");
     out
 }

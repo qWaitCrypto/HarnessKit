@@ -3,6 +3,7 @@ use std::process::{Command, Stdio};
 use std::{env, fs};
 
 use crate::fs_utils::{home_dir, now_unix};
+use crate::output::println;
 use crate::Result;
 
 pub(crate) fn detect_release_target() -> Result<String> {

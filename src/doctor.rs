@@ -22,8 +22,6 @@ pub(crate) struct DoctorReport {
     pub(crate) pwd: Option<String>,
     pub(crate) pwd_differs_from_current_dir: bool,
     #[serde(serialize_with = "crate::render::serialize_inline")]
-    pub(crate) sqlite3: CommandCheck,
-    #[serde(serialize_with = "crate::render::serialize_inline")]
     pub(crate) git: CommandCheck,
     pub(crate) inside_git_repo: Option<bool>,
     pub(crate) git_repo_error: Option<String>,
@@ -38,6 +36,7 @@ pub(crate) struct DoctorReport {
     pub(crate) codex_skill_installed: bool,
     pub(crate) current_exe: Option<String>,
     pub(crate) path_contains_cli_dir: bool,
+    pub(crate) hints: Vec<String>,
 }
 
 pub(crate) fn build_doctor_report(target_dir: &Path) -> DoctorReport {
@@ -51,7 +50,6 @@ pub(crate) fn build_doctor_report(target_dir: &Path) -> DoctorReport {
         .as_ref()
         .map(|pwd| pwd != &current_dir_display)
         .unwrap_or(false);
-    let sqlite3 = command_check("sqlite3", &["--version"]);
     let git = command_check("git", &["--version"]);
     let (inside_git_repo, git_repo_error) = git_repo_check(target_dir);
     let state_dir = target_dir.join(".harnesskit").join("state");
@@ -89,7 +87,6 @@ pub(crate) fn build_doctor_report(target_dir: &Path) -> DoctorReport {
         current_dir: current_dir_display,
         pwd,
         pwd_differs_from_current_dir,
-        sqlite3,
         git,
         inside_git_repo,
         git_repo_error,
@@ -104,6 +101,7 @@ pub(crate) fn build_doctor_report(target_dir: &Path) -> DoctorReport {
         codex_skill_installed: codex_skill.exists(),
         path_contains_cli_dir,
         current_exe: current_exe.as_ref().map(|path| absolute_display_path(path)),
+        hints: Vec::new(),
     }
 }
 

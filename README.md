@@ -95,7 +95,7 @@ Alpha notes:
 - The public binary release currently supports Linux x86_64 and macOS x86_64/arm64.
 - The binary includes the default schema and templates, so `harnesskit init` works from ordinary project directories without a checked-out HarnessKit source tree.
 - SQLite is compiled into the binary. Indexing, search, checks, context, and history work without `sqlite3` or a SQLite shared library. Building from source requires Rust/Cargo and a C compiler for bundled SQLite.
-- For CLI output compatibility, `doctor` still reports the optional system `sqlite3` command and retains its legacy requirement text; that text does not apply to this build. Existing history snapshots and schemas remain compatible.
+- Existing history snapshots and schemas remain compatible. `doctor` no longer probes or requires the system `sqlite3` command.
 - The installer writes the Codex skill directly; Codex plugin packaging is optional.
 - The installer can be rerun with a newer `--version` tag to upgrade.
 - After alpha.2, `harnesskit update` can update the CLI and already-installed skills from GitHub releases.
@@ -236,7 +236,9 @@ Validates all managed docs — missing required files, broken links, stale ancho
 harnesskit doctor [--json]
 ```
 
-Checks the CLI, optional system `sqlite3`, git, target path, `.harnesskit/state`, `.harnesskit/history`, installed agent skills, and PATH status. The legacy `sqlite3` requirement message is retained for output compatibility; SQLite is now bundled. Use this when first installing or when a sandboxed environment reports a read-only fact store.
+Checks the CLI, git, target path, `.harnesskit/state`, `.harnesskit/history`, installed agent skills, and PATH status. SQLite is bundled. Use this when first installing or when a sandboxed environment reports a read-only fact store.
+
+Both `doctor` and `check` flag possible orphan `.harnesskit` directories whose parent has no configured docs root or entrypoints, including nested accidental targets. The scan skips symlinks, hidden directories, `target`, and `node_modules`, and respects nested projects' schemas. Verify the intended project root and preserve `.harnesskit/history` before cleaning up any state.
 
 #### Local History
 
@@ -259,6 +261,20 @@ harnesskit update --version <release-tag> # Update to a pinned release
 ```
 
 </details>
+
+## Exit Codes and Target Directories
+
+| Code | Meaning |
+|:--|:--|
+| `0` | Normal completion, including help/version and a closed output pipe (for example, `harnesskit list-docs \| head`). |
+| `1` | `check` found an unsuppressed error, or an unsuppressed warning with `--strict` (including schema strict mode). |
+| `2` | Usage or environment error: invalid arguments, missing or non-directory target, unreadable schema, or failed I/O. |
+
+Only `init` may create a missing target directory; `init --preview` never writes files. Other commands validate `target_dir` before creating state and suggest checking whether an argument was mistaken for the target. Commands operating on a directory without configured docs or entrypoints emit a one-line hint on stderr suggesting `harnesskit init --preview`; they can still inspect or restore existing history. Help, version, and update do not operate on a project target.
+
+For `history diff <a> <b> [target_dir]`, an explicit third argument is always the target. With two arguments, an existing directory is the target; `latest` or an existing local snapshot ID selects a second snapshot; other values are validated as targets. Use a third argument of `.` to unambiguously request a comparison with an unknown snapshot ID.
+
+JSON reports from `check`, `doctor`, `query`, `graph`, and `context` retain their existing result fields and add `coverage` (the scope of the command) and `hints` (actionable next steps). Diagnostics on stderr do not invalidate JSON on stdout.
 
 ## How the Skill Works
 
