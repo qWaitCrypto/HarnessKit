@@ -1022,7 +1022,7 @@ fn delta_refresh_records_real_host_git_dirty() {
         .unwrap();
 
     let artifact = build_index_artifact(&target, &schema).unwrap();
-    assert!(!artifact.host_git_dirty);
+    assert_eq!(artifact.host_git_dirty, Some(false));
     write_index_artifact(&target, &artifact).unwrap();
     write_fact_store(&target, &artifact).unwrap();
 
@@ -1711,7 +1711,9 @@ fn history_snapshot_status_diff_and_restore_roundtrip() {
     let schema_copy = render_schema_copy(&schema);
 
     materialize_from_schema(&target, &schema, &schema_copy, false).unwrap();
-    let first = create_history_snapshot(&target, &schema, "baseline").unwrap();
+    let first = create_history_snapshot(&target, &schema, "baseline", false)
+        .unwrap()
+        .snapshot;
     let original_project = fs::read_to_string(target.join("docs/project.md")).unwrap();
 
     fs::write(
@@ -1760,7 +1762,9 @@ fn history_restore_preflight_rejects_missing_objects_without_writing() {
     let schema_copy = render_schema_copy(&schema);
 
     materialize_from_schema(&target, &schema, &schema_copy, false).unwrap();
-    let snapshot = create_history_snapshot(&target, &schema, "baseline").unwrap();
+    let snapshot = create_history_snapshot(&target, &schema, "baseline", false)
+        .unwrap()
+        .snapshot;
     let project_path = target.join("docs/project.md");
     let changed_project = "---\nstatus: active\nauthority: canonical\n---\n\n# Project\n\nChanged before failed restore.\n";
     fs::write(&project_path, changed_project).unwrap();
@@ -1785,7 +1789,9 @@ fn history_schema_only_change_has_specific_check() {
 
     materialize_from_schema(&target, &schema, &schema_copy, false).unwrap();
     ensure_host_git_exclude(&target, &schema).unwrap();
-    create_history_snapshot(&target, &schema, "baseline").unwrap();
+    create_history_snapshot(&target, &schema, "baseline", false)
+        .unwrap()
+        .snapshot;
     schema_copy.push_str("\n# local schema comment\n");
     fs::write(target.join(".harnesskit/schema.yaml"), schema_copy).unwrap();
 
@@ -1816,7 +1822,9 @@ fn history_checks_and_index_meta_reflect_snapshot_state() {
         .any(|check| check.rule_id == "history-missing"));
 
     ensure_host_git_exclude(&target, &schema).unwrap();
-    let snapshot = create_history_snapshot(&target, &schema, "tracked").unwrap();
+    let snapshot = create_history_snapshot(&target, &schema, "tracked", false)
+        .unwrap()
+        .snapshot;
     fs::write(
         target.join("docs/project.md"),
         "---\nstatus: active\nauthority: canonical\n---\n\n# Project\n\nDirty after snapshot.\n",
@@ -1830,7 +1838,7 @@ fn history_checks_and_index_meta_reflect_snapshot_state() {
     );
     assert!(artifact.history_dirty);
     assert!(artifact.history_tracked_files_count > 0);
-    assert!(artifact
+    assert!(!artifact
         .checks
         .iter()
         .any(|check| check.rule_id == "history-dirty-since-snapshot"));

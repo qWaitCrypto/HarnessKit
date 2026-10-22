@@ -47,7 +47,7 @@ pub(super) enum Command {
 #[derive(Subcommand)]
 pub(super) enum HistoryCommand {
     /// Save a documentation checkpoint.
-    Snapshot(TargetArgs),
+    Snapshot(SnapshotArgs),
     /// List checkpoints.
     List(TargetArgs),
     /// Compare current documents with the latest checkpoint.
@@ -56,8 +56,33 @@ pub(super) enum HistoryCommand {
     Diff(DiffArgs),
     /// Preview or apply a checkpoint restore.
     Restore(InputArgs),
+    /// Export snapshots and objects to a portable .tar.gz archive.
+    Export(InputArgs),
+    /// Merge a history archive, preserving existing snapshot IDs.
+    Import(InputArgs),
+    /// Print one file from a checkpoint without restoring documents.
+    Show(ShowArgs),
     #[command(external_subcommand)]
     Unknown(Vec<String>),
+}
+
+#[derive(Args)]
+pub(super) struct SnapshotArgs {
+    #[command(flatten)]
+    pub(super) target: TargetArgs,
+    /// Create a checkpoint even when file contents have not changed.
+    #[arg(long)]
+    pub(super) allow_empty: bool,
+}
+
+#[derive(Args)]
+pub(super) struct ShowArgs {
+    #[arg(value_name = "SNAPSHOT")]
+    pub(super) snapshot: String,
+    #[arg(value_name = "PATH")]
+    pub(super) path: String,
+    #[command(flatten)]
+    pub(super) target: TargetArgs,
 }
 
 #[derive(Args, Clone, Default)]

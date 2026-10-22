@@ -54,13 +54,18 @@ pub(super) fn add_history_checks(
     }
 
     if let Ok(status) = compute_history_status(repo_root, schema) {
-        if has_history_doc_changes(&status) {
+        if has_history_doc_changes(&status)
+            && (status
+                .snapshot_age_seconds
+                .is_some_and(|age| age > 7 * 86_400)
+                || status.changed_files_count > 20)
+        {
             push_check(
                 checks,
                 "history-dirty-since-snapshot",
                 "warning",
                 ".harnesskit/history",
-                "managed docs differ from latest HarnessKit history snapshot",
+                "managed docs differ from a snapshot older than 7 days or exceed 20 changed files",
                 &[
                     (
                         "latest_snapshot",
@@ -69,6 +74,14 @@ pub(super) fn add_history_checks(
                     ("added", &status.added.len().to_string()),
                     ("changed", &status.changed.len().to_string()),
                     ("removed", &status.removed.len().to_string()),
+                    (
+                        "days_since_snapshot",
+                        &status.days_since_snapshot.unwrap_or(0).to_string(),
+                    ),
+                    (
+                        "changed_files_count",
+                        &status.changed_files_count.to_string(),
+                    ),
                 ],
             );
         }

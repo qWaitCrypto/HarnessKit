@@ -1,3 +1,7 @@
+mod archive;
+
+pub(crate) use archive::{export_history, import_history};
+
 use serde::{Deserialize, Serialize};
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -6,9 +10,9 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::discover::collect_managed_doc_paths;
+use crate::discover::{collect_managed_doc_paths, discover_docs, Coverage};
 use crate::fs_utils::{file_modified_parts, now_unix};
-use crate::git::{host_git_info, HostGitMode};
+use crate::git::{host_git_info, tracked_doc_paths, HostGitMode};
 use crate::render::render_history_snapshot_json;
 use crate::schema::Schema;
 use crate::Result;
@@ -23,7 +27,7 @@ pub(crate) struct HistoryFileRecord {
     pub(crate) mtime_unix: u64,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub(crate) struct HistorySnapshot {
     pub(crate) id: String,
     pub(crate) created_at_unix: u64,
@@ -32,11 +36,18 @@ pub(crate) struct HistorySnapshot {
     pub(crate) schema_hash: String,
     pub(crate) host_git_head: Option<String>,
     pub(crate) host_git_branch: Option<String>,
-    pub(crate) host_git_dirty: bool,
+    pub(crate) host_git_dirty: Option<bool>,
     pub(crate) files: Vec<HistoryFileRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) coverage: Option<Coverage>,
 }
 
-#[derive(Default)]
+pub(crate) struct SnapshotOutcome {
+    pub(crate) snapshot: HistorySnapshot,
+    pub(crate) skipped: bool,
+}
+
+#[derive(Default, Serialize)]
 pub(crate) struct HistoryStatus {
     pub(crate) latest_snapshot: Option<String>,
     pub(crate) tracked_files_count: usize,
@@ -44,6 +55,31 @@ pub(crate) struct HistoryStatus {
     pub(crate) changed: Vec<String>,
     pub(crate) removed: Vec<String>,
     pub(crate) schema_changed: bool,
+    pub(crate) days_since_snapshot: Option<u64>,
+    #[serde(skip)]
+    pub(crate) snapshot_age_seconds: Option<u64>,
+    pub(crate) changed_files_count: usize,
+    pub(crate) unmanaged_files_count: usize,
+    pub(crate) docs_git_tracked: bool,
+    pub(crate) git_tracked_docs_count: usize,
+    pub(crate) git_untracked_docs_count: usize,
+    pub(crate) host_git_dirty: Option<bool>,
+}
+
+impl HistoryStatus {
+    pub(crate) fn hints(&self) -> Vec<String> {
+        let mut hints = Vec::new();
+        if self.git_untracked_docs_count > 0 {
+            hints.push(format!(
+                "{} managed document(s) are not tracked by git; history is the only version record for these documents. Run harnesskit history snapshot -m \"Reviewed docs\" and history export <file.tar.gz> to keep a portable checkpoint.",
+                self.git_untracked_docs_count
+            ));
+        }
+        if is_history_dirty(self) {
+            hints.push("Review the added, changed and removed files, then run harnesskit history snapshot -m \"Reviewed docs\".".to_string());
+        }
+        hints
+    }
 }
 
 fn harnesskit_dir(target_dir: &Path) -> PathBuf {
@@ -77,12 +113,33 @@ pub(crate) fn create_history_snapshot(
     target_dir: &Path,
     schema: &Schema,
     message: &str,
-) -> Result<HistorySnapshot> {
+    allow_empty: bool,
+) -> Result<SnapshotOutcome> {
+    let coverage = discover_docs(target_dir, schema)?;
+    let files = history_file_records(target_dir, coverage.managed_paths())?;
+    let schema_hash = schema_file_hash(target_dir);
+    if !allow_empty {
+        if let Some(snapshot) = latest_history_snapshot(target_dir)? {
+            let previous = snapshot
+                .files
+                .iter()
+                .map(|file| (&file.path, &file.hash))
+                .collect::<BTreeMap<_, _>>();
+            let current = files
+                .iter()
+                .map(|file| (&file.path, &file.hash))
+                .collect::<BTreeMap<_, _>>();
+            if previous == current && snapshot.schema_hash == schema_hash {
+                return Ok(SnapshotOutcome {
+                    snapshot,
+                    skipped: true,
+                });
+            }
+        }
+    }
     ensure_history_dirs(target_dir)?;
     let created_at_unix = now_unix();
     let id = unique_snapshot_id(created_at_unix);
-    let schema_hash = schema_file_hash(target_dir);
-    let files = collect_history_file_records(target_dir, schema)?;
     for file in &files {
         store_history_object(target_dir, &file.path, &file.hash)?;
     }
@@ -97,10 +154,14 @@ pub(crate) fn create_history_snapshot(
         host_git_head: git.head,
         host_git_branch: git.branch,
         host_git_dirty: git.dirty,
+        coverage: Some(coverage),
     };
     write_history_snapshot(target_dir, &snapshot)?;
     fs::write(history_refs_dir(target_dir).join("latest"), &snapshot.id)?;
-    Ok(snapshot)
+    Ok(SnapshotOutcome {
+        snapshot,
+        skipped: false,
+    })
 }
 
 fn unique_snapshot_id(created_at_unix: u64) -> String {
@@ -122,7 +183,13 @@ fn collect_history_file_records(
     target_dir: &Path,
     schema: &Schema,
 ) -> Result<Vec<HistoryFileRecord>> {
-    let mut paths = collect_managed_doc_paths(target_dir, schema)?;
+    history_file_records(target_dir, collect_managed_doc_paths(target_dir, schema)?)
+}
+
+fn history_file_records(
+    target_dir: &Path,
+    mut paths: Vec<String>,
+) -> Result<Vec<HistoryFileRecord>> {
     paths.push(".harnesskit/schema.yaml".to_string());
     paths.sort();
     paths.dedup();
@@ -234,9 +301,40 @@ pub(crate) fn resolve_snapshot_arg(target_dir: &Path, value: &str) -> Result<His
     } else {
         value.to_string()
     };
+    if !safe_relative_path(&id) || Path::new(&id).components().count() != 1 {
+        return Err("invalid history snapshot id".into());
+    }
     let path = history_snapshots_dir(target_dir).join(format!("{}.json", id));
     let text = fs::read_to_string(path)?;
     parse_history_snapshot_json(&text)
+}
+
+pub(crate) fn history_file_content(
+    target_dir: &Path,
+    snapshot: &HistorySnapshot,
+    path: &str,
+) -> Result<Vec<u8>> {
+    let file = snapshot
+        .files
+        .iter()
+        .find(|file| file.path == path)
+        .ok_or_else(|| format!("{} is not in history snapshot {}", path, snapshot.id))?;
+    if !valid_object_hash(&file.hash) {
+        return Err("invalid history object hash".into());
+    }
+    Ok(fs::read(history_object_path(target_dir, &file.hash))?)
+}
+
+fn safe_relative_path(value: &str) -> bool {
+    !value.is_empty()
+        && !value.contains('\\')
+        && Path::new(value)
+            .components()
+            .all(|part| matches!(part, std::path::Component::Normal(_)))
+}
+
+fn valid_object_hash(hash: &str) -> bool {
+    hash.len() > 2 && hash.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 fn latest_history_snapshot(target_dir: &Path) -> Result<Option<HistorySnapshot>> {
@@ -247,21 +345,35 @@ fn latest_history_snapshot(target_dir: &Path) -> Result<Option<HistorySnapshot>>
 }
 
 pub(crate) fn compute_history_status(target_dir: &Path, schema: &Schema) -> Result<HistoryStatus> {
-    let current = collect_history_file_records(target_dir, schema)?;
+    let coverage = discover_docs(target_dir, schema)?;
+    let paths = coverage.managed_paths();
+    let git = host_git_info(target_dir, HostGitMode::Full);
+    let git_tracked_docs_count = if git.dirty.is_some() {
+        tracked_doc_paths(target_dir, &paths)?.len()
+    } else {
+        0
+    };
+    let git_untracked_docs_count = paths.len().saturating_sub(git_tracked_docs_count);
+    let mut status = HistoryStatus {
+        unmanaged_files_count: coverage.unmanaged,
+        docs_git_tracked: !paths.is_empty() && git_untracked_docs_count == 0,
+        git_tracked_docs_count,
+        git_untracked_docs_count,
+        host_git_dirty: git.dirty,
+        ..HistoryStatus::default()
+    };
+    let current = history_file_records(target_dir, paths)?;
+    status.tracked_files_count = current.len();
     let current_map = current
         .iter()
         .map(|file| (file.path.clone(), file.hash.clone()))
         .collect::<BTreeMap<_, _>>();
     let latest = latest_history_snapshot(target_dir)?;
     let Some(snapshot) = latest else {
-        return Ok(HistoryStatus {
-            latest_snapshot: None,
-            tracked_files_count: current.len(),
-            added: current.iter().map(|file| file.path.clone()).collect(),
-            changed: Vec::new(),
-            removed: Vec::new(),
-            schema_changed: !current.is_empty(),
-        });
+        status.changed_files_count = current.len();
+        status.schema_changed = current_map.contains_key(".harnesskit/schema.yaml");
+        status.added = current.iter().map(|file| file.path.clone()).collect();
+        return Ok(status);
     };
     let snapshot_map = snapshot
         .files
@@ -290,14 +402,16 @@ pub(crate) fn compute_history_status(target_dir: &Path, schema: &Schema) -> Resu
         .get(".harnesskit/schema.yaml")
         .map(|hash| hash != &snapshot.schema_hash)
         .unwrap_or(!snapshot.schema_hash.is_empty());
-    Ok(HistoryStatus {
-        latest_snapshot: Some(snapshot.id),
-        tracked_files_count: current.len(),
-        added,
-        changed,
-        removed,
-        schema_changed,
-    })
+    let age = now_unix().saturating_sub(snapshot.created_at_unix);
+    status.latest_snapshot = Some(snapshot.id);
+    status.days_since_snapshot = Some(age / 86_400);
+    status.snapshot_age_seconds = Some(age);
+    status.changed_files_count = added.len() + changed.len() + removed.len();
+    status.added = added;
+    status.changed = changed;
+    status.removed = removed;
+    status.schema_changed = schema_changed;
+    Ok(status)
 }
 
 pub(crate) fn is_history_dirty(status: &HistoryStatus) -> bool {
@@ -319,7 +433,7 @@ pub(crate) fn has_history_doc_changes(status: &HistoryStatus) -> bool {
             .any(|path| path != ".harnesskit/schema.yaml")
 }
 
-#[derive(Default)]
+#[derive(Default, Serialize)]
 pub(crate) struct HistoryDiff {
     pub(crate) added: Vec<String>,
     pub(crate) changed: Vec<String>,
@@ -374,7 +488,7 @@ fn diff_hash_maps(a: &BTreeMap<String, String>, b: &BTreeMap<String, String>) ->
     diff
 }
 
-#[derive(Default)]
+#[derive(Default, Serialize)]
 pub(crate) struct RestorePlan {
     pub(crate) restore_files: Vec<HistoryFileRecord>,
     pub(crate) remove_paths: Vec<String>,

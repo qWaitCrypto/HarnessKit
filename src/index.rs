@@ -14,7 +14,7 @@ use crate::fs_utils::{
     absolute_display_path, ensure_writable_fact_store_dir, fact_store_path_hint,
     file_modified_parts, now_unix, read_text_lossy, simple_content_hash,
 };
-use crate::git::{host_git_info, HostGitInfo, HostGitMode};
+use crate::git::{git_dirty_label, host_git_info, HostGitInfo, HostGitMode};
 use crate::history::{compute_history_status, is_history_dirty, HistoryStatus};
 use crate::lifecycle::infer_status;
 use crate::parse::parse_doc_text;
@@ -87,7 +87,7 @@ pub(crate) struct IndexArtifact {
     pub(crate) history_tracked_files_count: usize,
     pub(crate) host_git_head: Option<String>,
     pub(crate) host_git_branch: Option<String>,
-    pub(crate) host_git_dirty: bool,
+    pub(crate) host_git_dirty: Option<bool>,
     pub(crate) docs: Vec<IndexedDoc>,
     pub(crate) relations: Vec<DocRelation>,
     pub(crate) checks: Vec<IndexCheck>,
@@ -448,7 +448,7 @@ fn history_or_host_git_state_changed(
         ("host_git_branch", host_git.branch.unwrap_or_default()),
         (
             "host_git_dirty",
-            if host_git.dirty { "true" } else { "false" }.to_string(),
+            git_dirty_label(host_git.dirty).to_string(),
         ),
     ];
     for (key, value) in current {
@@ -1185,7 +1185,10 @@ fn replace_checks_and_meta(
                     "host_git_branch",
                     host_git.branch.clone().unwrap_or_default(),
                 ),
-                ("host_git_dirty", host_git.dirty.to_string()),
+                (
+                    "host_git_dirty",
+                    git_dirty_label(host_git.dirty).to_string(),
+                ),
             ],
         )?;
         for check in checks {
@@ -1330,7 +1333,10 @@ fn replace_fact_store_contents(db: &SqliteConnection, artifact: &IndexArtifact) 
                     "host_git_branch",
                     artifact.host_git_branch.clone().unwrap_or_default(),
                 ),
-                ("host_git_dirty", artifact.host_git_dirty.to_string()),
+                (
+                    "host_git_dirty",
+                    git_dirty_label(artifact.host_git_dirty).to_string(),
+                ),
             ],
         )?;
         for doc in &artifact.docs {
@@ -1528,8 +1534,7 @@ pub(crate) fn read_index_artifact_from_fact_store(db: &SqliteConnection) -> Resu
             .filter(|value| !value.is_empty()),
         host_git_dirty: meta_map
             .get("host_git_dirty")
-            .map(|value| value == "true")
-            .unwrap_or(false),
+            .and_then(|value| value.parse::<bool>().ok()),
         docs,
         relations,
         checks,

@@ -2,12 +2,13 @@ mod args;
 
 use args::{
     option_value, CheckArgs, CheckFormat, Cli, Command, ContextArgs, DiffArgs, HistoryCommand,
-    InputArgs, QueryArgs,
+    InputArgs, QueryArgs, ShowArgs, SnapshotArgs,
 };
 pub(crate) use args::{CommonArgs, TargetArgs};
 use clap::{CommandFactory, Parser};
 
 use std::collections::BTreeSet;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::{env, fs};
 
@@ -21,7 +22,8 @@ use crate::fs_utils::{ensure_dir, now_unix, validate_target_dir};
 use crate::git::ensure_host_git_exclude;
 use crate::history::{
     apply_restore_plan, compute_history_status, create_history_snapshot, diff_snapshot_to_worktree,
-    diff_snapshots, is_history_dirty, list_history_snapshots, resolve_snapshot_arg, restore_plan,
+    diff_snapshots, export_history, history_file_content, import_history, is_history_dirty,
+    list_history_snapshots, resolve_snapshot_arg, restore_plan,
 };
 use crate::index::{open_fact_store, refresh_fact_store, scalar_count, EngineContext};
 use crate::output::{eprintln, finish_write, println};
@@ -664,30 +666,48 @@ fn run_history(command: Option<HistoryCommand>) -> Result<()> {
         Some(HistoryCommand::Status(args)) => run_history_status(&args),
         Some(HistoryCommand::Diff(args)) => run_history_diff(&args),
         Some(HistoryCommand::Restore(args)) => run_history_restore(&args),
+        Some(HistoryCommand::Export(args)) => run_history_transfer(&args, false),
+        Some(HistoryCommand::Import(args)) => run_history_transfer(&args, true),
+        Some(HistoryCommand::Show(args)) => run_history_show(&args),
         Some(HistoryCommand::Unknown(args)) => {
             Err(format!("unknown history subcommand: {}", args[0]).into())
         }
-        None => Err("history requires a subcommand: snapshot, list, status, diff, restore".into()),
+        None => Err("history requires a subcommand: snapshot, list, status, diff, restore, export, import, show".into()),
     }
 }
 
-fn run_history_snapshot(args: &TargetArgs) -> Result<()> {
-    let message = option_value(&args.options.short_message, "-m")
-        .or_else(|| option_value(&args.options.message, "--message"))
+fn run_history_snapshot(args: &SnapshotArgs) -> Result<()> {
+    let message = option_value(&args.target.options.short_message, "-m")
+        .or_else(|| option_value(&args.target.options.message, "--message"))
         .unwrap_or_else(|| "snapshot".to_string());
-    let context = load_engine_context(args)?;
-    let snapshot = create_history_snapshot(&context.target_dir, &context.schema, &message)?;
-    let coverage = discover_docs(&context.target_dir, &context.schema)?;
-    let hints = project_hints(&context)?;
-    if args.options.json {
-        // Coverage describes this invocation; S4 does not change the on-disk snapshot format.
-        println!(
-            "{}",
-            crate::render::render_covered_json(&snapshot, &coverage, &hints)
-        );
+    let context = load_engine_context(&args.target)?;
+    let outcome = create_history_snapshot(
+        &context.target_dir,
+        &context.schema,
+        &message,
+        args.allow_empty,
+    )?;
+    let hints = if outcome.skipped {
+        vec!["Snapshot skipped: managed file contents are unchanged. Use --allow-empty to force a new snapshot.".to_string()]
     } else {
-        print_history_snapshot_result(&snapshot);
-        print_coverage(&coverage, &hints);
+        Vec::new()
+    };
+    if args.target.options.json {
+        let mut report = serde_json::to_value(&outcome.snapshot)?;
+        // Report current coverage when skipped, even for a legacy snapshot.
+        report.as_object_mut().unwrap().remove("coverage");
+        report["skipped"] = outcome.skipped.into();
+        print_history_json(&context, &report, &hints)?;
+    } else {
+        if outcome.skipped {
+            println!("{}", hints[0]);
+        } else {
+            print_history_snapshot_result(&outcome.snapshot);
+        }
+        print_coverage(
+            &discover_docs(&context.target_dir, &context.schema)?,
+            &project_hints(&context)?,
+        );
     }
     Ok(())
 }
@@ -695,14 +715,27 @@ fn run_history_snapshot(args: &TargetArgs) -> Result<()> {
 fn run_history_list(args: &TargetArgs) -> Result<()> {
     let context = load_engine_context(args)?;
     let snapshots = list_history_snapshots(&context.target_dir)?;
-    print_history_list(&snapshots);
+    if args.options.json {
+        print_history_json(&context, &serde_json::json!({"snapshots": snapshots}), &[])?;
+    } else {
+        print_history_list(&snapshots);
+    }
     Ok(())
 }
 
 fn run_history_status(args: &TargetArgs) -> Result<()> {
     let context = load_engine_context(args)?;
     let status = compute_history_status(&context.target_dir, &context.schema)?;
-    print_history_status(&status);
+    if args.options.json {
+        let mut report = serde_json::to_value(&status)?;
+        report["dirty"] = is_history_dirty(&status).into();
+        print_history_json(&context, &report, &status.hints())?;
+    } else {
+        print_history_status(&status);
+        for hint in status.hints() {
+            println!("Hint: {}", hint);
+        }
+    }
     Ok(())
 }
 
@@ -735,7 +768,11 @@ fn run_history_diff(args: &DiffArgs) -> Result<()> {
     } else {
         diff_snapshot_to_worktree(&context.target_dir, &context.schema, &first)?
     };
-    print_history_diff(&diff);
+    if args.options.json {
+        print_history_json(&context, &diff, &[])?;
+    } else {
+        print_history_diff(&diff);
+    }
     Ok(())
 }
 
@@ -778,10 +815,77 @@ fn run_history_restore(args: &InputArgs) -> Result<()> {
     }
 
     let plan = restore_plan(&context.target_dir, &context.schema, &snapshot)?;
-    print_restore_plan(&snapshot.id, &plan, apply);
+    if args.target.options.json {
+        print_history_json(
+            &context,
+            &serde_json::json!({
+                "snapshot": snapshot.id, "apply": apply,
+                "restore_files": plan.restore_files, "remove_paths": plan.remove_paths
+            }),
+            &[],
+        )?;
+    } else {
+        print_restore_plan(&snapshot.id, &plan, apply);
+    }
     if apply {
         apply_restore_plan(&context.target_dir, &plan)?;
     }
+    Ok(())
+}
+
+fn run_history_transfer(args: &InputArgs, importing: bool) -> Result<()> {
+    let path = args
+        .input
+        .as_deref()
+        .ok_or("history export/import requires <file.tar.gz>")?;
+    let context = load_engine_context(&args.target)?;
+    let summary = if importing {
+        import_history(&context.target_dir, Path::new(path))?
+    } else {
+        export_history(&context.target_dir, Path::new(path))?
+    };
+    if args.target.options.json {
+        print_history_json(&context, &summary, &[])?;
+    } else {
+        println!("{} HarnessKit history: {} snapshots, {} objects, {} existing snapshot IDs skipped ({})",
+            if importing { "Imported" } else { "Exported" }, summary.snapshots, summary.objects,
+            summary.skipped_snapshots, path);
+    }
+    Ok(())
+}
+
+fn run_history_show(args: &ShowArgs) -> Result<()> {
+    let context = load_engine_context(&args.target)?;
+    let snapshot = resolve_snapshot_arg(&context.target_dir, &args.snapshot)?;
+    let content = history_file_content(&context.target_dir, &snapshot, &args.path)?;
+    if args.target.options.json {
+        print_history_json(
+            &context,
+            &serde_json::json!({
+                "snapshot": snapshot.id, "path": args.path,
+                "content": String::from_utf8_lossy(&content)
+            }),
+            &[],
+        )?;
+    } else {
+        let mut stdout = std::io::stdout().lock();
+        finish_write(stdout.write_all(&content).and_then(|_| stdout.flush()));
+    }
+    Ok(())
+}
+
+fn print_history_json<T: serde::Serialize>(
+    context: &EngineContext,
+    report: &T,
+    extra_hints: &[String],
+) -> Result<()> {
+    let coverage = discover_docs(&context.target_dir, &context.schema)?;
+    let mut hints = project_hints(context)?;
+    hints.extend_from_slice(extra_hints);
+    println!(
+        "{}",
+        crate::render::render_covered_json(report, &coverage, &hints)
+    );
     Ok(())
 }
 

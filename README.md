@@ -351,13 +351,37 @@ Both `doctor` and `check` flag possible orphan `.harnesskit` directories whose p
 ```bash
 harnesskit history status                          # Changed since last snapshot?
 harnesskit history snapshot -m "<message>"         # Create a checkpoint
+harnesskit history snapshot --allow-empty         # Force an unchanged checkpoint
 harnesskit history list                            # List all snapshots
 harnesskit history diff <snapshot-id|latest>       # What changed since snapshot
 harnesskit history diff <snap-a> <snap-b>          # Diff between two snapshots
 harnesskit history restore <snapshot-id> [--apply] # Preview or restore a snapshot
+harnesskit history show <snapshot-id|latest> <path> # Print a checkpoint's file
+harnesskit history export <file.tar.gz>            # Export snapshots and objects
+harnesskit history import <file.tar.gz>            # Merge a portable history archive
 ```
 
 Lightweight local versioning for docs — not a replacement for git, but useful for doc-level checkpoints during complex tasks.
+
+Snapshots include every managed document, including inferred notes and `reference/`
+documents, plus the local schema when present. New snapshots persist their coverage;
+older snapshots remain readable by list, diff, show and restore. Unchanged file contents
+skip snapshot creation with a hint; `--allow-empty` forces a checkpoint. File mtimes,
+messages and Git state alone do not create a new checkpoint.
+
+`history status` reports snapshot age in days, changed and unmanaged file counts,
+and how many managed documents Git tracks. It points out documents for which history
+is the only version record. Non-Git directories report `host_git_dirty: null`.
+`check` warns about dirty history only when the snapshot is older than seven days
+and documents changed, or more than twenty files changed; schema-only changes
+retain their separate finding.
+
+Export writes a new gzip-compressed tar archive without external programs and refuses
+to overwrite an existing file. Import validates objects and snapshot paths before
+merging, preserves existing snapshot IDs, and keeps the newer latest checkpoint.
+It imports history only; use `history restore` to apply documents. All history
+subcommands accept `--json` with coverage and next-step hints; plain `show` writes
+the stored bytes without adding a newline.
 
 #### Update
 
@@ -380,7 +404,7 @@ Only `init` may create a missing target directory; `init --preview` never writes
 
 For `history diff <a> <b> [target_dir]`, an explicit third argument is always the target. With two arguments, an existing directory is the target; `latest` or an existing local snapshot ID selects a second snapshot; other values are validated as targets. Use a third argument of `.` to unambiguously request a comparison with an unknown snapshot ID.
 
-JSON reports from `index`, `check`, `list-docs`, `history snapshot`, `doctor`, `query`, `graph`, and `context` include structured `coverage` and `hints`. Query, graph and context still use only managed documents. Diagnostics on stderr do not invalidate JSON on stdout. The on-disk history snapshot format is unchanged; coverage on `history snapshot --json` describes that invocation.
+JSON reports from `index`, `check`, `list-docs`, `history`, `doctor`, `query`, `graph`, and `context` include structured `coverage` and `hints`. Query, graph and context still use only managed documents. Diagnostics on stderr do not invalidate JSON on stdout. New history snapshots add coverage metadata without requiring it in older snapshots; coverage on `history snapshot --json` describes the current invocation, including when creation is skipped.
 
 ## How the Skill Works
 

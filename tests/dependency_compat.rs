@@ -18,6 +18,9 @@ fn core_commands_work_with_no_external_programs_on_path() {
         vec!["rank"],
         vec!["list-docs"],
         vec!["history", "snapshot", "-m", "no external programs"],
+        vec!["history", "export", "portable.tar.gz"],
+        vec!["history", "import", "portable.tar.gz"],
+        vec!["history", "show", "latest", "AGENTS.md"],
         vec!["history", "list"],
         vec!["history", "diff", "latest"],
         vec!["history", "restore", "latest", "--apply"],
@@ -87,7 +90,9 @@ fn clap_help_and_existing_argument_forms_remain_available() {
     ] {
         assert!(repo.run(&[command, "--help"]).contains("Usage: harnesskit"));
     }
-    for command in ["snapshot", "list", "status", "diff", "restore"] {
+    for command in [
+        "snapshot", "list", "status", "diff", "restore", "export", "import", "show",
+    ] {
         assert!(repo
             .run(&["history", command, "--help"])
             .contains("Usage: harnesskit history"));

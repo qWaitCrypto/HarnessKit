@@ -13,12 +13,20 @@ use crate::Result;
 pub(crate) struct HostGitInfo {
     pub(crate) head: Option<String>,
     pub(crate) branch: Option<String>,
-    pub(crate) dirty: bool,
+    pub(crate) dirty: Option<bool>,
 }
 
 #[derive(Copy, Clone)]
 pub(crate) enum HostGitMode {
     Full,
+}
+
+pub(crate) fn git_dirty_label(dirty: Option<bool>) -> &'static str {
+    match dirty {
+        Some(true) => "true",
+        Some(false) => "false",
+        None => "null",
+    }
 }
 
 pub(crate) fn ensure_host_git_exclude(
@@ -89,7 +97,7 @@ pub(crate) fn host_git_info(target_dir: &Path, mode: HostGitMode) -> HostGitInfo
     let dirty = match mode {
         HostGitMode::Full => run_git_capture(target_dir, &["status", "--porcelain"])
             .map(|value| !value.trim().is_empty())
-            .unwrap_or(false),
+            .ok(),
     };
     HostGitInfo {
         head,

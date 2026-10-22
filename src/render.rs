@@ -14,7 +14,7 @@ use crate::cli::InitMode;
 use crate::context::{ContextDoc, ContextPacket, CurrentContext, HandoffContext};
 use crate::discover::Coverage;
 use crate::doctor::{CommandCheck, DoctorReport};
-use crate::git::find_host_git_dir;
+use crate::git::{find_host_git_dir, git_dirty_label};
 use crate::history::{is_history_dirty, HistoryDiff, HistorySnapshot, HistoryStatus, RestorePlan};
 use crate::index::{cell, DocRelation, IndexArtifact};
 use crate::output::println;
@@ -232,6 +232,24 @@ pub(crate) fn print_history_status(status: &HistoryStatus) {
     print_named_path_group("Changed", &status.changed);
     print_named_path_group("Removed", &status.removed);
     println!("Schema changed: {}", yes_no_bool(status.schema_changed));
+    println!(
+        "Days since latest snapshot: {}",
+        status
+            .days_since_snapshot
+            .map(|days| days.to_string())
+            .unwrap_or_else(|| "-".to_string())
+    );
+    println!(
+        "Changed files: {}; unmanaged files: {}",
+        status.changed_files_count, status.unmanaged_files_count
+    );
+    println!(
+        "Docs tracked by git: {} ({} tracked, {} untracked); host git dirty: {}",
+        yes_no_bool(status.docs_git_tracked),
+        status.git_tracked_docs_count,
+        status.git_untracked_docs_count,
+        git_dirty_label(status.host_git_dirty)
+    );
 }
 
 fn yes_no_bool(value: bool) -> &'static str {
@@ -287,7 +305,7 @@ pub(crate) fn render_index_summary(artifact: &IndexArtifact) -> String {
     out.push_str(&format!("- History dirty: `{}`\n", artifact.history_dirty));
     out.push_str(&format!(
         "- Host git dirty: `{}`\n",
-        artifact.host_git_dirty
+        git_dirty_label(artifact.host_git_dirty)
     ));
     out.push_str(&format!(
         "- Relations built: `{}`\n\n",

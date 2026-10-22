@@ -87,7 +87,7 @@ pub(crate) fn orphan_state_hints(target_dir: &Path, schema: &Schema) -> Result<V
         .collect())
 }
 
-#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Coverage {
     pub(crate) markdown_total: usize,
     pub(crate) managed: usize,
@@ -115,14 +115,14 @@ fn serialize_ratio<S: serde::Serializer>(
         .serialize(serializer)
 }
 
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct DirectoryCoverage {
     pub(crate) dir: String,
     pub(crate) count: usize,
     pub(crate) status: String,
 }
 
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct DocMapping {
     pub(crate) path: String,
     pub(crate) status: String,
