@@ -1,7 +1,7 @@
 mod json;
 
 pub(crate) use json::{
-    render_check_json, render_context_packet_json, render_doctor_json,
+    render_check_json, render_context_packet_json, render_covered_json, render_doctor_json,
     render_history_snapshot_json, render_index_json, render_query_json, serialize_evidence,
     serialize_inline,
 };

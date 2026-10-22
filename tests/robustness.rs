@@ -339,7 +339,7 @@ fn json_reports_describe_coverage_and_include_hints() {
         vec!["context", "AGENTS.md", "--json"],
     ] {
         let report: Value = serde_json::from_str(&repo.run(&args)).unwrap();
-        assert!(!report["coverage"].as_str().unwrap().is_empty());
+        assert!(report["coverage"]["markdown_total"].as_u64().unwrap() > 0);
         assert!(report["hints"].is_array());
     }
 }

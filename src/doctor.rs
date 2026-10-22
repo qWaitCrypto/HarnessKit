@@ -37,6 +37,10 @@ pub(crate) struct DoctorReport {
     pub(crate) current_exe: Option<String>,
     pub(crate) path_contains_cli_dir: bool,
     pub(crate) hints: Vec<String>,
+    pub(crate) coverage: crate::discover::Coverage,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) schema_preview: Option<String>,
+    pub(crate) schema_written: bool,
 }
 
 pub(crate) fn build_doctor_report(target_dir: &Path) -> DoctorReport {
@@ -102,6 +106,9 @@ pub(crate) fn build_doctor_report(target_dir: &Path) -> DoctorReport {
         path_contains_cli_dir,
         current_exe: current_exe.as_ref().map(|path| absolute_display_path(path)),
         hints: Vec::new(),
+        coverage: Default::default(),
+        schema_preview: None,
+        schema_written: false,
     }
 }
 

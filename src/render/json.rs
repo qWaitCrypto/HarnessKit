@@ -7,6 +7,7 @@ use serde_json::value::RawValue;
 
 use crate::checks::{rule_group, CheckView};
 use crate::context::ContextPacket;
+use crate::discover::Coverage;
 use crate::doctor::DoctorReport;
 use crate::fs_utils::absolute_display_path;
 use crate::history::HistorySnapshot;
@@ -173,17 +174,37 @@ pub(crate) fn render_index_json(artifact: &IndexArtifact) -> String {
     to_json(artifact, false) + "\n"
 }
 
+pub(crate) fn render_covered_json<T: Serialize>(
+    result: &T,
+    coverage: &Coverage,
+    hints: &[String],
+) -> String {
+    #[derive(Serialize)]
+    struct Report<'a, T> {
+        #[serde(flatten)]
+        result: &'a T,
+        coverage: &'a Coverage,
+        hints: &'a [String],
+    }
+    to_json(
+        &Report {
+            result,
+            coverage,
+            hints,
+        },
+        false,
+    )
+}
+
 pub(crate) fn render_doctor_json(report: &DoctorReport) -> String {
     #[derive(Serialize)]
     struct Report<'a> {
         #[serde(flatten)]
         report: &'a DoctorReport,
-        coverage: &'a str,
         notes: [&'a str; 2],
     }
     to_json(&Report {
         report,
-        coverage: "Local environment and possible orphan HarnessKit state; the orphan scan skips symlinks, hidden directories, target and node_modules. Use check for document health.",
         notes: [
             ".harnesskit/state is derived and rebuildable; .harnesskit/history stores local doc checkpoints.",
             "If diagnostics do not point at the intended writable project root, pass the project root explicitly.",
@@ -196,6 +217,7 @@ pub(crate) fn render_check_json(
     docs_count: usize,
     relation_count: usize,
     checks: &[CheckView],
+    coverage: &Coverage,
     hints: &[String],
 ) -> String {
     #[derive(Serialize)]
@@ -216,7 +238,7 @@ pub(crate) fn render_check_json(
         docs_count: usize,
         relation_count: usize,
         checks: Vec<Check<'a>>,
-        coverage: &'a str,
+        coverage: &'a Coverage,
         hints: &'a [String],
     }
     let checks = checks
@@ -238,7 +260,7 @@ pub(crate) fn render_check_json(
             docs_count,
             relation_count,
             checks,
-            coverage: "Schema-managed documents only; other Markdown and external files are not checked. The orphan state scan skips symlinks, hidden directories, target and node_modules.",
+            coverage,
             hints,
         },
         false,
@@ -248,20 +270,21 @@ pub(crate) fn render_check_json(
 pub(crate) fn render_query_json(
     query_terms: &str,
     candidates: &[QueryCandidate],
+    coverage: &Coverage,
     hints: &[String],
 ) -> String {
     #[derive(Serialize)]
     struct Report<'a> {
         query: &'a str,
         candidates: &'a [QueryCandidate],
-        coverage: &'a str,
+        coverage: &'a Coverage,
         hints: &'a [String],
     }
     to_json(
         &Report {
             query: query_terms,
             candidates,
-            coverage: "Schema-managed documents in the fact store; other Markdown and external files are not searched.",
+            coverage,
             hints,
         },
         false,
@@ -272,6 +295,7 @@ pub(crate) fn render_context_packet_json(
     kind: &str,
     input: &str,
     packet: &ContextPacket,
+    coverage: &Coverage,
     hints: &[String],
 ) -> String {
     #[derive(Serialize)]
@@ -310,7 +334,7 @@ pub(crate) fn render_context_packet_json(
         same_scope_docs: &'a [String],
         #[serde(serialize_with = "serialize_inline")]
         recommended_reading_order: &'a [String],
-        coverage: &'a str,
+        coverage: &'a Coverage,
         hints: &'a [String],
     }
     to_json(
@@ -323,7 +347,7 @@ pub(crate) fn render_context_packet_json(
             collection_siblings: &packet.collection_siblings,
             same_scope_docs: &packet.same_scope_docs,
             recommended_reading_order: &packet.recommended_reading_order,
-            coverage: "Schema-managed documents and their indexed relations; other Markdown and external files are not included in this context packet.",
+            coverage,
             hints,
         },
         false,

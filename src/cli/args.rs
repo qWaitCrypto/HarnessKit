@@ -120,6 +120,12 @@ pub(crate) struct CommonArgs {
     pub(crate) tracked: bool,
     #[arg(long, action = clap::ArgAction::SetTrue, overrides_with = "preview")]
     pub(crate) preview: bool,
+    /// Explain document layout inference and coverage (doctor).
+    #[arg(long)]
+    pub(crate) layout: bool,
+    /// Persist inferred mappings; existing schemas require --force (doctor).
+    #[arg(long)]
+    pub(crate) write_schema: bool,
     #[arg(long, hide = true, action = clap::ArgAction::SetTrue, overrides_with = "cli_only")]
     cli_only: bool,
     #[arg(long, hide = true, action = clap::ArgAction::SetTrue, overrides_with = "no_claude")]

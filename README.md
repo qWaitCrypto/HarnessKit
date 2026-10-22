@@ -222,6 +222,54 @@ harnesskit list-docs    # All managed docs with metadata
 harnesskit rank         # Top 20 most-referenced docs
 ```
 
+Discovery scans all Markdown under `managed_root`, plus configured core files and
+entrypoints. It skips templates, hidden directories (including `.harnesskit`),
+symlinks, `target`, and `node_modules`. Flat documents become supporting `notes`;
+`reference`, `adr`/`adrs`, `plans`, `design`, `specs`, and `runbooks` map to the
+corresponding collection roles. Filenames containing `decision` or `plan`, or
+starting with `architecture`, also supply a role. Existing collection definitions
+take precedence over inference, and inferred notes require no collection index.
+
+When no schema or `--docs-root` is supplied and the default `docs/` is absent,
+discovery uses the repository root and treats otherwise unclassified Markdown as
+supporting notes. Discovery excludes nested projects (subdirectories containing
+`AGENTS.md`, `CLAUDE.md`, or `.harnesskit/`) by default, with reason
+`nested-project`. It also excludes `tests/fixtures/`, `testdata/`, and directories
+named `fixture` or `fixtures` under `examples/`, at any depth, with reason
+`fixture-dir` (which takes precedence for fixtures that are also nested projects).
+Other example documentation remains eligible. Explicit roots and existing schemas
+keep their configured scan scope; `include` can opt files back into management.
+
+Optional schema fields override inference without moving files. Globs are relative
+to the repository root; `*` matches within a directory, `**` spans directories.
+The first matching include wins; ignore takes precedence over all mappings.
+Includes override the default nested-project and fixture exclusions and can also
+select Markdown outside `managed_root`.
+
+```yaml
+include:
+  "docs/misc/**/*.md": notes
+  "research/*.md": references
+ignore:
+  - "docs/private/**"
+```
+
+`index`, `check`, `list-docs`, and `history snapshot` print a coverage summary and
+support `--json`. Coverage reports Markdown totals, managed/unmanaged/excluded
+counts, directory counts by status, and every mapping with its reason. Its ratio
+is `managed / (managed + unmanaged)` (0 for an empty scope); skipped trees are
+outside the total, and excluded counts default exclusions and explicit ignore
+matches. `hints` explain the scope and provide schema include snippets for unmanaged
+directories.
+
+`check` reports missing local link targets as `broken-link` errors, and existing
+unmanaged Markdown as one `unmanaged-docs` warning per directory. Existing files
+outside the docs root referenced by relative Markdown links or inline paths are
+hashed in the derived `external_refs` table. An `external-ref-changed` info finding
+names the referring document when those bytes change. It persists across commands
+until that document is updated; rebuilding state resets the hash baseline. External
+references are never added to history unless explicitly included as managed Markdown.
+
 #### Health Check
 
 ```bash
@@ -233,10 +281,15 @@ Validates all managed docs — missing required files, broken links, stale ancho
 #### Environment Diagnostics
 
 ```bash
-harnesskit doctor [--json]
+harnesskit doctor [--json] [--layout] [--write-schema] [--force]
 ```
 
 Checks the CLI, git, target path, `.harnesskit/state`, `.harnesskit/history`, installed agent skills, and PATH status. SQLite is bundled. Use this when first installing or when a sandboxed environment reports a read-only fact store.
+
+`--layout` explains the inferred mappings and coverage without creating an index.
+`--write-schema` saves them to `.harnesskit/schema.yaml`; when that file exists it
+only previews the proposed contents until `--force` is supplied. `--preview`
+always prevents the write. The schema retains existing rules and suppressions.
 
 Both `doctor` and `check` flag possible orphan `.harnesskit` directories whose parent has no configured docs root or entrypoints, including nested accidental targets. The scan skips symlinks, hidden directories, `target`, and `node_modules`, and respects nested projects' schemas. Verify the intended project root and preserve `.harnesskit/history` before cleaning up any state.
 
@@ -274,7 +327,7 @@ Only `init` may create a missing target directory; `init --preview` never writes
 
 For `history diff <a> <b> [target_dir]`, an explicit third argument is always the target. With two arguments, an existing directory is the target; `latest` or an existing local snapshot ID selects a second snapshot; other values are validated as targets. Use a third argument of `.` to unambiguously request a comparison with an unknown snapshot ID.
 
-JSON reports from `check`, `doctor`, `query`, `graph`, and `context` retain their existing result fields and add `coverage` (the scope of the command) and `hints` (actionable next steps). Diagnostics on stderr do not invalidate JSON on stdout.
+JSON reports from `index`, `check`, `list-docs`, `history snapshot`, `doctor`, `query`, `graph`, and `context` include structured `coverage` and `hints`. Query, graph and context still use only managed documents. Diagnostics on stderr do not invalidate JSON on stdout. The on-disk history snapshot format is unchanged; coverage on `history snapshot --json` describes that invocation.
 
 ## How the Skill Works
 

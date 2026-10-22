@@ -346,18 +346,6 @@ fn is_line_leading_backtick_run(chars: &[char], index: usize) -> bool {
 }
 
 fn extract_path_candidates(text: &str) -> Vec<String> {
-    let prefixes = [
-        "docs/",
-        "src/",
-        "tests/",
-        "test/",
-        "crates/",
-        "packages/",
-        "AGENTS.md",
-        "CLAUDE.md",
-        "ARCHITECTURE.md",
-        "README.md",
-    ];
     let mut paths = Vec::new();
     let mut seen = BTreeSet::new();
     for token in text.split(|c: char| {
@@ -365,14 +353,15 @@ fn extract_path_candidates(text: &str) -> Vec<String> {
     }) {
         let normalized = token
             .trim()
-            .trim_matches(|c: char| matches!(c, '.' | ':' | ',' | ')' | '(' | '"' | '\'' | '`'))
+            .trim_matches(|c: char| matches!(c, ':' | ',' | ')' | '(' | '"' | '\'' | '`'))
             .trim_end_matches('/')
-            .trim_start_matches("./")
             .to_string();
         if normalized.len() < 3 {
             continue;
         }
-        if prefixes.iter().any(|prefix| normalized.starts_with(prefix))
+        if (normalized.contains('/') || normalized.ends_with(".md"))
+            && !normalized.contains("://")
+            && !normalized.starts_with('/')
             && seen.insert(normalized.clone())
         {
             paths.push(normalized);

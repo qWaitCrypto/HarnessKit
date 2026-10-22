@@ -1,4 +1,5 @@
 mod contamination;
+mod coverage;
 mod duplicate;
 mod frontmatter;
 mod history;
@@ -48,7 +49,7 @@ pub(crate) fn build_index_checks(
     repo_root: &Path,
     docs: &[IndexedDoc],
     relations: &[DocRelation],
-) -> Vec<IndexCheck> {
+) -> crate::Result<Vec<IndexCheck>> {
     let mut checks = build_manifest_checks(schema, docs, relations);
 
     if schema.rules.stale_explicit_anchor.unwrap_or(false) {
@@ -64,8 +65,9 @@ pub(crate) fn build_index_checks(
         add_frontmatter_constraint_checks(schema, docs, &mut checks);
     }
     add_history_checks(schema, repo_root, &mut checks);
+    coverage::add_coverage_checks(schema, repo_root, docs, &mut checks)?;
 
-    checks
+    Ok(checks)
 }
 
 fn push_check(
@@ -134,7 +136,8 @@ pub(crate) fn rule_group(rule_id: &str) -> String {
         | "missing-collection-index"
         | "entrypoint-manifest-link"
         | "manifest-missing-doc"
-        | "unresolved-managed-link"
+        | "broken-link"
+        | "unmanaged-docs"
         | "wrong-docs-navigation-target"
         | "orphan-managed-doc" => "manifest".to_string(),
         "stale-explicit-anchor" | "missing-scope-path" => "stale".to_string(),

@@ -10,7 +10,7 @@ use std::{env, fs};
 
 use crate::checks::filter_and_suppress_checks;
 use crate::context::{context_packet_for_doc, doc_exists};
-use crate::discover::{orphan_state_hints, project_hint};
+use crate::discover::{discover_docs, orphan_state_hints, project_hint};
 use crate::doctor::build_doctor_report;
 use crate::fs_utils::{ensure_dir, now_unix, validate_target_dir};
 use crate::git::ensure_host_git_exclude;
@@ -102,24 +102,31 @@ fn run_init(args: &TargetArgs) -> Result<()> {
 fn run_index(args: &TargetArgs) -> Result<()> {
     let context = load_engine_context(args)?;
     refresh_fact_store(&context)?;
-    let target_dir = context.target_dir;
-    let db = open_fact_store(&target_dir)?;
+    let target_dir = &context.target_dir;
+    let db = open_fact_store(target_dir)?;
     let doc_count = scalar_count(&db, "SELECT COUNT(*) FROM docs;")?;
     let relation_count = scalar_count(&db, "SELECT COUNT(*) FROM relations;")?;
 
-    print_index_result(&target_dir, doc_count, relation_count);
+    let artifact = crate::index::read_index_artifact_from_fact_store(&db)?;
+    if args.options.json {
+        println!("{}", crate::render::render_index_json(&artifact));
+    } else {
+        print_index_result(target_dir, doc_count, relation_count);
+        print_coverage(&artifact.coverage, &artifact.hints);
+    }
     Ok(())
 }
 
 fn run_check(args: &TargetArgs) -> Result<()> {
     let context = load_engine_context(args)?;
     let options = command_options(&args.options, Some(&context.schema));
-    let mut hints = project_hints(&context);
+    let coverage = discover_docs(&context.target_dir, &context.schema)?;
     let orphan_hints = orphan_state_hints(&context.target_dir, &context.schema)?;
-    hints.extend(orphan_hints.iter().cloned());
     refresh_fact_store(&context)?;
-    let target_dir = context.target_dir;
-    let db = open_fact_store(&target_dir)?;
+    let target_dir = &context.target_dir;
+    let db = open_fact_store(target_dir)?;
+    let mut hints = indexed_hints(&context, &db)?;
+    hints.extend(orphan_hints);
     let docs_count = scalar_count(&db, "SELECT COUNT(*) FROM docs;")?;
     let relation_count = scalar_count(&db, "SELECT COUNT(*) FROM relations;")?;
     let check_rows = db.query(
@@ -141,7 +148,14 @@ fn run_check(args: &TargetArgs) -> Result<()> {
     if options.json {
         println!(
             "{}",
-            render_check_json(&target_dir, docs_count, relation_count, &checks, &hints)
+            render_check_json(
+                target_dir,
+                docs_count,
+                relation_count,
+                &checks,
+                &coverage,
+                &hints
+            )
         );
         if error_count > 0 || (options.strict && warning_count > 0) {
             std::process::exit(1);
@@ -150,9 +164,7 @@ fn run_check(args: &TargetArgs) -> Result<()> {
     }
 
     print_check_output(&target_dir, docs_count, relation_count, &checks);
-    for hint in orphan_hints {
-        println!("Hint: {}", hint);
-    }
+    print_coverage(&coverage, &hints);
 
     if error_count > 0 || (options.strict && warning_count > 0) {
         std::process::exit(1);
@@ -166,12 +178,52 @@ fn run_doctor(args: &TargetArgs) -> Result<()> {
     let json = args.options.json;
     let mut report = build_doctor_report(&context.target_dir);
     report.hints = orphan_state_hints(&context.target_dir, &context.schema)?;
+    report.coverage = discover_docs(&context.target_dir, &context.schema)?;
+    report.hints.extend(project_hints(&context)?);
+    if args.options.write_schema {
+        let mut schema = context.schema.clone();
+        for mapping in &report.coverage.mappings {
+            if mapping.status == "managed" && !mapping.reason.starts_with("schema") {
+                if let Some(collection) = &mapping.collection {
+                    schema.include.push(crate::schema::IncludeSpec {
+                        pattern: globset::escape(&mapping.path),
+                        collection: collection.clone(),
+                    });
+                }
+            }
+        }
+        let text = render_schema_copy(&schema);
+        let path = context.target_dir.join(".harnesskit/schema.yaml");
+        if args.options.preview || (path.exists() && !args.options.force) {
+            report.hints.push("Schema preview only; use doctor --layout --write-schema --force to replace the existing schema.".to_string());
+        } else {
+            fs::create_dir_all(path.parent().unwrap())?;
+            fs::write(&path, &text)?;
+            report.schema_written = true;
+            report.hints.push("Wrote .harnesskit/schema.yaml with the inferred mappings; run check to review the resulting coverage.".to_string());
+        }
+        report.schema_preview = Some(text);
+    }
 
     if json {
-        report.hints.extend(project_hints(&context));
         println!("{}", render_doctor_json(&report));
     } else {
         print_doctor_report(&report);
+        println!("{}", report.coverage.summary());
+        if args.options.layout || args.options.write_schema {
+            for mapping in &report.coverage.mappings {
+                println!(
+                    "- {} [{}] {}: {}",
+                    mapping.path,
+                    mapping.status,
+                    mapping.role.as_deref().unwrap_or("-"),
+                    mapping.reason
+                );
+            }
+        }
+        if let Some(preview) = &report.schema_preview {
+            println!("{}", preview);
+        }
     }
     if !report.state_writable {
         return Err(report
@@ -255,7 +307,20 @@ fn run_list_docs(args: &TargetArgs) -> Result<()> {
          FROM docs
          ORDER BY path ASC;", [])?;
 
-    print_list_docs_rows(&result);
+    let artifact = crate::index::read_index_artifact_from_fact_store(&db)?;
+    if args.options.json {
+        println!(
+            "{}",
+            crate::render::render_covered_json(
+                &serde_json::json!({"docs": artifact.docs}),
+                &artifact.coverage,
+                &artifact.hints
+            )
+        );
+    } else {
+        print_list_docs_rows(&result);
+        print_coverage(&artifact.coverage, &artifact.hints);
+    }
     Ok(())
 }
 
@@ -330,7 +395,12 @@ fn run_query(args: &InputArgs) -> Result<()> {
     if options.json {
         println!(
             "{}",
-            render_query_json(&query_terms, &candidates, &project_hints(&context))
+            render_query_json(
+                &query_terms,
+                &candidates,
+                &discover_docs(&context.target_dir, &context.schema)?,
+                &indexed_hints(&context, &db)?
+            )
         );
     } else {
         print_query_candidates(&query_terms, &candidates);
@@ -349,7 +419,13 @@ fn run_graph(args: &InputArgs) -> Result<()> {
     if options.json {
         println!(
             "{}",
-            render_context_packet_json("graph", &doc_path, &packet, &project_hints(&context))
+            render_context_packet_json(
+                "graph",
+                &doc_path,
+                &packet,
+                &discover_docs(&context.target_dir, &context.schema)?,
+                &indexed_hints(&context, &db)?
+            )
         );
     } else {
         print_context_packet("Graph", &doc_path, &packet);
@@ -381,7 +457,13 @@ fn run_context(args: &InputArgs) -> Result<()> {
     if options.json {
         println!(
             "{}",
-            render_context_packet_json("context", &input, &packet, &project_hints(&context))
+            render_context_packet_json(
+                "context",
+                &input,
+                &packet,
+                &discover_docs(&context.target_dir, &context.schema)?,
+                &indexed_hints(&context, &db)?
+            )
         );
     } else {
         print_context_packet("Context", &input, &packet);
@@ -409,7 +491,18 @@ fn run_history_snapshot(args: &TargetArgs) -> Result<()> {
         .unwrap_or_else(|| "snapshot".to_string());
     let context = load_engine_context(args)?;
     let snapshot = create_history_snapshot(&context.target_dir, &context.schema, &message)?;
-    print_history_snapshot_result(&snapshot);
+    let coverage = discover_docs(&context.target_dir, &context.schema)?;
+    let hints = project_hints(&context)?;
+    if args.options.json {
+        // Coverage describes this invocation; S4 does not change the on-disk snapshot format.
+        println!(
+            "{}",
+            crate::render::render_covered_json(&snapshot, &coverage, &hints)
+        );
+    } else {
+        print_history_snapshot_result(&snapshot);
+        print_coverage(&coverage, &hints);
+    }
     Ok(())
 }
 
@@ -538,6 +631,16 @@ pub(crate) fn load_engine_context(args: &TargetArgs) -> Result<EngineContext> {
         schema.managed_root = docs_root.clone();
         rewrite_docs_root_bound_paths(&mut schema, &original_managed_root, docs_root);
     }
+    if args.options.schema.is_empty()
+        && docs_root_override.is_none()
+        && !target_dir.join(".harnesskit/schema.yaml").exists()
+        && !target_dir.join(&schema.managed_root).exists()
+    {
+        let old_root = schema.managed_root.clone();
+        schema.inferred_root = Some(old_root.clone());
+        schema.managed_root = ".".to_string();
+        rewrite_docs_root_bound_paths(&mut schema, &old_root, ".");
+    }
     print_project_hint(&target_dir, &schema);
 
     Ok(EngineContext { target_dir, schema })
@@ -549,10 +652,29 @@ fn print_project_hint(target_dir: &Path, schema: &Schema) {
     }
 }
 
-fn project_hints(context: &EngineContext) -> Vec<String> {
-    project_hint(&context.target_dir, &context.schema)
-        .into_iter()
-        .collect()
+fn project_hints(context: &EngineContext) -> Result<Vec<String>> {
+    let mut hints = discover_docs(&context.target_dir, &context.schema)?.hints();
+    hints.extend(project_hint(&context.target_dir, &context.schema));
+    Ok(hints)
+}
+
+fn indexed_hints(
+    context: &EngineContext,
+    db: &crate::sqlite::SqliteConnection,
+) -> Result<Vec<String>> {
+    let mut hints: Vec<String> = crate::index::meta_value(db, "coverage_hints")?
+        .map(|text| serde_json::from_str(&text))
+        .transpose()?
+        .unwrap_or_default();
+    hints.extend(project_hint(&context.target_dir, &context.schema));
+    Ok(hints)
+}
+
+fn print_coverage(coverage: &crate::discover::Coverage, hints: &[String]) {
+    println!("{}", coverage.summary());
+    for hint in hints {
+        println!("Hint: {}", hint);
+    }
 }
 
 pub(crate) fn run() -> Result<()> {

@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::{env, fs};
 
-use crate::fs_utils::absolute_display_path;
+use crate::fs_utils::{absolute_display_path, normalize_path};
 use crate::Result;
 
 pub(crate) const BUNDLED_SCHEMA_PATH: &str = "schemas/file-first-v0.yaml";
@@ -20,6 +20,16 @@ pub(crate) struct Schema {
     pub(crate) doc_collections: Vec<DocCollectionSpec>,
     pub(crate) rules: Rules,
     pub(crate) suppressions: Vec<SuppressionSpec>,
+    pub(crate) include: Vec<IncludeSpec>,
+    pub(crate) ignore: Vec<String>,
+    // Runtime-only explanation of zero-config root inference, never a schema key.
+    pub(crate) inferred_root: Option<String>,
+}
+
+#[derive(Clone)]
+pub(crate) struct IncludeSpec {
+    pub(crate) pattern: String,
+    pub(crate) collection: String,
 }
 
 #[derive(Default, Clone)]
@@ -88,6 +98,8 @@ enum Section {
     DocCollections,
     Rules,
     Suppressions,
+    Include,
+    Ignore,
 }
 
 pub(crate) fn managed_memory_paths(schema: &Schema) -> Vec<String> {
@@ -174,7 +186,7 @@ pub(crate) fn parse_schema(text: &str) -> Result<Schema> {
         if raw_line.contains('\t') {
             return Err("invalid schema: tab indentation is not supported; use spaces".into());
         }
-        let line_without_comment = raw_line.split('#').next().unwrap_or("").trim_end();
+        let line_without_comment = strip_schema_comment(raw_line).trim_end();
         if line_without_comment.trim().is_empty() {
             continue;
         }
@@ -197,6 +209,8 @@ pub(crate) fn parse_schema(text: &str) -> Result<Schema> {
                         "doc_collections" => Section::DocCollections,
                         "rules" => Section::Rules,
                         "suppressions" => Section::Suppressions,
+                        "include" => Section::Include,
+                        "ignore" => Section::Ignore,
                         other => {
                             return Err(
                                 format!("invalid schema: unknown section `{}`", other).into()
@@ -207,6 +221,7 @@ pub(crate) fn parse_schema(text: &str) -> Result<Schema> {
                     match key.as_str() {
                         "schema_version" => schema.schema_version = parse_u32(&value)?,
                         "managed_root" => schema.managed_root = value,
+                        "ignore" => schema.ignore = parse_inline_list(&value),
                         other => {
                             return Err(format!(
                                 "invalid schema: unknown top-level key `{}`",
@@ -220,6 +235,20 @@ pub(crate) fn parse_schema(text: &str) -> Result<Schema> {
                 }
             }
             2 => match section {
+                Section::Include => {
+                    let (pattern, collection) = parse_key_value(trimmed)
+                        .ok_or("invalid schema: include expects glob: collection")?;
+                    schema.include.push(IncludeSpec {
+                        pattern: unquote(&pattern)?,
+                        collection: unquote(&collection)?,
+                    });
+                }
+                Section::Ignore => {
+                    let pattern = trimmed
+                        .strip_prefix("- ")
+                        .ok_or("invalid schema: ignore expects a list of globs")?;
+                    schema.ignore.push(unquote(pattern)?);
+                }
                 Section::EntryPoints => {
                     if let Some((key, value)) = parse_key_value(trimmed) {
                         match key.as_str() {
@@ -387,7 +416,11 @@ pub(crate) fn parse_schema(text: &str) -> Result<Schema> {
                         .into());
                     }
                 }
-                Section::Rules | Section::EntryPoints | Section::None => {
+                Section::Rules
+                | Section::EntryPoints
+                | Section::None
+                | Section::Include
+                | Section::Ignore => {
                     return Err(
                         format!("invalid schema: unexpected indentation for `{}`", trimmed).into(),
                     )
@@ -427,9 +460,56 @@ fn flush_suppression(schema: &mut Schema, current: &mut Option<SuppressionSpec>)
     }
 }
 
+fn unquoted_delimiter(line: &str, delimiter: char) -> Option<usize> {
+    let mut quote = None;
+    let mut escaped = false;
+    for (index, ch) in line.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' && quote == Some('"') {
+            escaped = true;
+            continue;
+        }
+        if quote == Some(ch) {
+            quote = None;
+        } else if quote.is_none() && matches!(ch, '\'' | '"') {
+            quote = Some(ch);
+        } else if quote.is_none() && ch == delimiter {
+            return Some(index);
+        }
+    }
+    None
+}
+
+fn strip_schema_comment(line: &str) -> &str {
+    unquoted_delimiter(line, '#')
+        .map(|index| &line[..index])
+        .unwrap_or(line)
+}
+
 fn parse_key_value(line: &str) -> Option<(String, String)> {
-    let (key, value) = line.split_once(':')?;
-    Some((key.trim().to_string(), value.trim().to_string()))
+    let index = unquoted_delimiter(line, ':')?;
+    Some((
+        line[..index].trim().to_string(),
+        line[index + 1..].trim().to_string(),
+    ))
+}
+
+fn unquote(value: &str) -> Result<String> {
+    if value.starts_with('"') {
+        Ok(serde_json::from_str(value)?)
+    } else {
+        Ok(value.trim_matches('\'').replace("''", "'"))
+    }
+}
+
+pub(crate) fn glob_matcher(pattern: &str) -> Result<globset::GlobMatcher> {
+    Ok(globset::GlobBuilder::new(pattern)
+        .literal_separator(true)
+        .build()?
+        .compile_matcher())
 }
 
 fn parse_item_header(line: &str, kind: &str) -> Result<String> {
@@ -500,7 +580,7 @@ pub(crate) fn rewrite_docs_root_bound_paths(schema: &mut Schema, old_root: &str,
 fn rewrite_rooted_path(path: String, old_root: &str, new_root: &str) -> String {
     let old_prefix = format!("{}/", old_root.trim_end_matches('/'));
     if let Some(suffix) = path.strip_prefix(&old_prefix) {
-        format!("{}/{}", new_root.trim_end_matches('/'), suffix)
+        normalize_path(&Path::new(new_root).join(suffix))
     } else if path == old_root {
         new_root.to_string()
     } else {
@@ -509,6 +589,37 @@ fn rewrite_rooted_path(path: String, old_root: &str, new_root: &str) -> String {
 }
 
 fn validate_schema(schema: &Schema) -> Result<()> {
+    for pattern in schema
+        .ignore
+        .iter()
+        .chain(schema.include.iter().map(|item| &item.pattern))
+    {
+        glob_matcher(pattern)
+            .map_err(|error| format!("invalid schema glob {:?}: {}", pattern, error))?;
+    }
+    for item in &schema.include {
+        if !schema
+            .doc_collections
+            .iter()
+            .any(|spec| spec.name == item.collection)
+            && !matches!(
+                item.collection.as_str(),
+                "notes"
+                    | "references"
+                    | "decisions"
+                    | "exec_plans"
+                    | "design_docs"
+                    | "product_specs"
+                    | "operations"
+            )
+        {
+            return Err(format!(
+                "invalid schema: unknown include collection {:?}",
+                item.collection
+            )
+            .into());
+        }
+    }
     if schema.managed_root.trim().is_empty() {
         return Err("invalid schema: managed_root is empty".into());
     }
@@ -734,6 +845,24 @@ pub(crate) fn render_schema_copy(schema: &Schema) -> String {
         }
     }
 
+    if !schema.include.is_empty() {
+        lines.push(String::new());
+        lines.push("include:".to_string());
+        for item in &schema.include {
+            lines.push(format!(
+                "  {}: {}",
+                serde_json::to_string(&item.pattern).unwrap(),
+                item.collection
+            ));
+        }
+    }
+    if !schema.ignore.is_empty() {
+        lines.push(String::new());
+        lines.push("ignore:".to_string());
+        for pattern in &schema.ignore {
+            lines.push(format!("  - {}", serde_json::to_string(pattern).unwrap()));
+        }
+    }
     lines.join("\n") + "\n"
 }
 
@@ -756,7 +885,7 @@ fn push_optional_bool_line(lines: &mut Vec<String>, indent: usize, key: &str, va
 pub(crate) fn core_file_rel_path(schema: &Schema, spec: &CoreFileSpec) -> String {
     spec.root_path
         .clone()
-        .unwrap_or_else(|| format!("{}/{}", schema.managed_root, spec.path))
+        .unwrap_or_else(|| normalize_path(&Path::new(&schema.managed_root).join(&spec.path)))
 }
 
 pub(crate) fn configured_architecture_path(schema: &Schema) -> Option<String> {

@@ -3,6 +3,7 @@ mod cli;
 mod context;
 mod discover;
 mod doctor;
+mod external_refs;
 mod fs_utils;
 mod git;
 mod history;

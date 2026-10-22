@@ -1,8 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::checks::{push_check, IndexCheck};
+use crate::discover::is_ignored;
+use crate::fs_utils::normalize_path;
 use crate::index::{is_navigation_doc, DocRelation, IndexedDoc};
-use crate::schema::Schema;
+use crate::schema::{core_file_rel_path, Schema};
 
 fn add_manifest_constraint_checks(
     schema: &Schema,
@@ -32,10 +34,7 @@ fn add_manifest_constraint_checks(
             continue;
         }
         let is_core = schema.core_files.iter().any(|spec| {
-            let expected = spec
-                .root_path
-                .clone()
-                .unwrap_or_else(|| format!("{}/{}", schema.managed_root, spec.path));
+            let expected = core_file_rel_path(schema, spec);
             expected == doc.path
         });
         let should_be_manifested = is_core || doc.path.ends_with("/index.md");
@@ -53,16 +52,6 @@ fn add_manifest_constraint_checks(
 
     for doc in docs.iter().filter(|doc| is_navigation_doc(doc)) {
         for link in &doc.links {
-            if link.ends_with(".md") && !doc_map.contains_key(link) {
-                push_check(
-                    checks,
-                    "unresolved-managed-link",
-                    "warning",
-                    &doc.path,
-                    &format!("{} links to missing managed doc {}", doc.path, link),
-                    &[("source", &doc.path), ("target", link)],
-                );
-            }
             if link.starts_with(&format!("{}/", schema.managed_root)) && !link.ends_with(".md") {
                 push_check(
                     checks,
@@ -97,7 +86,7 @@ pub(super) fn build_manifest_checks(
         ("architecture", schema.entrypoints.architecture.as_deref()),
     ] {
         if let Some(path) = entrypoint_path {
-            if !doc_map.contains_key(path) {
+            if !doc_map.contains_key(path) && !is_ignored(schema, path) {
                 push_check(
                     &mut checks,
                     "missing-entrypoint-doc",
@@ -114,12 +103,8 @@ pub(super) fn build_manifest_checks(
     }
 
     for spec in &schema.core_files {
-        let rel_path = if let Some(root_path) = &spec.root_path {
-            root_path.clone()
-        } else {
-            format!("{}/{}", schema.managed_root, spec.path)
-        };
-        if spec.required && !doc_map.contains_key(&rel_path) {
+        let rel_path = core_file_rel_path(schema, spec);
+        if spec.required && !doc_map.contains_key(&rel_path) && !is_ignored(schema, &rel_path) {
             push_check(
                 &mut checks,
                 "missing-required-doc",
@@ -133,8 +118,14 @@ pub(super) fn build_manifest_checks(
 
     if schema.rules.index_required.unwrap_or(false) {
         for spec in &schema.doc_collections {
-            let collection_index_path = format!("{}/{}/index.md", schema.managed_root, spec.path);
-            if !doc_map.contains_key(&collection_index_path) {
+            let collection_index_path = normalize_path(
+                &std::path::Path::new(&schema.managed_root)
+                    .join(&spec.path)
+                    .join("index.md"),
+            );
+            if !doc_map.contains_key(&collection_index_path)
+                && !is_ignored(schema, &collection_index_path)
+            {
                 push_check(
                     &mut checks,
                     "missing-collection-index",
@@ -158,7 +149,7 @@ pub(super) fn build_manifest_checks(
             let points_to_manifest = relations
                 .iter()
                 .any(|relation| relation.src_path == path && relation.dst_path == manifest_path);
-            if !points_to_manifest {
+            if !points_to_manifest && !is_ignored(schema, &manifest_path) {
                 push_check(
                     &mut checks,
                     "entrypoint-manifest-link",

@@ -7,8 +7,8 @@ use serde::Serialize;
 
 use crate::checks::{build_index_checks, IndexCheck};
 use crate::discover::{
-    collect_managed_doc_paths, collection_lookup, collection_name_for_path, infer_index_role,
-    is_anchor_candidate, is_entrypoint_path,
+    collect_managed_doc_paths, collection_lookup, collection_name_for_path, default_authority,
+    discover_docs, infer_index_role, is_anchor_candidate, is_entrypoint_path, Coverage,
 };
 use crate::fs_utils::{
     absolute_display_path, ensure_writable_fact_store_dir, fact_store_path_hint,
@@ -22,7 +22,7 @@ use crate::schema::{DocCollectionSpec, Schema};
 use crate::sqlite::{QueryResult, SqliteConnection};
 use crate::Result;
 
-pub(crate) const FACT_SCHEMA_VERSION: &str = "3";
+pub(crate) const FACT_SCHEMA_VERSION: &str = "4";
 
 #[derive(Clone, Default, Serialize)]
 pub(crate) struct IndexedDoc {
@@ -86,6 +86,9 @@ pub(crate) struct IndexArtifact {
     pub(crate) docs: Vec<IndexedDoc>,
     pub(crate) relations: Vec<DocRelation>,
     pub(crate) checks: Vec<IndexCheck>,
+    pub(crate) coverage: Coverage,
+    pub(crate) hints: Vec<String>,
+    pub(crate) external_refs: Vec<crate::external_refs::ExternalRef>,
 }
 
 pub(crate) struct EngineContext {
@@ -115,69 +118,21 @@ pub(crate) fn build_index_artifact(target_dir: &Path, schema: &Schema) -> Result
     let mut doc_paths = collect_managed_doc_paths(&repo_root, schema)?;
     doc_paths.sort();
 
-    let mut parsed_docs = Vec::new();
     let mut docs = Vec::new();
-    let mut path_set = BTreeSet::new();
+    let path_set = doc_paths.iter().cloned().collect::<BTreeSet<_>>();
     let collection_by_path = collection_lookup(schema);
-
     for rel_path in &doc_paths {
-        path_set.insert(rel_path.clone());
-        let abs = repo_root.join(rel_path);
-        let text = read_text_lossy(&abs)?;
-        let parsed = parse_doc_text(rel_path, &text);
-        let metadata = fs::metadata(&abs)?;
-        let (mtime_unix, mtime_ns) = file_modified_parts(&metadata)?;
-        let collection = collection_name_for_path(schema, rel_path);
-        let authority = parsed.frontmatter.get("authority").cloned().or_else(|| {
-            collection.as_ref().and_then(|name| {
-                collection_by_path
-                    .get(name)
-                    .and_then(|spec| spec.authority.clone())
-            })
-        });
-        let status = parsed.frontmatter.get("status").cloned().or_else(|| {
-            collection.as_ref().and_then(|name| {
-                collection_by_path
-                    .get(name)
-                    .and_then(|spec| spec.status.clone())
-            })
-        });
-        let role = infer_index_role(schema, rel_path, collection.as_deref());
-        let is_generated = authority.as_deref() == Some("generated");
-        let is_reference = authority.as_deref() == Some("reference");
-
-        docs.push(IndexedDoc {
-            path: rel_path.clone(),
-            title: parsed.title.clone().unwrap_or_else(|| rel_path.clone()),
-            summary: parsed.summary.clone(),
-            frontmatter_keys: parsed.frontmatter.keys().cloned().collect(),
-            content_text: parsed.body_text.clone(),
-            role,
-            status,
-            authority,
-            collection,
-            headings: parsed.headings.clone(),
-            links: parsed.links.clone(),
-            path_mentions: parsed.path_mentions.clone(),
-            scope_paths: parsed.scope_paths.clone(),
-            supersedes: parsed.supersedes.clone(),
-            incoming_links: 0,
-            outgoing_links: 0,
-            is_entrypoint: is_entrypoint_path(schema, rel_path),
-            is_anchor_candidate: is_anchor_candidate(schema, rel_path),
-            is_generated,
-            is_reference,
-            content_hash: simple_content_hash(&text),
-            file_size_bytes: metadata.len(),
-            mtime_unix,
-            mtime_ns,
-        });
-        parsed_docs.push(parsed);
+        docs.push(load_indexed_doc(
+            &repo_root,
+            schema,
+            &collection_by_path,
+            rel_path,
+        )?);
     }
 
     let mut relations = build_doc_relations(schema, &docs, &path_set);
     annotate_link_counts(&mut docs, &relations);
-    let checks = build_index_checks(schema, &repo_root, &docs, &relations);
+    let checks = build_index_checks(schema, &repo_root, &docs, &relations)?;
     let history_status = compute_history_status(&repo_root, schema).unwrap_or_default();
     let host_git = host_git_info(&repo_root, HostGitMode::Full);
     relations.sort_by(|a, b| {
@@ -187,7 +142,11 @@ pub(crate) fn build_index_artifact(target_dir: &Path, schema: &Schema) -> Result
             .then_with(|| a.relation_type.cmp(&b.relation_type))
     });
 
+    let coverage = discover_docs(&repo_root, schema)?;
     Ok(IndexArtifact {
+        hints: coverage.hints(),
+        coverage,
+        external_refs: Vec::new(),
         repo_root: absolute_display_path(&repo_root),
         managed_root: schema.managed_root.clone(),
         generated_at_unix: now_unix(),
@@ -312,6 +271,97 @@ pub(crate) fn scalar_count(db: &SqliteConnection, sql: &str) -> Result<usize> {
 }
 
 pub(crate) fn refresh_fact_store(context: &EngineContext) -> Result<()> {
+    let schema_fingerprint = simple_content_hash(&format!(
+        "{}{:?}",
+        crate::schema::render_schema_copy(&context.schema),
+        context.schema.inferred_root
+    ));
+    let database = context.target_dir.join(".harnesskit/state/facts.sqlite");
+    if database.exists() {
+        let db = open_fact_store(&context.target_dir)?;
+        initialize_fact_store(&db)?;
+        if meta_value(&db, "schema_fingerprint")?
+            .map(|value| value != schema_fingerprint)
+            .unwrap_or(false)
+        {
+            drop(db);
+            rebuild_fact_store_full(context)?;
+        }
+    }
+    refresh_doc_facts(context)?;
+    let db = open_fact_store(&context.target_dir)?;
+    let mut artifact = read_index_artifact_from_fact_store(&db)?;
+    let coverage = discover_docs(&context.target_dir, &context.schema)?;
+    let (external_refs, external_checks) = crate::external_refs::refresh_external_refs(
+        &db,
+        &context.target_dir,
+        &context.schema,
+        &artifact.docs,
+    )?;
+    // Discovery and linked-file existence can change without a managed doc edit.
+    let link_states = artifact
+        .docs
+        .iter()
+        .flat_map(|doc| doc.links.iter())
+        .map(|path| (path, context.target_dir.join(path).exists()))
+        .collect::<Vec<_>>();
+    let fingerprint = simple_content_hash(&serde_json::to_string(&(
+        &coverage,
+        &external_refs,
+        link_states,
+    ))?);
+    if meta_value(&db, "discovery_fingerprint")?.as_deref() != Some(&fingerprint) {
+        artifact.checks = build_index_checks(
+            &context.schema,
+            &context.target_dir,
+            &artifact.docs,
+            &artifact.relations,
+        )?;
+        artifact.checks.extend(external_checks);
+        artifact.coverage = coverage;
+        artifact.hints = artifact.coverage.hints();
+        for check in artifact
+            .checks
+            .iter()
+            .filter(|check| check.rule_id == "unmanaged-docs")
+        {
+            if !artifact
+                .hints
+                .iter()
+                .any(|hint| hint.contains(&check.message))
+            {
+                artifact.hints.push(check.message.clone());
+            }
+        }
+        artifact.hints.push(format!("{} external file reference(s) hashed outside managed_root; these files are not included in history. A changed-reference notice persists until its referring document is updated. Rebuilding derived state resets this hash baseline.", external_refs.len()));
+        artifact.external_refs = external_refs;
+        db.transaction(|db| {
+            db.exec("DELETE FROM checks;")?;
+            for check in &artifact.checks {
+                insert_check(db, check)?;
+            }
+            for (key, value) in [
+                ("coverage", serde_json::to_string(&artifact.coverage)?),
+                ("coverage_hints", serde_json::to_string(&artifact.hints)?),
+                ("discovery_fingerprint", fingerprint),
+            ] {
+                db.execute(
+                    "INSERT OR REPLACE INTO meta(key, value) VALUES (?1, ?2);",
+                    params![key, value],
+                )?;
+            }
+            Ok(())
+        })?;
+        write_index_artifact(&context.target_dir, &artifact)?;
+    }
+    db.execute(
+        "INSERT OR REPLACE INTO meta(key, value) VALUES ('schema_fingerprint', ?1);",
+        [&schema_fingerprint],
+    )?;
+    Ok(())
+}
+
+fn refresh_doc_facts(context: &EngineContext) -> Result<()> {
     let db_path = context
         .target_dir
         .join(".harnesskit")
@@ -402,7 +452,7 @@ fn refresh_fact_store_metadata(
         &repo_root,
         &artifact.docs,
         &artifact.relations,
-    );
+    )?;
     replace_checks_and_meta(
         db,
         &absolute_display_path(&repo_root),
@@ -439,6 +489,7 @@ fn fact_store_is_compatible(db: &SqliteConnection) -> Result<bool> {
         "checks",
         "scope_paths",
         "supersedes",
+        "external_refs",
     ];
     for table in required_tables {
         let exists = db.query(
@@ -649,7 +700,7 @@ fn apply_fact_store_delta(context: &EngineContext, delta: &FactStoreDelta) -> Re
     });
     annotate_link_counts(&mut artifact.docs, &relations);
     update_doc_link_counts_in_db(&db, &artifact.docs)?;
-    let checks = build_index_checks(&context.schema, &repo_root, &artifact.docs, &relations);
+    let checks = build_index_checks(&context.schema, &repo_root, &artifact.docs, &relations)?;
     replace_checks_and_meta(
         &db,
         &artifact.repo_root,
@@ -661,6 +712,8 @@ fn apply_fact_store_delta(context: &EngineContext, delta: &FactStoreDelta) -> Re
         &host_git,
         &checks,
     )?;
+    artifact.coverage = discover_docs(&repo_root, &context.schema)?;
+    artifact.hints = artifact.coverage.hints();
     artifact.relations = relations;
     artifact.checks = checks;
     write_index_artifact(&context.target_dir, &artifact)?;
@@ -759,6 +812,14 @@ fn initialize_fact_store(db: &SqliteConnection) -> Result<()> {
             message TEXT NOT NULL,
             evidence_json TEXT NOT NULL DEFAULT '{}'
          );
+         CREATE TABLE IF NOT EXISTS external_refs (
+            source_path TEXT NOT NULL,
+            target_path TEXT NOT NULL,
+            source_hash TEXT NOT NULL,
+            content_hash TEXT NOT NULL,
+            observed_hash TEXT NOT NULL,
+            PRIMARY KEY (source_path, target_path)
+         );
          CREATE TABLE IF NOT EXISTS scope_paths (
             doc_path TEXT NOT NULL,
             scope_path TEXT NOT NULL
@@ -802,6 +863,7 @@ fn load_indexed_doc(
             collection_by_path
                 .get(name)
                 .and_then(|spec| spec.authority.clone())
+                .or_else(|| default_authority(name))
         })
     });
     let status = parsed.frontmatter.get("status").cloned().or_else(|| {
@@ -956,7 +1018,13 @@ fn collection_index_for_doc(schema: &Schema, doc: &IndexedDoc) -> Option<String>
         .doc_collections
         .iter()
         .find(|item| item.name == collection)?;
-    Some(format!("{}/{}/index.md", schema.managed_root, spec.path))
+    let prefix = format!(
+        "{}/",
+        crate::fs_utils::normalize_path(&Path::new(&schema.managed_root).join(&spec.path))
+    );
+    doc.path
+        .starts_with(&prefix)
+        .then(|| format!("{}index.md", prefix))
 }
 
 fn replace_relations_for_sources(
@@ -1309,6 +1377,12 @@ pub(crate) fn read_index_artifact_from_fact_store(db: &SqliteConnection) -> Resu
         .collect::<Vec<_>>();
 
     Ok(IndexArtifact {
+        coverage: meta_map.get("coverage").and_then(|text| serde_json::from_str(text).ok()).unwrap_or_default(),
+        hints: meta_map.get("coverage_hints").and_then(|text| serde_json::from_str(text).ok()).unwrap_or_default(),
+        external_refs: db.query("SELECT source_path, target_path, content_hash, observed_hash FROM external_refs ORDER BY source_path, target_path;", [])?.rows.iter().map(|row| crate::external_refs::ExternalRef {
+            source_path: cell(row, 0).to_string(), target_path: cell(row, 1).to_string(),
+            content_hash: cell(row, 2).to_string(), observed_hash: cell(row, 3).to_string(),
+        }).collect(),
         repo_root: meta_map.get("repo_root").cloned().unwrap_or_default(),
         managed_root: meta_map.get("managed_root").cloned().unwrap_or_default(),
         generated_at_unix: meta_map
@@ -1388,24 +1462,17 @@ fn build_doc_relations(
     let mut seen = BTreeSet::new();
 
     for doc in docs {
-        if let Some(collection) = &doc.collection {
-            if let Some(spec) = schema
-                .doc_collections
-                .iter()
-                .find(|item| item.name == *collection)
-            {
-                let collection_index = format!("{}/{}/index.md", schema.managed_root, spec.path);
-                if doc.path != collection_index {
-                    push_relation(
-                        &mut relations,
-                        &mut seen,
-                        collection_index,
-                        doc.path.clone(),
-                        "doc_indexes_doc",
-                        "collection-membership",
-                        true,
-                    );
-                }
+        if let Some(collection_index) = collection_index_for_doc(schema, doc) {
+            if doc.path != collection_index && path_set.contains(&collection_index) {
+                push_relation(
+                    &mut relations,
+                    &mut seen,
+                    collection_index,
+                    doc.path.clone(),
+                    "doc_indexes_doc",
+                    "collection-membership",
+                    true,
+                );
             }
         }
 
