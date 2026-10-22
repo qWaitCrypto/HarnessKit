@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 use std::path::Path;
 
 use crate::index::{cell, DocRelation};
-use crate::query::{snippet_for_doc, QueryCandidate};
+use crate::query::{doc_lifecycle, snippet_for_doc, superseded_by, QueryCandidate};
 use crate::sqlite::SqliteConnection;
 use crate::Result;
 
@@ -36,6 +36,7 @@ pub(crate) fn context_packet_for_doc(
         return Err(format!("doc not found in fact store: {}", doc_path).into());
     };
     let snippet = snippet_for_doc(target_dir, doc_path, doc_path);
+    let superseded_by = superseded_by(db, doc_path)?;
     let anchor = QueryCandidate {
         path: cell(row, 0).to_string(),
         title: cell(row, 1).to_string(),
@@ -48,6 +49,9 @@ pub(crate) fn context_packet_for_doc(
         snippet_heading: snippet.0,
         snippet_location: snippet.1,
         snippet: snippet.2,
+        match_info: None,
+        lifecycle: doc_lifecycle(doc_path, cell(row, 3), cell(row, 4), &superseded_by),
+        superseded_by,
     };
 
     let outgoing = relation_rows(db, "src_path", doc_path)?;

@@ -1,0 +1,451 @@
+{
+  "label": "S5-workspace",
+  "corpus_sha256": "281f7b0d6a2503a3d3af76f6ec2f815a731993c04212e593fecb029af53a5a44",
+  "metrics": {
+    "queries": 35,
+    "zero_hits": 0,
+    "zero_hit_rate": 0.0,
+    "top1_hits": 34,
+    "top1_rate": 0.9714285714285714,
+    "top3_hits": 35,
+    "top3_rate": 1.0
+  },
+  "cjk": {
+    "queries": 7,
+    "zero_hits": 0,
+    "zero_hit_rate": 0.0,
+    "top1_hits": 7,
+    "top1_rate": 1.0,
+    "top3_hits": 7,
+    "top3_rate": 1.0
+  },
+  "index_sizes": {
+    "cjk": {
+      "bytes": 143360,
+      "docs": 5
+    },
+    "external": {
+      "bytes": 143360,
+      "docs": 3
+    },
+    "flat": {
+      "bytes": 147456,
+      "docs": 8
+    },
+    "lifecycle": {
+      "bytes": 155648,
+      "docs": 9
+    },
+    "standard": {
+      "bytes": 196608,
+      "docs": 25
+    }
+  },
+  "total_index_bytes": 786432,
+  "cases": [
+    {
+      "fixture": "standard",
+      "query": "lantern",
+      "category": "control",
+      "paths": [
+        "docs/design-docs/lantern.md",
+        "ARCHITECTURE.md",
+        "AGENTS.md",
+        "docs/project.md",
+        "CLAUDE.md",
+        "docs/commands.md",
+        "docs/index.md",
+        "docs/design-docs/index.md"
+      ],
+      "rank": 1,
+      "forbidden_first": false
+    },
+    {
+      "fixture": "standard",
+      "query": "courier delivery",
+      "category": "control",
+      "paths": [
+        "docs/product-specs/delivery.md",
+        "docs/product-specs/index.md",
+        "docs/project.md"
+      ],
+      "rank": 1,
+      "forbidden_first": false
+    },
+    {
+      "fixture": "standard",
+      "query": "durable queue",
+      "category": "control",
+      "paths": [
+        "docs/decisions/0001-queue.md",
+        "docs/design-docs/lantern.md",
+        "ARCHITECTURE.md",
+        "docs/decisions/index.md",
+        "docs/exec-plans/completed/prototype.md",
+        "docs/exec-plans/completed/index.md",
+        "docs/worklog/archive/prototype-trial.md"
+      ],
+      "rank": 1,
+      "forbidden_first": false
+    },
+    {
+      "fixture": "standard",
+      "query": "backoff scheduler",
+      "category": "control",
+      "paths": [
+        "docs/design-docs/lantern.md"
+      ],
+      "rank": 1,
+      "forbidden_first": false
+    },
+    {
+      "fixture": "standard",
+      "query": "wire protocol",
+      "category": "control",
+      "paths": [
+        "docs/references/wire-protocol.md",
+        "docs/references/index.md"
+      ],
+      "rank": 1,
+      "forbidden_first": false
+    },
+    {
+      "fixture": "standard",
+      "query": "lantern absentterm",
+      "category": "relaxed",
+      "paths": [
+        "docs/design-docs/lantern.md",
+        "ARCHITECTURE.md",
+        "AGENTS.md",
+        "docs/project.md",
+        "CLAUDE.md",
+        "docs/commands.md",
+        "docs/index.md",
+        "docs/design-docs/index.md"
+      ],
+      "rank": 1,
+      "forbidden_first": false
+    },
+    {
+      "fixture": "standard",
+      "query": "receipts missingword",
+      "category": "relaxed",
+      "paths": [
+        "docs/exec-plans/active/receipts.md",
+        "docs/exec-plans/active/index.md",
+        "docs/project.md",
+        "docs/product-specs/delivery.md"
+      ],
+      "rank": 1,
+      "forbidden_first": false
+    },
+    {
+      "fixture": "flat",
+      "query": "copper relays",
+      "category": "control",
+      "paths": [
+        "docs/decisions.md",
+        "docs/execution-plan.md",
+        "docs/reference/relay.md"
+      ],
+      "rank": 1,
+      "forbidden_first": false
+    },
+    {
+      "fixture": "flat",
+      "query": "rollout latency",
+      "category": "control",
+      "paths": [
+        "docs/execution-plan.md"
+      ],
+      "rank": 1,
+      "forbidden_first": false
+    },
+    {
+      "fixture": "flat",
+      "query": "predictable recovery",
+      "category": "control",
+      "paths": [
+        "docs/principles.md"
+      ],
+      "rank": 1,
+      "forbidden_first": false
+    },
+    {
+      "fixture": "flat",
+      "query": "heartbeat",
+      "category": "control",
+      "paths": [
+        "docs/reference/relay.md"
+      ],
+      "rank": 1,
+      "forbidden_first": false
+    },
+    {
+      "fixture": "flat",
+      "query": "ledger",
+      "category": "control",
+      "paths": [
+        "docs/reference/storage.md"
+      ],
+      "rank": 1,
+      "forbidden_first": false
+    },
+    {
+      "fixture": "flat",
+      "query": "copper absentterm",
+      "category": "relaxed",
+      "paths": [
+        "docs/execution-plan.md",
+        "docs/reference/relay.md",
+        "docs/decisions.md"
+      ],
+      "rank": 2,
+      "forbidden_first": false
+    },
+    {
+      "fixture": "flat",
+      "query": "journal missingword",
+      "category": "relaxed",
+      "paths": [
+        "docs/reference/storage.md"
+      ],
+      "rank": 1,
+      "forbidden_first": false
+    },
+    {
+      "fixture": "cjk",
+      "query": "精灵蛋",
+      "category": "cjk",
+      "paths": [
+        "docs/product-specs/egg-incubation.md"
+      ],
+      "rank": 1,
+      "forbidden_first": false
+    },
+    {
+      "fixture": "cjk",
+      "query": "三天",
+      "category": "cjk",
+      "paths": [
+        "docs/exec-plans/active/care.md",
+        "docs/product-specs/egg-incubation.md"
+      ],
+      "rank": 1,
+      "forbidden_first": false
+    },
+    {
+      "fixture": "cjk",
+      "query": "羁绊",
+      "category": "cjk",
+      "paths": [
+        "docs/design-docs/companion-growth.md"
+      ],
+      "rank": 1,
+      "forbidden_first": false
+    },
+    {
+      "fixture": "cjk",
+      "query": "体力",
+      "category": "cjk",
+      "paths": [
+        "docs/design-docs/companion-growth.md"
+      ],
+      "rank": 1,
+      "forbidden_first": false
+    },
+    {
+      "fixture": "cjk",
+      "query": "离线",
+      "category": "cjk",
+      "paths": [
+        "docs/exec-plans/active/care.md"
+      ],
+      "rank": 1,
+      "forbidden_first": false
+    },
+    {
+      "fixture": "cjk",
+      "query": "Egg 精灵蛋",
+      "category": "mixed",
+      "paths": [
+        "docs/product-specs/egg-incubation.md",
+        "docs/index.md"
+      ],
+      "rank": 1,
+      "forbidden_first": false
+    },
+    {
+      "fixture": "cjk",
+      "query": "Growth 羁绊",
+      "category": "mixed",
+      "paths": [
+        "docs/design-docs/companion-growth.md",
+        "docs/index.md"
+      ],
+      "rank": 1,
+      "forbidden_first": false
+    },
+    {
+      "fixture": "cjk",
+      "query": "EV-01",
+      "category": "identifier",
+      "paths": [
+        "docs/product-specs/egg-incubation.md"
+      ],
+      "rank": 1,
+      "forbidden_first": false
+    },
+    {
+      "fixture": "cjk",
+      "query": "GD-02",
+      "category": "identifier",
+      "paths": [
+        "docs/design-docs/companion-growth.md"
+      ],
+      "rank": 1,
+      "forbidden_first": false
+    },
+    {
+      "fixture": "lifecycle",
+      "query": "relay routing",
+      "category": "lifecycle",
+      "paths": [
+        "docs/decisions/0002-relay-routing.md",
+        "docs/index.md",
+        "docs/references/evidence.md",
+        "docs/decisions/0001-relay-routing.md"
+      ],
+      "rank": 1,
+      "forbidden_first": false
+    },
+    {
+      "fixture": "lifecycle",
+      "query": "relay migration",
+      "category": "lifecycle",
+      "paths": [
+        "docs/exec-plans/active/relay-migration.md",
+        "docs/index.md",
+        "docs/references/evidence.md",
+        "docs/exec-plans/completed/relay-migration.md"
+      ],
+      "rank": 1,
+      "forbidden_first": false
+    },
+    {
+      "fixture": "lifecycle",
+      "query": "relay transport",
+      "category": "lifecycle",
+      "paths": [
+        "docs/design-docs/relay-transport.md",
+        "docs/index.md",
+        "docs/references/evidence.md",
+        "docs/decisions/0002-relay-routing.md",
+        "docs/exec-plans/active/relay-migration.md",
+        "docs/design-docs/relay-transport-old.md",
+        "docs/decisions/0001-relay-routing.md",
+        "docs/exec-plans/completed/relay-migration.md"
+      ],
+      "rank": 1,
+      "forbidden_first": false
+    },
+    {
+      "fixture": "lifecycle",
+      "query": "routing absentterm",
+      "category": "relaxed",
+      "paths": [
+        "docs/decisions/0002-relay-routing.md",
+        "docs/index.md",
+        "docs/references/evidence.md",
+        "docs/decisions/0001-relay-routing.md"
+      ],
+      "rank": 1,
+      "forbidden_first": false
+    },
+    {
+      "fixture": "lifecycle",
+      "query": "indigo transport",
+      "category": "control",
+      "paths": [
+        "docs/decisions/0002-relay-routing.md",
+        "docs/exec-plans/active/relay-migration.md",
+        "docs/design-docs/relay-transport.md"
+      ],
+      "rank": 1,
+      "forbidden_first": false
+    },
+    {
+      "fixture": "lifecycle",
+      "query": "receipt recovery",
+      "category": "control",
+      "paths": [
+        "docs/exec-plans/active/relay-migration.md"
+      ],
+      "rank": 1,
+      "forbidden_first": false
+    },
+    {
+      "fixture": "lifecycle",
+      "query": "bounded retry",
+      "category": "control",
+      "paths": [
+        "docs/design-docs/relay-transport.md",
+        "docs/design-docs/relay-transport-old.md"
+      ],
+      "rank": 1,
+      "forbidden_first": false
+    },
+    {
+      "fixture": "external",
+      "query": "quartz",
+      "category": "control",
+      "paths": [
+        "docs/design-docs/probe.md"
+      ],
+      "rank": 1,
+      "forbidden_first": false
+    },
+    {
+      "fixture": "external",
+      "query": "percentile histogram",
+      "category": "control",
+      "paths": [
+        "docs/design-docs/probe.md"
+      ],
+      "rank": 1,
+      "forbidden_first": false
+    },
+    {
+      "fixture": "external",
+      "query": "research_runs/x/result.json",
+      "category": "control",
+      "paths": [
+        "docs/design-docs/probe.md"
+      ],
+      "rank": 1,
+      "forbidden_first": false
+    },
+    {
+      "fixture": "external",
+      "query": "quartz absentterm",
+      "category": "relaxed",
+      "paths": [
+        "docs/design-docs/probe.md"
+      ],
+      "rank": 1,
+      "forbidden_first": false
+    },
+    {
+      "fixture": "external",
+      "query": "histogram missingword",
+      "category": "relaxed",
+      "paths": [
+        "docs/design-docs/probe.md"
+      ],
+      "rank": 1,
+      "forbidden_first": false
+    }
+  ],
+  "index_delta_bytes": 151552,
+  "index_delta_ratio": 0.23870967741935484
+}

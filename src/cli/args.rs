@@ -26,7 +26,7 @@ pub(super) enum Command {
     /// List incoming document references.
     Refs(InputArgs),
     /// Search managed documents.
-    Query(InputArgs),
+    Query(QueryArgs),
     /// Show a document's relation graph.
     Graph(InputArgs),
     /// Retrieve context for terms or a document path.
@@ -74,6 +74,20 @@ pub(super) struct InputArgs {
     pub(super) input: Option<String>,
     #[command(flatten)]
     pub(super) target: TargetArgs,
+}
+
+#[derive(Args)]
+pub(super) struct QueryArgs {
+    #[command(flatten)]
+    pub(super) input: InputArgs,
+    /// Maximum number of candidates (default: 8).
+    #[arg(
+        long,
+        value_name = "N",
+        default_value_t = crate::query::DEFAULT_LIMIT as u32,
+        value_parser = clap::value_parser!(u32).range(1..)
+    )]
+    pub(super) limit: u32,
 }
 
 #[derive(Args)]

@@ -22,7 +22,7 @@ use crate::schema::{DocCollectionSpec, Schema};
 use crate::sqlite::{QueryResult, SqliteConnection};
 use crate::Result;
 
-pub(crate) const FACT_SCHEMA_VERSION: &str = "4";
+pub(crate) const FACT_SCHEMA_VERSION: &str = "5";
 
 #[derive(Clone, Default, Serialize)]
 pub(crate) struct IndexedDoc {
@@ -279,10 +279,10 @@ pub(crate) fn refresh_fact_store(context: &EngineContext) -> Result<()> {
     let database = context.target_dir.join(".harnesskit/state/facts.sqlite");
     if database.exists() {
         let db = open_fact_store(&context.target_dir)?;
-        initialize_fact_store(&db)?;
-        if meta_value(&db, "schema_fingerprint")?
-            .map(|value| value != schema_fingerprint)
-            .unwrap_or(false)
+        if !fact_store_is_compatible(&db)?
+            || meta_value(&db, "schema_fingerprint")?
+                .map(|value| value != schema_fingerprint)
+                .unwrap_or(false)
         {
             drop(db);
             rebuild_fact_store_full(context)?;
@@ -373,7 +373,6 @@ fn refresh_doc_facts(context: &EngineContext) -> Result<()> {
     }
 
     let db = open_fact_store(&context.target_dir)?;
-    initialize_fact_store(&db)?;
     if !fact_store_is_compatible(&db)? {
         drop(db);
         rebuild_fact_store_full(context)?;
@@ -474,12 +473,8 @@ fn rebuild_fact_store_full(context: &EngineContext) -> Result<()> {
 }
 
 fn fact_store_is_compatible(db: &SqliteConnection) -> Result<bool> {
-    let version = meta_value(db, "fact_schema_version")?;
-    if version.as_deref() != Some(FACT_SCHEMA_VERSION) {
-        return Ok(false);
-    }
-
     let required_tables = [
+        "meta",
         "docs",
         "file_states",
         "headings",
@@ -490,6 +485,8 @@ fn fact_store_is_compatible(db: &SqliteConnection) -> Result<bool> {
         "scope_paths",
         "supersedes",
         "external_refs",
+        "docs_fts",
+        "docs_trigram",
     ];
     for table in required_tables {
         let exists = db.query(
@@ -504,6 +501,11 @@ fn fact_store_is_compatible(db: &SqliteConnection) -> Result<bool> {
         {
             return Ok(false);
         }
+    }
+
+    let version = meta_value(db, "fact_schema_version")?;
+    if version.as_deref() != Some(FACT_SCHEMA_VERSION) {
+        return Ok(false);
     }
 
     let file_state_columns = db.query("PRAGMA table_info(file_states);", [])?;
@@ -764,6 +766,7 @@ fn initialize_fact_store(db: &SqliteConnection) -> Result<()> {
             summary TEXT NOT NULL,
             frontmatter_keys_text TEXT NOT NULL DEFAULT '',
             headings_text TEXT NOT NULL,
+            body_tokens TEXT NOT NULL,
             content_hash TEXT NOT NULL,
             file_size_bytes INTEGER NOT NULL,
             incoming_links INTEGER NOT NULL,
@@ -836,11 +839,24 @@ fn initialize_fact_store(db: &SqliteConnection) -> Result<()> {
          CREATE INDEX IF NOT EXISTS idx_relations_dst ON relations(dst_path, relation_type);
          CREATE INDEX IF NOT EXISTS idx_checks_subject ON checks(subject_path, severity);
          CREATE VIRTUAL TABLE IF NOT EXISTS docs_fts USING fts5(
-            path UNINDEXED,
+            path,
             title,
             headings_text,
             summary,
-            body_tokens
+            body_tokens,
+            tokenize = 'unicode61',
+            content = 'docs',
+            content_rowid = 'rowid'
+         );
+         CREATE VIRTUAL TABLE IF NOT EXISTS docs_trigram USING fts5(
+            path,
+            title,
+            headings_text,
+            summary,
+            body_tokens,
+            tokenize = 'trigram',
+            content = 'docs',
+            content_rowid = 'rowid'
          );",
     )?;
     Ok(())
@@ -912,6 +928,15 @@ fn apply_doc_fact_delta(
 ) -> Result<()> {
     db.transaction(|db| {
         for path in touched_paths {
+            // External-content FTS deletes need the old text before it is removed.
+            for table in ["docs_fts", "docs_trigram"] {
+                db.execute(
+                    &format!("INSERT INTO {table}({table}, rowid, path, title, headings_text, summary, body_tokens)
+                     SELECT 'delete', rowid, path, title, headings_text, summary, body_tokens
+                     FROM docs WHERE path = ?1;"),
+                    [path],
+                )?;
+            }
             for sql in [
                 "DELETE FROM docs WHERE path = ?1;",
                 "DELETE FROM file_states WHERE path = ?1;",
@@ -920,7 +945,6 @@ fn apply_doc_fact_delta(
                 "DELETE FROM path_mentions WHERE doc_path = ?1;",
                 "DELETE FROM scope_paths WHERE doc_path = ?1;",
                 "DELETE FROM supersedes WHERE doc_path = ?1;",
-                "DELETE FROM docs_fts WHERE path = ?1;",
             ] {
                 db.execute(sql, [path])?;
             }
@@ -1125,24 +1149,28 @@ fn insert_doc_facts(db: &SqliteConnection, doc: &IndexedDoc) -> Result<()> {
     db.execute(
         "INSERT INTO docs(
             path, title, role, status, authority, collection_name, summary, frontmatter_keys_text, headings_text, content_hash, file_size_bytes,
-            incoming_links, outgoing_links, is_entrypoint, is_anchor_candidate, is_generated, is_reference, mtime_unix
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18);",
+            incoming_links, outgoing_links, is_entrypoint, is_anchor_candidate, is_generated, is_reference, mtime_unix, body_tokens
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19);",
         params![
             doc.path, doc.title, doc.role, doc.status, doc.authority, doc.collection,
             doc.summary, doc.frontmatter_keys.join(" | "), doc.headings.join(" | "),
             doc.content_hash, doc.file_size_bytes, doc.incoming_links, doc.outgoing_links,
             doc.is_entrypoint, doc.is_anchor_candidate, doc.is_generated, doc.is_reference,
-            doc.mtime_unix,
+            doc.mtime_unix, doc.content_text,
         ],
     )?;
     db.execute(
         "INSERT INTO file_states(path, content_hash, file_size_bytes, mtime_unix, mtime_ns) VALUES (?1, ?2, ?3, ?4, ?5);",
         params![doc.path, doc.content_hash, doc.file_size_bytes, doc.mtime_unix, doc.mtime_ns],
     )?;
-    db.execute(
-        "INSERT INTO docs_fts(path, title, headings_text, summary, body_tokens) VALUES (?1, ?2, ?3, ?4, ?5);",
-        params![doc.path, doc.title, doc.headings.join(" | "), doc.summary, doc.content_text],
-    )?;
+    // Both FTS indexes share the docs row; neither stores another copy of the text.
+    for table in ["docs_fts", "docs_trigram"] {
+        db.execute(
+            &format!("INSERT INTO {table}(rowid, path, title, headings_text, summary, body_tokens)
+             SELECT rowid, path, title, headings_text, summary, body_tokens FROM docs WHERE path = ?1;"),
+            [&doc.path],
+        )?;
+    }
     for (sql, values) in [
         ("INSERT INTO headings(doc_path, heading_index, heading_text) VALUES (?1, ?2, ?3);", &doc.headings),
         ("INSERT INTO raw_links(src_doc, link_index, normalized_target) VALUES (?1, ?2, ?3);", &doc.links),
@@ -1191,7 +1219,9 @@ fn insert_check(db: &SqliteConnection, check: &IndexCheck) -> Result<()> {
 fn replace_fact_store_contents(db: &SqliteConnection, artifact: &IndexArtifact) -> Result<()> {
     db.transaction(|db| {
         db.exec(
-            "DELETE FROM meta;
+            "INSERT INTO docs_fts(docs_fts) VALUES ('delete-all');
+             INSERT INTO docs_trigram(docs_trigram) VALUES ('delete-all');
+             DELETE FROM meta;
              DELETE FROM docs;
              DELETE FROM file_states;
              DELETE FROM headings;
@@ -1200,8 +1230,7 @@ fn replace_fact_store_contents(db: &SqliteConnection, artifact: &IndexArtifact) 
              DELETE FROM relations;
              DELETE FROM checks;
              DELETE FROM scope_paths;
-             DELETE FROM supersedes;
-             DELETE FROM docs_fts;",
+             DELETE FROM supersedes;",
         )?;
         insert_meta(
             db,

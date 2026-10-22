@@ -16,11 +16,11 @@ use crate::history::{
 use crate::index::{
     build_index_artifact, cell, collect_current_file_states, compute_fact_store_delta, meta_value,
     open_fact_store, parse_file_state_rows, read_index_artifact_from_fact_store,
-    refresh_fact_store, scalar_count, split_pipe_list, write_fact_store, write_index_artifact,
+    refresh_fact_store, scalar_count, write_fact_store, write_index_artifact,
     EngineContext, FACT_SCHEMA_VERSION,
 };
 use crate::parse::{extract_inline_code_path_mentions, parse_doc_text};
-use crate::query::{query_candidates, query_rows_to_candidates};
+use crate::query::{query_candidates, DEFAULT_LIMIT};
 use crate::render::{
     render_check_json, render_context_packet_json, render_index_json, render_query_json,
 };
@@ -1437,8 +1437,7 @@ fn query_candidates_include_snippet_heading_location_and_json() {
     write_fact_store(&target, &artifact).unwrap();
     let db = open_fact_store(&target).unwrap();
 
-    let rows = query_candidates(&db, &target, "phrase search").unwrap();
-    let candidates = query_rows_to_candidates(&rows, &target, "phrase search");
+    let candidates = query_candidates(&db, &target, "phrase search", DEFAULT_LIMIT).unwrap();
     let candidate = candidates
         .iter()
         .find(|candidate| candidate.path == "docs/design-docs/semantic-layer.md")
@@ -1447,7 +1446,9 @@ fn query_candidates_include_snippet_heading_location_and_json() {
     assert_eq!(candidate.snippet_heading, "Query Semantics");
     assert!(candidate.snippet_location.starts_with("line "));
     assert!(candidate.snippet.contains("phrase search"));
-    let json = render_query_json("phrase search", &candidates, &Default::default(), &[]);
+    let json = render_query_json(
+        "phrase search", &candidates, &Default::default(), &[], None, &[],
+    );
     assert!(json.contains("\"snippet_location\""));
 
     fs::remove_dir_all(target).unwrap();
@@ -1464,8 +1465,8 @@ fn query_candidates_handles_punctuation_only_query() {
     write_fact_store(&target, &artifact).unwrap();
     let db = open_fact_store(&target).unwrap();
 
-    let rows = query_candidates(&db, &target, "--- ?! ::").unwrap();
-    assert!(rows.rows.is_empty());
+    let candidates = query_candidates(&db, &target, "--- ?! ::", DEFAULT_LIMIT).unwrap();
+    assert!(candidates.is_empty());
 
     fs::remove_dir_all(target).unwrap();
 }
@@ -1493,13 +1494,12 @@ fn query_candidates_limits_before_neighbor_expansion() {
     write_fact_store(&target, &artifact).unwrap();
     let db = open_fact_store(&target).unwrap();
 
-    let rows = query_candidates(&db, &target, "sample").unwrap();
+    let candidates = query_candidates(&db, &target, "sample", DEFAULT_LIMIT).unwrap();
 
-    assert_eq!(rows.rows.len(), 12);
-    assert!(rows
-        .rows
+    assert_eq!(candidates.len(), 8);
+    assert!(candidates
         .iter()
-        .all(|row| split_pipe_list(cell(row, 7)).len() <= 8));
+        .all(|candidate| candidate.neighbors.len() <= 5));
 
     fs::remove_dir_all(target).unwrap();
 }
@@ -1533,7 +1533,9 @@ fn json_parser_decodes_surrogate_pairs() {
 
 #[test]
 fn json_string_escapes_all_control_characters() {
-    let rendered = render_query_json("a\u{0001}\u{0008}\u{000c}z", &[], &Default::default(), &[]);
+    let rendered = render_query_json(
+        "a\u{0001}\u{0008}\u{000c}z", &[], &Default::default(), &[], None, &[],
+    );
     assert!(rendered.contains("\"query\": \"a\\u0001\\b\\fz\""));
 }
 

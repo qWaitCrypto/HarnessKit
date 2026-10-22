@@ -477,14 +477,26 @@ pub(crate) fn print_query_candidates(query_terms: &str, candidates: &[QueryCandi
     }
     for candidate in candidates {
         println!(
-            "- {} [{}] status={} score={} :: {}",
+            "- {} [{}] status={} lifecycle={} score={} :: {}",
             candidate.path,
             candidate.role,
             blank_as_dash(&candidate.status),
+            candidate.lifecycle,
             candidate.score,
             candidate.title
         );
         println!("  why: {}", candidate.why);
+        if let Some(info) = &candidate.match_info {
+            println!(
+                "  match: {} (matched: {}; missing: {})",
+                info.mode,
+                info.matched_terms.join(", "),
+                info.missing_terms.join(", ")
+            );
+        }
+        if !candidate.superseded_by.is_empty() {
+            println!("  superseded by: {}", candidate.superseded_by.join(", "));
+        }
         if !candidate.summary.is_empty() {
             println!("  summary: {}", candidate.summary);
         }

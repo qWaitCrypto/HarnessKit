@@ -12,7 +12,7 @@ use crate::doctor::DoctorReport;
 use crate::fs_utils::absolute_display_path;
 use crate::history::HistorySnapshot;
 use crate::index::{DocRelation, IndexArtifact};
-use crate::query::QueryCandidate;
+use crate::query::{QueryCandidate, QueryDiagnostics, TitleSuggestion};
 
 // Only whitespace and numeric presentation differ from serde_json's formatters.
 // Keep alpha.6's multiline empty arrays, inline lists and two-decimal confidence.
@@ -272,6 +272,8 @@ pub(crate) fn render_query_json(
     candidates: &[QueryCandidate],
     coverage: &Coverage,
     hints: &[String],
+    diagnostics: Option<&QueryDiagnostics>,
+    suggestions: &[TitleSuggestion],
 ) -> String {
     #[derive(Serialize)]
     struct Report<'a> {
@@ -279,6 +281,8 @@ pub(crate) fn render_query_json(
         candidates: &'a [QueryCandidate],
         coverage: &'a Coverage,
         hints: &'a [String],
+        diagnostics: Option<&'a QueryDiagnostics>,
+        did_you_mean: &'a [TitleSuggestion],
     }
     to_json(
         &Report {
@@ -286,6 +290,8 @@ pub(crate) fn render_query_json(
             candidates,
             coverage,
             hints,
+            diagnostics,
+            did_you_mean: suggestions,
         },
         false,
     ) + "\n"

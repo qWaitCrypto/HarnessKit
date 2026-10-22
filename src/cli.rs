@@ -1,6 +1,6 @@
 mod args;
 
-use args::{option_value, Cli, Command, DiffArgs, HistoryCommand, InputArgs};
+use args::{option_value, Cli, Command, DiffArgs, HistoryCommand, InputArgs, QueryArgs};
 pub(crate) use args::{CommonArgs, TargetArgs};
 use clap::{CommandFactory, Parser};
 
@@ -20,7 +20,9 @@ use crate::history::{
 };
 use crate::index::{open_fact_store, refresh_fact_store, scalar_count, EngineContext};
 use crate::output::{eprintln, finish_write, println};
-use crate::query::{query_candidates, query_rows_to_candidates};
+use crate::query::{
+    diagnose_query, diagnostic_hints, query_candidates, title_suggestions, DEFAULT_LIMIT,
+};
 use crate::render::{
     print_check_output, print_context_packet, print_doctor_report, print_history_diff,
     print_history_list, print_history_snapshot_result, print_history_status, print_index_result,
@@ -382,15 +384,51 @@ fn run_refs(args: &InputArgs) -> Result<()> {
     Ok(())
 }
 
-fn run_query(args: &InputArgs) -> Result<()> {
+fn run_query(query_args: &QueryArgs) -> Result<()> {
+    let args = &query_args.input;
     let query_terms = args.input.clone().ok_or("query requires <terms>")?;
     let context = load_engine_context(&args.target)?;
     let options = command_options(&args.target.options, Some(&context.schema));
     refresh_fact_store(&context)?;
     let db = open_fact_store(&context.target_dir)?;
 
-    let result = query_candidates(&db, &context.target_dir, &query_terms)?;
-    let candidates = query_rows_to_candidates(&result, &context.target_dir, &query_terms);
+    let candidates = query_candidates(
+        &db,
+        &context.target_dir,
+        &query_terms,
+        query_args.limit as usize,
+    )?;
+    let coverage = discover_docs(&context.target_dir, &context.schema)?;
+    let diagnostics = if candidates.is_empty() {
+        Some(diagnose_query(
+            &db,
+            &context.target_dir,
+            &query_terms,
+            &coverage,
+        )?)
+    } else {
+        None
+    };
+    let suggestions = if candidates.is_empty() {
+        title_suggestions(&db, &query_terms)?
+    } else {
+        Vec::new()
+    };
+    let mut query_hints = diagnostics.as_ref().map(diagnostic_hints).unwrap_or_default();
+    if candidates.iter().any(|candidate| {
+        candidate.match_info.as_ref()
+            .map(|info| info.mode == "relaxed")
+            .unwrap_or(false)
+    }) {
+        query_hints.push("Fewer than three strict matches; partial matches are included with their missing terms.".to_string());
+    }
+    for suggestion in &suggestions {
+        query_hints.push(format!(
+            "Did you mean `{}`? See {}.", suggestion.title, suggestion.path
+        ));
+    }
+    let mut hints = indexed_hints(&context, &db)?;
+    hints.extend(query_hints.iter().cloned());
 
     if options.json {
         println!(
@@ -398,12 +436,17 @@ fn run_query(args: &InputArgs) -> Result<()> {
             render_query_json(
                 &query_terms,
                 &candidates,
-                &discover_docs(&context.target_dir, &context.schema)?,
-                &indexed_hints(&context, &db)?
+                &coverage,
+                &hints,
+                diagnostics.as_ref(),
+                &suggestions,
             )
         );
     } else {
         print_query_candidates(&query_terms, &candidates);
+        for hint in &query_hints {
+            println!("Hint: {}", hint);
+        }
     }
     Ok(())
 }
@@ -445,8 +488,7 @@ fn run_context(args: &InputArgs) -> Result<()> {
     let anchor_path = if doc_exists(&db, &input)? {
         input.clone()
     } else {
-        let rows = query_candidates(&db, &context.target_dir, &input)?;
-        let candidates = query_rows_to_candidates(&rows, &context.target_dir, &input);
+        let candidates = query_candidates(&db, &context.target_dir, &input, DEFAULT_LIMIT)?;
         candidates
             .first()
             .map(|candidate| candidate.path.clone())
