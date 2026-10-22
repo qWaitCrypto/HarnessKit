@@ -13,6 +13,8 @@ pub(crate) struct ParsedDoc {
     pub(crate) path_mentions: Vec<String>,
     pub(crate) scope_paths: Vec<String>,
     pub(crate) supersedes: Vec<String>,
+    pub(crate) superseded_by: Vec<String>,
+    pub(crate) supersedes_parts_of: Vec<String>,
 }
 
 pub(crate) fn parse_doc_text(path: &str, text: &str) -> ParsedDoc {
@@ -26,7 +28,15 @@ pub(crate) fn parse_doc_text(path: &str, text: &str) -> ParsedDoc {
     let (frontmatter, body) = split_frontmatter(text);
     let frontmatter_map = frontmatter.map(parse_frontmatter).unwrap_or_default();
     let scope_paths = frontmatter.map(parse_scope_paths).unwrap_or_else(Vec::new);
-    let supersedes = frontmatter.map(parse_supersedes).unwrap_or_else(Vec::new);
+    let supersedes = frontmatter
+        .map(|raw| parse_doc_paths(raw, "supersedes"))
+        .unwrap_or_default();
+    let superseded_by = frontmatter
+        .map(|raw| parse_doc_paths(raw, "superseded_by"))
+        .unwrap_or_default();
+    let supersedes_parts_of = frontmatter
+        .map(|raw| parse_doc_paths(raw, "supersedes_parts_of"))
+        .unwrap_or_default();
 
     let mut title = None;
     let mut headings = Vec::new();
@@ -64,6 +74,8 @@ pub(crate) fn parse_doc_text(path: &str, text: &str) -> ParsedDoc {
         path_mentions,
         scope_paths,
         supersedes,
+        superseded_by,
+        supersedes_parts_of,
     }
 }
 
@@ -107,8 +119,8 @@ fn parse_scope_paths(raw: &str) -> Vec<String> {
     parse_frontmatter_list(raw, &["scope_paths", "source_paths"])
 }
 
-fn parse_supersedes(raw: &str) -> Vec<String> {
-    let mut values = parse_frontmatter_list(raw, &["supersedes"]);
+fn parse_doc_paths(raw: &str, key: &str) -> Vec<String> {
+    let mut values = parse_frontmatter_list(raw, &[key]);
     for value in &mut values {
         let normalized = normalize_path(Path::new(value));
         *value = normalized;
@@ -176,6 +188,27 @@ pub(crate) fn parse_heading(line: &str) -> Option<(u32, String)> {
     } else {
         Some((hashes as u32, rest.trim_matches('#').trim().to_string()))
     }
+}
+
+// Lifecycle checks and acceptance counts must ignore fenced examples.
+pub(crate) fn markdown_prose_lines(text: &str) -> Vec<&str> {
+    let mut fence: Option<(char, usize)> = None;
+    let mut lines = Vec::new();
+    for line in text.lines() {
+        let trimmed = line.trim_start();
+        let marker = trimmed.chars().next().unwrap_or(' ');
+        let run = trimmed.chars().take_while(|ch| *ch == marker).count();
+        if let Some((open, length)) = fence {
+            if marker == open && run >= length && trimmed[run..].trim().is_empty() {
+                fence = None;
+            }
+        } else if matches!(marker, '`' | '~') && run >= 3 {
+            fence = Some((marker, run));
+        } else {
+            lines.push(line);
+        }
+    }
+    lines
 }
 
 fn leading_backtick_run(line: &str) -> Option<usize> {

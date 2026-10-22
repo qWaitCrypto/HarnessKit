@@ -75,6 +75,8 @@ pub(crate) struct Rules {
     pub(crate) duplicate_detection: Option<bool>,
     pub(crate) contamination_checks: Option<bool>,
     pub(crate) strict_checks: Option<bool>,
+    pub(crate) entrypoint_max_lines: Option<u32>,
+    pub(crate) stale_active_plan_days: Option<u32>,
 }
 
 #[derive(Default, Clone)]
@@ -294,6 +296,24 @@ pub(crate) fn parse_schema(text: &str) -> Result<Schema> {
                 }
                 Section::Rules => {
                     if let Some((key, value)) = parse_key_value(trimmed) {
+                        if matches!(
+                            key.as_str(),
+                            "entrypoint_max_lines" | "stale_active_plan_days"
+                        ) {
+                            let parsed = parse_u32(&value)?;
+                            if parsed == 0 {
+                                return Err(
+                                    format!("invalid schema: {} must be positive", key).into()
+                                );
+                            }
+                            match key.as_str() {
+                                "entrypoint_max_lines" => {
+                                    schema.rules.entrypoint_max_lines = Some(parsed)
+                                }
+                                _ => schema.rules.stale_active_plan_days = Some(parsed),
+                            }
+                            continue;
+                        }
                         let parsed = parse_bool(&value)?;
                         match key.as_str() {
                             "path_defines_doc_type" => {
@@ -833,6 +853,12 @@ pub(crate) fn render_schema_copy(schema: &Schema) -> String {
         schema.rules.contamination_checks,
     );
     push_optional_bool_line(&mut lines, 2, "strict_checks", schema.rules.strict_checks);
+    if let Some(value) = schema.rules.entrypoint_max_lines {
+        lines.push(format!("  entrypoint_max_lines: {}", value));
+    }
+    if let Some(value) = schema.rules.stale_active_plan_days {
+        lines.push(format!("  stale_active_plan_days: {}", value));
+    }
 
     if !schema.suppressions.is_empty() {
         lines.push(String::new());

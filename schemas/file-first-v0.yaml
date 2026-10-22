@@ -46,63 +46,63 @@ doc_collections:
     status: active
     anchor_candidate: true
     template: product-spec
-    allowed_frontmatter: [status, authority, scope_paths, supersedes]
+    allowed_frontmatter: [status, authority, scope_paths, supersedes, superseded_by, supersedes_parts_of]
   design_docs:
     path: design-docs
     authority: canonical
     status: active
     anchor_candidate: true
     template: design-doc
-    allowed_frontmatter: [status, authority, scope_paths, supersedes]
+    allowed_frontmatter: [status, authority, scope_paths, supersedes, superseded_by, supersedes_parts_of]
   decisions:
     path: decisions
     authority: canonical
     status: active
     anchor_candidate: true
     template: decision
-    allowed_frontmatter: [status, authority, scope_paths, supersedes]
+    allowed_frontmatter: [status, authority, scope_paths, supersedes, superseded_by, supersedes_parts_of]
   exec_plans_active:
     path: exec-plans/active
     authority: supporting
     anchor_candidate: false
     template: exec-plan
-    allowed_frontmatter: []
+    allowed_frontmatter: [status, superseded_by, supersedes_parts_of]
   exec_plans_completed:
     path: exec-plans/completed
     authority: supporting
     anchor_candidate: false
     template: exec-plan
-    allowed_frontmatter: []
+    allowed_frontmatter: [status, superseded_by, supersedes_parts_of]
   worklog_active:
     path: worklog/active
     authority: supporting
     anchor_candidate: false
     template: worklog
-    allowed_frontmatter: []
+    allowed_frontmatter: [status, superseded_by, supersedes_parts_of]
   worklog_archive:
     path: worklog/archive
     authority: supporting
     anchor_candidate: false
     template: worklog
-    allowed_frontmatter: []
+    allowed_frontmatter: [status, superseded_by, supersedes_parts_of]
   operations:
     path: operations
     authority: supporting
     anchor_candidate: false
     template: operation
-    allowed_frontmatter: [status, authority]
+    allowed_frontmatter: [status, authority, superseded_by, supersedes_parts_of]
   generated:
     path: generated
     authority: generated
     anchor_candidate: false
     template: generated
-    allowed_frontmatter: []
+    allowed_frontmatter: [superseded_by, supersedes_parts_of]
   references:
     path: references
     authority: reference
     anchor_candidate: false
     template: reference
-    allowed_frontmatter: []
+    allowed_frontmatter: [superseded_by, supersedes_parts_of]
 
 rules:
   path_defines_doc_type: true
@@ -115,3 +115,5 @@ rules:
   duplicate_detection: true
   contamination_checks: true
   strict_checks: false
+  entrypoint_max_lines: 120
+  stale_active_plan_days: 30

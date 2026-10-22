@@ -233,34 +233,20 @@ pub(crate) fn query_candidates(
 }
 
 pub(crate) fn superseded_by(db: &SqliteConnection, path: &str) -> Result<Vec<String>> {
-    Ok(db.query(
-        "SELECT DISTINCT doc_path FROM supersedes WHERE superseded_path = ?1 ORDER BY doc_path;",
-        [path],
-    )?.rows.iter().map(|row| cell(row, 0).to_string()).collect())
+    Ok(db
+        .query(
+            "SELECT doc_path FROM supersedes WHERE superseded_path = ?1
+         UNION SELECT successor_path FROM superseded_by WHERE doc_path = ?1
+         ORDER BY 1;",
+            [path],
+        )?
+        .rows
+        .iter()
+        .map(|row| cell(row, 0).to_string())
+        .collect())
 }
 
-pub(crate) fn doc_lifecycle(
-    path: &str,
-    status: &str,
-    summary: &str,
-    superseded_by: &[String],
-) -> String {
-    let historical = !superseded_by.is_empty()
-        || matches!(
-            status.to_lowercase().as_str(),
-            "superseded" | "completed" | "archived" | "historical"
-        )
-        || path.split('/').any(|part| {
-            matches!(
-                part.to_lowercase().as_str(),
-                "completed" | "archive" | "archived"
-            )
-        })
-        || ["superseded", "已被取代", "历史", "history only", "不再适用"]
-            .iter()
-            .any(|marker| summary.to_lowercase().contains(marker));
-    if historical { "historical" } else { "current" }.to_string()
-}
+pub(crate) use crate::lifecycle::doc_lifecycle;
 
 fn query_neighbors(db: &SqliteConnection, path: &str) -> Result<Vec<String>> {
     let rows = db.query(

@@ -1,6 +1,8 @@
 mod args;
 
-use args::{option_value, Cli, Command, DiffArgs, HistoryCommand, InputArgs, QueryArgs};
+use args::{
+    option_value, Cli, Command, ContextArgs, DiffArgs, HistoryCommand, InputArgs, QueryArgs,
+};
 pub(crate) use args::{CommonArgs, TargetArgs};
 use clap::{CommandFactory, Parser};
 
@@ -9,7 +11,9 @@ use std::path::{Path, PathBuf};
 use std::{env, fs};
 
 use crate::checks::filter_and_suppress_checks;
-use crate::context::{context_packet_for_doc, doc_exists};
+use crate::context::{
+    build_current_context, build_handoff_context, context_packet_for_doc, doc_exists,
+};
 use crate::discover::{discover_docs, orphan_state_hints, project_hint};
 use crate::doctor::build_doctor_report;
 use crate::fs_utils::{ensure_dir, now_unix, validate_target_dir};
@@ -24,12 +28,12 @@ use crate::query::{
     diagnose_query, diagnostic_hints, query_candidates, title_suggestions, DEFAULT_LIMIT,
 };
 use crate::render::{
-    print_check_output, print_context_packet, print_doctor_report, print_history_diff,
-    print_history_list, print_history_snapshot_result, print_history_status, print_index_result,
-    print_init_preview, print_init_result, print_init_summary, print_inspect_output,
-    print_list_docs_rows, print_query_candidates, print_rank_rows, print_refs_output,
-    print_restore_plan, render_check_json, render_context_packet_json, render_doctor_json,
-    render_query_json,
+    print_check_output, print_context_packet, print_current_context, print_doctor_report,
+    print_handoff_context, print_history_diff, print_history_list, print_history_snapshot_result,
+    print_history_status, print_index_result, print_init_preview, print_init_result,
+    print_init_summary, print_inspect_output, print_list_docs_rows, print_query_candidates,
+    print_rank_rows, print_refs_output, print_restore_plan, render_check_json,
+    render_context_packet_json, render_doctor_json, render_query_json,
 };
 use crate::schema::{
     default_context_schema_arg, load_schema, parse_schema, render_schema_copy,
@@ -414,9 +418,14 @@ fn run_query(query_args: &QueryArgs) -> Result<()> {
     } else {
         Vec::new()
     };
-    let mut query_hints = diagnostics.as_ref().map(diagnostic_hints).unwrap_or_default();
+    let mut query_hints = diagnostics
+        .as_ref()
+        .map(diagnostic_hints)
+        .unwrap_or_default();
     if candidates.iter().any(|candidate| {
-        candidate.match_info.as_ref()
+        candidate
+            .match_info
+            .as_ref()
             .map(|info| info.mode == "relaxed")
             .unwrap_or(false)
     }) {
@@ -424,7 +433,8 @@ fn run_query(query_args: &QueryArgs) -> Result<()> {
     }
     for suggestion in &suggestions {
         query_hints.push(format!(
-            "Did you mean `{}`? See {}.", suggestion.title, suggestion.path
+            "Did you mean `{}`? See {}.",
+            suggestion.title, suggestion.path
         ));
     }
     let mut hints = indexed_hints(&context, &db)?;
@@ -476,7 +486,57 @@ fn run_graph(args: &InputArgs) -> Result<()> {
     Ok(())
 }
 
-fn run_context(args: &InputArgs) -> Result<()> {
+fn run_context(args: &ContextArgs) -> Result<()> {
+    if args.current || args.since.is_some() || args.input.input.is_none() {
+        // In these modes the sole positional is TARGET_DIR; legacy INPUT TARGET_DIR
+        // remains unchanged when retrieving a document or a search anchor.
+        let mut target = args.input.target.clone();
+        if let Some(path) = &args.input.input {
+            if target.target_dir.is_some() {
+                return Err("context --current/--since accepts only one target_dir".into());
+            }
+            target.target_dir = Some(path.clone());
+        }
+        let context = load_engine_context(&target)?;
+        refresh_fact_store(&context)?;
+        let db = open_fact_store(&context.target_dir)?;
+        let coverage = discover_docs(&context.target_dir, &context.schema)?;
+        let mut hints = indexed_hints(&context, &db)?;
+        if let Some(since) = &args.since {
+            let packet = build_handoff_context(&db, &context.target_dir, &context.schema, since)?;
+            if packet.cutoff_unix.is_some() {
+                hints.push("Date cutoffs use UTC modification times; additions are included under modified because mtime cannot identify creation. Use a snapshot ID or latest for content-based additions, modifications and removals.".to_string());
+            } else {
+                hints.push("Review each changed document with context <path>; snapshot comparisons use content hashes, including edits whose mtime was preserved.".to_string());
+            }
+            if target.options.json {
+                println!(
+                    "{}",
+                    crate::render::render_covered_json(&packet, &coverage, &hints)
+                );
+            } else {
+                print_handoff_context(&packet, &coverage, hints.last().unwrap());
+            }
+        } else {
+            let packet = build_current_context(&db, &context.target_dir, &context.schema)?;
+            let next_step = if packet.latest_snapshot.is_some() {
+                "Use context <path> for details, --json for all current pointers, or context --since latest for changed documents."
+            } else {
+                "Use context <path> for details or --json for all current pointers; create a handoff baseline with history snapshot -m <message>."
+            };
+            hints.push(next_step.to_string());
+            if target.options.json {
+                println!(
+                    "{}",
+                    crate::render::render_covered_json(&packet, &coverage, &hints)
+                );
+            } else {
+                print_current_context(&packet, &coverage, hints.last().unwrap());
+            }
+        }
+        return Ok(());
+    }
+    let args = &args.input;
     let input = args
         .input
         .clone()

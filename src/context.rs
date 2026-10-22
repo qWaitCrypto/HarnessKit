@@ -1,3 +1,9 @@
+mod lifecycle;
+
+pub(crate) use lifecycle::{
+    build_current_context, build_handoff_context, ContextDoc, CurrentContext, HandoffContext,
+};
+
 use std::collections::BTreeSet;
 use std::path::Path;
 

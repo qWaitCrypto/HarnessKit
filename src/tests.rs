@@ -1546,6 +1546,7 @@ fn render_check_json_emits_evidence_as_json_value() {
         rule_id: "history-dirty-since-snapshot".to_string(),
         subject_path: ".harnesskit/history".to_string(),
         message: "dirty".to_string(),
+        hint: None,
         evidence_json: "{\"changed\":\"1\"}".to_string(),
         suppressed: false,
         suppression_reason: None,

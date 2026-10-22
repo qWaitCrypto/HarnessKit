@@ -29,8 +29,8 @@ pub(super) enum Command {
     Query(QueryArgs),
     /// Show a document's relation graph.
     Graph(InputArgs),
-    /// Retrieve context for terms or a document path.
-    Context(InputArgs),
+    /// Retrieve current project state, a handoff, or context for terms/a document.
+    Context(ContextArgs),
     /// Manage local documentation checkpoints.
     History {
         #[command(subcommand)]
@@ -88,6 +88,18 @@ pub(super) struct QueryArgs {
         value_parser = clap::value_parser!(u32).range(1..)
     )]
     pub(super) limit: u32,
+}
+
+#[derive(Args)]
+pub(super) struct ContextArgs {
+    #[command(flatten)]
+    pub(super) input: InputArgs,
+    /// Show current routes and active plans (also the default without INPUT).
+    #[arg(long, conflicts_with = "since")]
+    pub(super) current: bool,
+    /// Show managed docs changed since a snapshot, latest, or YYYY-MM-DD (UTC).
+    #[arg(long, value_name = "SNAPSHOT_OR_DATE", conflicts_with = "current")]
+    pub(super) since: Option<String>,
 }
 
 #[derive(Args)]

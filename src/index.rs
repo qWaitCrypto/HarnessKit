@@ -16,13 +16,14 @@ use crate::fs_utils::{
 };
 use crate::git::{host_git_info, HostGitInfo, HostGitMode};
 use crate::history::{compute_history_status, is_history_dirty, HistoryStatus};
+use crate::lifecycle::infer_status;
 use crate::parse::parse_doc_text;
 use crate::render::{render_index_json, render_index_summary};
-use crate::schema::{DocCollectionSpec, Schema};
+use crate::schema::{core_file_rel_path, DocCollectionSpec, Schema};
 use crate::sqlite::{QueryResult, SqliteConnection};
 use crate::Result;
 
-pub(crate) const FACT_SCHEMA_VERSION: &str = "5";
+pub(crate) const FACT_SCHEMA_VERSION: &str = "6";
 
 #[derive(Clone, Default, Serialize)]
 pub(crate) struct IndexedDoc {
@@ -47,6 +48,10 @@ pub(crate) struct IndexedDoc {
     pub(crate) scope_paths: Vec<String>,
     #[serde(serialize_with = "crate::render::serialize_inline")]
     pub(crate) supersedes: Vec<String>,
+    #[serde(serialize_with = "crate::render::serialize_inline")]
+    pub(crate) superseded_by: Vec<String>,
+    #[serde(serialize_with = "crate::render::serialize_inline")]
+    pub(crate) supersedes_parts_of: Vec<String>,
     pub(crate) content_hash: String,
     pub(crate) file_size_bytes: u64,
     pub(crate) incoming_links: usize,
@@ -305,10 +310,22 @@ pub(crate) fn refresh_fact_store(context: &EngineContext) -> Result<()> {
         .flat_map(|doc| doc.links.iter())
         .map(|path| (path, context.target_dir.join(path).exists()))
         .collect::<Vec<_>>();
+    let stale_after = u64::from(context.schema.rules.stale_active_plan_days.unwrap_or(30)) * 86400;
+    let now = now_unix();
+    let stale_plan_states = artifact
+        .docs
+        .iter()
+        .filter(|doc| doc.role.starts_with("exec_plans"))
+        .map(|doc| {
+            let age = now.saturating_sub(doc.mtime_unix);
+            (&doc.path, age / 86400, age > stale_after)
+        })
+        .collect::<Vec<_>>();
     let fingerprint = simple_content_hash(&serde_json::to_string(&(
         &coverage,
         &external_refs,
         link_states,
+        stale_plan_states,
     ))?);
     if meta_value(&db, "discovery_fingerprint")?.as_deref() != Some(&fingerprint) {
         artifact.checks = build_index_checks(
@@ -484,6 +501,8 @@ fn fact_store_is_compatible(db: &SqliteConnection) -> Result<bool> {
         "checks",
         "scope_paths",
         "supersedes",
+        "superseded_by",
+        "supersedes_parts_of",
         "external_refs",
         "docs_fts",
         "docs_trigram",
@@ -831,6 +850,14 @@ fn initialize_fact_store(db: &SqliteConnection) -> Result<()> {
             doc_path TEXT NOT NULL,
             superseded_path TEXT NOT NULL
          );
+         CREATE TABLE IF NOT EXISTS superseded_by (
+            doc_path TEXT NOT NULL,
+            successor_path TEXT NOT NULL
+         );
+         CREATE TABLE IF NOT EXISTS supersedes_parts_of (
+            doc_path TEXT NOT NULL,
+            superseded_path TEXT NOT NULL
+         );
          CREATE INDEX IF NOT EXISTS idx_docs_role ON docs(role);
          CREATE INDEX IF NOT EXISTS idx_docs_collection ON docs(collection_name);
          CREATE INDEX IF NOT EXISTS idx_docs_status ON docs(status);
@@ -882,14 +909,32 @@ fn load_indexed_doc(
                 .or_else(|| default_authority(name))
         })
     });
-    let status = parsed.frontmatter.get("status").cloned().or_else(|| {
-        collection.as_ref().and_then(|name| {
-            collection_by_path
-                .get(name)
-                .and_then(|spec| spec.status.clone())
-        })
-    });
+    let default_status = schema
+        .core_files
+        .iter()
+        .find(|spec| core_file_rel_path(schema, spec) == rel_path)
+        .and_then(|spec| spec.status.clone())
+        .or_else(|| {
+            collection.as_ref().and_then(|name| {
+                collection_by_path
+                    .get(name)
+                    .and_then(|spec| spec.status.clone())
+            })
+        });
     let role = infer_index_role(schema, rel_path, collection.as_deref());
+    let default_status = default_status.as_deref().or_else(|| {
+        if role.starts_with("exec_plans") || role.starts_with("worklog") {
+            Some("active")
+        } else {
+            None
+        }
+    });
+    let status = infer_status(
+        parsed.frontmatter.get("status").map(String::as_str),
+        rel_path,
+        &parsed.summary,
+        default_status,
+    );
     let is_generated = authority.as_deref() == Some("generated");
     let is_reference = authority.as_deref() == Some("reference");
 
@@ -908,6 +953,8 @@ fn load_indexed_doc(
         path_mentions: parsed.path_mentions.clone(),
         scope_paths: parsed.scope_paths.clone(),
         supersedes: parsed.supersedes.clone(),
+        superseded_by: parsed.superseded_by.clone(),
+        supersedes_parts_of: parsed.supersedes_parts_of.clone(),
         incoming_links: 0,
         outgoing_links: 0,
         is_entrypoint: is_entrypoint_path(schema, rel_path),
@@ -945,6 +992,8 @@ fn apply_doc_fact_delta(
                 "DELETE FROM path_mentions WHERE doc_path = ?1;",
                 "DELETE FROM scope_paths WHERE doc_path = ?1;",
                 "DELETE FROM supersedes WHERE doc_path = ?1;",
+                "DELETE FROM superseded_by WHERE doc_path = ?1;",
+                "DELETE FROM supersedes_parts_of WHERE doc_path = ?1;",
             ] {
                 db.execute(sql, [path])?;
             }
@@ -964,7 +1013,8 @@ fn collect_impacted_relation_sources(
     previous_docs: &[IndexedDoc],
     path_set: &BTreeSet<String>,
 ) -> Result<BTreeSet<String>> {
-    let mut impacted = BTreeSet::new();
+    // Deleted documents still own relations that must be removed from the graph.
+    let mut impacted = delta.removed_paths.iter().cloned().collect::<BTreeSet<_>>();
     let touched_paths = delta
         .added_paths
         .iter()
@@ -1000,6 +1050,8 @@ fn collect_impacted_relation_sources(
             || doc
                 .supersedes
                 .iter()
+                .chain(doc.superseded_by.iter())
+                .chain(doc.supersedes_parts_of.iter())
                 .any(|path| touched_paths.contains(path));
         if depends_on_touched {
             impacted.insert(doc.path.clone());
@@ -1189,6 +1241,14 @@ fn insert_doc_facts(db: &SqliteConnection, doc: &IndexedDoc) -> Result<()> {
             "INSERT INTO supersedes(doc_path, superseded_path) VALUES (?1, ?2);",
             &doc.supersedes,
         ),
+        (
+            "INSERT INTO superseded_by(doc_path, successor_path) VALUES (?1, ?2);",
+            &doc.superseded_by,
+        ),
+        (
+            "INSERT INTO supersedes_parts_of(doc_path, superseded_path) VALUES (?1, ?2);",
+            &doc.supersedes_parts_of,
+        ),
     ] {
         for value in values {
             db.execute(sql, params![doc.path, value])?;
@@ -1230,7 +1290,9 @@ fn replace_fact_store_contents(db: &SqliteConnection, artifact: &IndexArtifact) 
              DELETE FROM relations;
              DELETE FROM checks;
              DELETE FROM scope_paths;
-             DELETE FROM supersedes;",
+             DELETE FROM supersedes;
+             DELETE FROM superseded_by;
+             DELETE FROM supersedes_parts_of;",
         )?;
         insert_meta(
             db,
@@ -1281,7 +1343,7 @@ pub(crate) fn read_index_artifact_from_fact_store(db: &SqliteConnection) -> Resu
     let docs_rows = db.query(
         "SELECT path, title, role, COALESCE(status, ''), COALESCE(authority, ''), COALESCE(collection_name, ''),
                 summary, frontmatter_keys_text, headings_text, content_hash, file_size_bytes, incoming_links, outgoing_links,
-                is_entrypoint, is_anchor_candidate, is_generated, is_reference, mtime_unix
+                is_entrypoint, is_anchor_candidate, is_generated, is_reference, mtime_unix, body_tokens
          FROM docs
          ORDER BY path ASC;", [])?;
     let headings_rows = db.query(
@@ -1304,6 +1366,12 @@ pub(crate) fn read_index_artifact_from_fact_store(db: &SqliteConnection) -> Resu
     )?;
     let supersedes_rows = db.query(
         "SELECT doc_path, superseded_path FROM supersedes ORDER BY doc_path ASC, superseded_path ASC;", [])?;
+    let superseded_by_rows = db.query(
+        "SELECT doc_path, successor_path FROM superseded_by ORDER BY doc_path, successor_path;",
+        [],
+    )?;
+    let partial_rows = db.query(
+        "SELECT doc_path, superseded_path FROM supersedes_parts_of ORDER BY doc_path, superseded_path;", [])?;
     let relations_rows = db.query(
         "SELECT src_path, dst_path, relation_type, reason, explicit, confidence, evidence_json
          FROM relations
@@ -1323,6 +1391,8 @@ pub(crate) fn read_index_artifact_from_fact_store(db: &SqliteConnection) -> Resu
     let path_mentions_by_doc = group_second_column(&path_mentions_rows);
     let scope_by_doc = group_second_column(&scope_rows);
     let supersedes_by_doc = group_second_column(&supersedes_rows);
+    let successors_by_doc = group_second_column(&superseded_by_rows);
+    let partial_by_doc = group_second_column(&partial_rows);
     let mut mtime_ns_by_path = BTreeMap::new();
     for row in &file_state_rows.rows {
         mtime_ns_by_path.insert(
@@ -1339,7 +1409,7 @@ pub(crate) fn read_index_artifact_from_fact_store(db: &SqliteConnection) -> Resu
             title: cell(row, 1).to_string(),
             summary: cell(row, 6).to_string(),
             frontmatter_keys: split_pipe_list(cell(row, 7)),
-            content_text: String::new(),
+            content_text: cell(row, 18).to_string(),
             role: cell(row, 2).to_string(),
             status: empty_as_none(cell(row, 3)),
             authority: empty_as_none(cell(row, 4)),
@@ -1355,6 +1425,14 @@ pub(crate) fn read_index_artifact_from_fact_store(db: &SqliteConnection) -> Resu
                 .unwrap_or_default(),
             scope_paths: scope_by_doc.get(cell(row, 0)).cloned().unwrap_or_default(),
             supersedes: supersedes_by_doc
+                .get(cell(row, 0))
+                .cloned()
+                .unwrap_or_default(),
+            superseded_by: successors_by_doc
+                .get(cell(row, 0))
+                .cloned()
+                .unwrap_or_default(),
+            supersedes_parts_of: partial_by_doc
                 .get(cell(row, 0))
                 .cloned()
                 .unwrap_or_default(),
@@ -1401,6 +1479,7 @@ pub(crate) fn read_index_artifact_from_fact_store(db: &SqliteConnection) -> Resu
             severity: cell(row, 1).to_string(),
             subject_path: cell(row, 2).to_string(),
             message: cell(row, 3).to_string(),
+            hint: crate::checks::hint_from_evidence(cell(row, 4)),
             evidence_json: cell(row, 4).to_string(),
         })
         .collect::<Vec<_>>();
@@ -1578,6 +1657,30 @@ fn build_doc_relations(
                 true,
             );
         }
+        for (targets, relation_type, reason) in [
+            (
+                &doc.superseded_by,
+                "superseded_by",
+                "frontmatter.superseded_by",
+            ),
+            (
+                &doc.supersedes_parts_of,
+                "supersedes_parts_of",
+                "frontmatter.supersedes_parts_of",
+            ),
+        ] {
+            for target in targets {
+                push_relation(
+                    &mut relations,
+                    &mut seen,
+                    doc.path.clone(),
+                    target.clone(),
+                    relation_type,
+                    reason,
+                    true,
+                );
+            }
+        }
     }
 
     relations
@@ -1621,7 +1724,7 @@ fn push_relation(
 fn relation_confidence(relation_type: &str, explicit: bool) -> f32 {
     if explicit {
         match relation_type {
-            "doc_scopes_code" | "supersedes" => 1.0,
+            "doc_scopes_code" | "supersedes" | "superseded_by" | "supersedes_parts_of" => 1.0,
             "doc_indexes_doc" => 0.95,
             "doc_links_doc" => 0.9,
             "doc_mentions_code_path" => 0.75,
@@ -1663,7 +1766,11 @@ fn annotate_link_counts(docs: &mut [IndexedDoc], relations: &[DocRelation]) {
 fn counts_for_doc_navigation(relation: &DocRelation) -> bool {
     matches!(
         relation.relation_type.as_str(),
-        "doc_indexes_doc" | "doc_links_doc" | "supersedes"
+        "doc_indexes_doc"
+            | "doc_links_doc"
+            | "supersedes"
+            | "superseded_by"
+            | "supersedes_parts_of"
     )
 }
 

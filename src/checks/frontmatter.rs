@@ -24,6 +24,13 @@ pub(super) fn add_frontmatter_constraint_checks(
             .cloned()
             .collect::<BTreeSet<_>>();
         for key in &doc.frontmatter_keys {
+            // These additive fields also work with pre-lifecycle project schemas.
+            if matches!(key.as_str(), "superseded_by" | "supersedes_parts_of")
+                || (key == "status"
+                    && (doc.role.starts_with("exec_plans") || doc.role.starts_with("worklog")))
+            {
+                continue;
+            }
             if !allowed.contains(key) {
                 push_check(
                     checks,

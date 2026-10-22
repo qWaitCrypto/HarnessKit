@@ -227,6 +227,8 @@ pub(crate) fn render_check_json(
         rule_group: String,
         subject_path: &'a str,
         message: &'a str,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        hint: Option<&'a str>,
         #[serde(serialize_with = "serialize_evidence")]
         evidence_json: &'a str,
         suppressed: bool,
@@ -249,6 +251,7 @@ pub(crate) fn render_check_json(
             rule_group: rule_group(&check.rule_id),
             subject_path: &check.subject_path,
             message: &check.message,
+            hint: check.hint.as_deref(),
             evidence_json: &check.evidence_json,
             suppressed: check.suppressed,
             suppression_reason: check.suppression_reason.as_deref(),

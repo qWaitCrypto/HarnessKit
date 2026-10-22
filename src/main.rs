@@ -8,6 +8,7 @@ mod fs_utils;
 mod git;
 mod history;
 mod index;
+mod lifecycle;
 mod output;
 mod parse;
 mod query;

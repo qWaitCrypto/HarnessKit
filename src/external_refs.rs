@@ -106,6 +106,7 @@ pub(crate) fn refresh_external_refs(
                     checks.push(IndexCheck {
                         rule_id: "external-ref-changed".to_string(), severity: "info".to_string(),
                         subject_path: doc.path.clone(),
+                        hint: None,
                         message: format!("{} changed since {} recorded it; review the evidence and update the referring document.", target, doc.path),
                         evidence_json: serde_json::json!({"source": doc.path, "target": target, "recorded_hash": content_hash, "current_hash": observed_hash}).to_string(),
                     });

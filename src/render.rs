@@ -11,7 +11,8 @@ use std::path::Path;
 
 use crate::checks::CheckView;
 use crate::cli::InitMode;
-use crate::context::ContextPacket;
+use crate::context::{ContextDoc, ContextPacket, CurrentContext, HandoffContext};
+use crate::discover::Coverage;
 use crate::doctor::{CommandCheck, DoctorReport};
 use crate::git::find_host_git_dir;
 use crate::history::{is_history_dirty, HistoryDiff, HistorySnapshot, HistoryStatus, RestorePlan};
@@ -543,6 +544,102 @@ pub(crate) fn print_context_packet(label: &str, input: &str, packet: &ContextPac
     print_path_list(&packet.recommended_reading_order);
 }
 
+fn short_line(text: &str, limit: usize) -> String {
+    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if text.chars().count() > limit {
+        text.chars().take(limit).collect::<String>() + "…"
+    } else {
+        text
+    }
+}
+
+fn print_context_pointer(doc: &ContextDoc) {
+    println!(
+        "- {} [status={}, lifecycle={}] :: {}",
+        doc.path,
+        doc.status.as_deref().unwrap_or("default"),
+        doc.lifecycle,
+        short_line(&doc.title, 96)
+    );
+}
+
+pub(crate) fn print_current_context(packet: &CurrentContext, coverage: &Coverage, hint: &str) {
+    println!("Current context:");
+    println!("Entrypoints:");
+    for doc in &packet.entrypoints {
+        print_context_pointer(doc);
+    }
+    if packet.entrypoints.is_empty() {
+        println!("- none");
+    }
+    println!("Project map:");
+    if let Some(doc) = &packet.project_map {
+        print_context_pointer(doc);
+    } else {
+        println!("- none");
+    }
+    println!("Active plans: {} (newest first)", packet.active_plans.len());
+    for doc in packet.active_plans.iter().take(8) {
+        print_context_pointer(doc);
+    }
+    if packet.active_plans.len() > 8 {
+        println!(
+            "- {} more active plans; use --json",
+            packet.active_plans.len() - 8
+        );
+    }
+    println!("Recent current decisions:");
+    for doc in packet.recent_decisions.iter().take(3) {
+        print_context_pointer(doc);
+    }
+    println!(
+        "Latest snapshot: {}",
+        packet
+            .latest_snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.id.as_str())
+            .unwrap_or("none")
+    );
+    if let Some(changes) = &packet.changes_since_snapshot {
+        println!(
+            "Since snapshot: {} added, {} modified, {} removed documents",
+            changes.added.len(),
+            changes.modified.len(),
+            changes.removed.len()
+        );
+    }
+    println!(
+        "Unverified: {} unchecked items in {} current documents",
+        packet.unverified_items,
+        packet.unverified_documents.len()
+    );
+    println!("{}", coverage.summary());
+    println!("Hint: {}", hint);
+}
+
+pub(crate) fn print_handoff_context(packet: &HandoffContext, coverage: &Coverage, hint: &str) {
+    println!("Context since {}:", packet.since);
+    for (label, docs) in [("Added", &packet.added), ("Modified", &packet.modified)] {
+        println!("{}: {}", label, docs.len());
+        for doc in docs {
+            println!(
+                "- {} [status={}, lifecycle={}] :: {} | {}",
+                doc.path,
+                doc.status.as_deref().unwrap_or("default"),
+                doc.lifecycle,
+                short_line(&doc.title, 96),
+                short_line(&doc.summary, 180)
+            );
+        }
+    }
+    println!("Removed: {}", packet.removed.len());
+    for path in &packet.removed {
+        println!("- {}", path);
+    }
+    println!("{}", coverage.summary());
+    println!("Hint: {}", hint);
+}
+
 fn print_relation_list(relations: &[DocRelation], incoming: bool) {
     if relations.is_empty() {
         println!("- none");
@@ -657,6 +754,9 @@ pub(crate) fn print_check_output(
             "[{}] {} {} - {}",
             check.severity, check.rule_id, check.subject_path, check.message
         );
+        if let Some(hint) = &check.hint {
+            println!("  Hint: {}", hint);
+        }
         if !check.evidence_json.is_empty() && check.evidence_json != "{}" {
             println!("  evidence: {}", check.evidence_json);
         }
