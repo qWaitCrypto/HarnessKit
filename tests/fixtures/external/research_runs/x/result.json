@@ -1,0 +1,5 @@
+{
+  "probe": "quartz",
+  "samples": [12, 18, 24],
+  "unit": "synthetic-ticks"
+}

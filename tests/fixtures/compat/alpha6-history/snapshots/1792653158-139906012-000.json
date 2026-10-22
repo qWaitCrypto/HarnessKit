@@ -1,0 +1,24 @@
+{
+  "id": "1792653158-139906012-000",
+  "created_at_unix": 1792653158,
+  "message": "alpha.6 \"legacy\" snapshot: 合成记录",
+  "docs_root": "docs",
+  "schema_hash": "",
+  "host_git_head": null,
+  "host_git_branch": null,
+  "host_git_dirty": false,
+  "files": [
+    {
+      "path": "docs/design-docs/legacy-relay.md",
+      "hash": "fb8647ecd443861541133885bcb5ac7a",
+      "size": 79,
+      "mtime_unix": 1792653158
+    },
+    {
+      "path": "docs/index.md",
+      "hash": "8c1496240b7c227b5902ab1ab36ed22d",
+      "size": 69,
+      "mtime_unix": 1792653158
+    }
+  ]
+}

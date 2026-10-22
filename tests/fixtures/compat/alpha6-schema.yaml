@@ -1,0 +1,117 @@
+schema_version: 0
+managed_root: docs
+
+entrypoints:
+  agents: AGENTS.md
+  claude: CLAUDE.md
+  architecture: ARCHITECTURE.md
+  manifest: docs/index.md
+  project_map: docs/project.md
+
+core_files:
+  architecture:
+    root_path: ARCHITECTURE.md
+    authority: canonical
+    status: active
+    required: true
+    template: architecture
+  index:
+    path: index.md
+    authority: canonical
+    required: true
+    template: docs-index
+  project:
+    path: project.md
+    authority: canonical
+    status: active
+    required: true
+    template: project-map
+  documentation_system:
+    path: DOCUMENTATION_SYSTEM.md
+    authority: canonical
+    status: stable
+    required: true
+    template: documentation-system
+  commands:
+    path: commands.md
+    authority: canonical
+    status: active
+    required: true
+    template: commands
+
+doc_collections:
+  product_specs:
+    path: product-specs
+    authority: canonical
+    status: active
+    anchor_candidate: true
+    template: product-spec
+    allowed_frontmatter: [status, authority, scope_paths, supersedes]
+  design_docs:
+    path: design-docs
+    authority: canonical
+    status: active
+    anchor_candidate: true
+    template: design-doc
+    allowed_frontmatter: [status, authority, scope_paths, supersedes]
+  decisions:
+    path: decisions
+    authority: canonical
+    status: active
+    anchor_candidate: true
+    template: decision
+    allowed_frontmatter: [status, authority, scope_paths, supersedes]
+  exec_plans_active:
+    path: exec-plans/active
+    authority: supporting
+    anchor_candidate: false
+    template: exec-plan
+    allowed_frontmatter: []
+  exec_plans_completed:
+    path: exec-plans/completed
+    authority: supporting
+    anchor_candidate: false
+    template: exec-plan
+    allowed_frontmatter: []
+  worklog_active:
+    path: worklog/active
+    authority: supporting
+    anchor_candidate: false
+    template: worklog
+    allowed_frontmatter: []
+  worklog_archive:
+    path: worklog/archive
+    authority: supporting
+    anchor_candidate: false
+    template: worklog
+    allowed_frontmatter: []
+  operations:
+    path: operations
+    authority: supporting
+    anchor_candidate: false
+    template: operation
+    allowed_frontmatter: [status, authority]
+  generated:
+    path: generated
+    authority: generated
+    anchor_candidate: false
+    template: generated
+    allowed_frontmatter: []
+  references:
+    path: references
+    authority: reference
+    anchor_candidate: false
+    template: reference
+    allowed_frontmatter: []
+
+rules:
+  path_defines_doc_type: true
+  h1_is_title: true
+  first_paragraph_is_summary: true
+  index_required: true
+  prefer_directory_defaults: true
+  minimal_frontmatter_only: true
+  stale_explicit_anchor: true
+  duplicate_detection: true
+  contamination_checks: true
+  strict_checks: false
