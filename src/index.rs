@@ -1,0 +1,1726 @@
+use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use crate::checks::{build_index_checks, IndexCheck};
+use crate::discover::{
+    collect_managed_doc_paths, collection_lookup, collection_name_for_path, infer_index_role,
+    is_anchor_candidate, is_entrypoint_path,
+};
+use crate::fs_utils::{
+    absolute_display_path, ensure_writable_fact_store_dir, fact_store_path_hint,
+    file_modified_parts, now_unix, read_text_lossy, simple_content_hash,
+};
+use crate::git::{host_git_info, HostGitInfo, HostGitMode};
+use crate::history::{compute_history_status, is_history_dirty, HistoryStatus};
+use crate::parse::parse_doc_text;
+use crate::render::{json_string, render_index_json, render_index_summary};
+use crate::schema::{DocCollectionSpec, Schema};
+use crate::sqlite_cli::{QueryResult, SqliteConnection};
+use crate::Result;
+
+pub(crate) const FACT_SCHEMA_VERSION: &str = "3";
+
+#[derive(Clone, Default)]
+pub(crate) struct IndexedDoc {
+    pub(crate) path: String,
+    pub(crate) title: String,
+    pub(crate) summary: String,
+    pub(crate) frontmatter_keys: Vec<String>,
+    pub(crate) content_text: String,
+    pub(crate) role: String,
+    pub(crate) status: Option<String>,
+    pub(crate) authority: Option<String>,
+    pub(crate) collection: Option<String>,
+    pub(crate) headings: Vec<String>,
+    pub(crate) links: Vec<String>,
+    pub(crate) path_mentions: Vec<String>,
+    pub(crate) scope_paths: Vec<String>,
+    pub(crate) supersedes: Vec<String>,
+    pub(crate) incoming_links: usize,
+    pub(crate) outgoing_links: usize,
+    pub(crate) is_entrypoint: bool,
+    pub(crate) is_anchor_candidate: bool,
+    pub(crate) is_generated: bool,
+    pub(crate) is_reference: bool,
+    pub(crate) content_hash: String,
+    pub(crate) file_size_bytes: u64,
+    pub(crate) mtime_unix: u64,
+    pub(crate) mtime_ns: u64,
+}
+
+#[derive(Clone)]
+pub(crate) struct DocRelation {
+    pub(crate) src_path: String,
+    pub(crate) dst_path: String,
+    pub(crate) relation_type: String,
+    pub(crate) reason: String,
+    pub(crate) explicit: bool,
+    pub(crate) confidence: f32,
+    pub(crate) evidence_json: String,
+}
+
+#[derive(Default)]
+pub(crate) struct IndexArtifact {
+    pub(crate) repo_root: String,
+    pub(crate) managed_root: String,
+    pub(crate) generated_at_unix: u64,
+    pub(crate) history_latest_snapshot: Option<String>,
+    pub(crate) history_dirty: bool,
+    pub(crate) history_tracked_files_count: usize,
+    pub(crate) host_git_head: Option<String>,
+    pub(crate) host_git_branch: Option<String>,
+    pub(crate) host_git_dirty: bool,
+    pub(crate) docs: Vec<IndexedDoc>,
+    pub(crate) relations: Vec<DocRelation>,
+    pub(crate) checks: Vec<IndexCheck>,
+}
+
+pub(crate) struct EngineContext {
+    pub(crate) target_dir: PathBuf,
+    pub(crate) schema: Schema,
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct FileStateRecord {
+    pub(crate) content_hash: String,
+    pub(crate) file_size_bytes: u64,
+    pub(crate) mtime_unix: u64,
+    pub(crate) mtime_ns: u64,
+}
+
+#[derive(Default)]
+pub(crate) struct FactStoreDelta {
+    pub(crate) added_paths: Vec<String>,
+    pub(crate) changed_paths: Vec<String>,
+    pub(crate) removed_paths: Vec<String>,
+}
+
+pub(crate) fn build_index_artifact(target_dir: &Path, schema: &Schema) -> Result<IndexArtifact> {
+    let repo_root = target_dir
+        .canonicalize()
+        .unwrap_or_else(|_| target_dir.to_path_buf());
+    let mut doc_paths = collect_managed_doc_paths(&repo_root, schema)?;
+    doc_paths.sort();
+
+    let mut parsed_docs = Vec::new();
+    let mut docs = Vec::new();
+    let mut path_set = BTreeSet::new();
+    let collection_by_path = collection_lookup(schema);
+
+    for rel_path in &doc_paths {
+        path_set.insert(rel_path.clone());
+        let abs = repo_root.join(rel_path);
+        let text = read_text_lossy(&abs)?;
+        let parsed = parse_doc_text(rel_path, &text);
+        let metadata = fs::metadata(&abs)?;
+        let (mtime_unix, mtime_ns) = file_modified_parts(&metadata)?;
+        let collection = collection_name_for_path(schema, rel_path);
+        let authority = parsed.frontmatter.get("authority").cloned().or_else(|| {
+            collection.as_ref().and_then(|name| {
+                collection_by_path
+                    .get(name)
+                    .and_then(|spec| spec.authority.clone())
+            })
+        });
+        let status = parsed.frontmatter.get("status").cloned().or_else(|| {
+            collection.as_ref().and_then(|name| {
+                collection_by_path
+                    .get(name)
+                    .and_then(|spec| spec.status.clone())
+            })
+        });
+        let role = infer_index_role(schema, rel_path, collection.as_deref());
+        let is_generated = authority.as_deref() == Some("generated");
+        let is_reference = authority.as_deref() == Some("reference");
+
+        docs.push(IndexedDoc {
+            path: rel_path.clone(),
+            title: parsed.title.clone().unwrap_or_else(|| rel_path.clone()),
+            summary: parsed.summary.clone(),
+            frontmatter_keys: parsed.frontmatter.keys().cloned().collect(),
+            content_text: parsed.body_text.clone(),
+            role,
+            status,
+            authority,
+            collection,
+            headings: parsed.headings.clone(),
+            links: parsed.links.clone(),
+            path_mentions: parsed.path_mentions.clone(),
+            scope_paths: parsed.scope_paths.clone(),
+            supersedes: parsed.supersedes.clone(),
+            incoming_links: 0,
+            outgoing_links: 0,
+            is_entrypoint: is_entrypoint_path(schema, rel_path),
+            is_anchor_candidate: is_anchor_candidate(schema, rel_path),
+            is_generated,
+            is_reference,
+            content_hash: simple_content_hash(&text),
+            file_size_bytes: metadata.len(),
+            mtime_unix,
+            mtime_ns,
+        });
+        parsed_docs.push(parsed);
+    }
+
+    let mut relations = build_doc_relations(schema, &docs, &path_set);
+    annotate_link_counts(&mut docs, &relations);
+    let checks = build_index_checks(schema, &repo_root, &docs, &relations);
+    let history_status = compute_history_status(&repo_root, schema).unwrap_or_default();
+    let host_git = host_git_info(&repo_root, HostGitMode::Full);
+    relations.sort_by(|a, b| {
+        a.src_path
+            .cmp(&b.src_path)
+            .then_with(|| a.dst_path.cmp(&b.dst_path))
+            .then_with(|| a.relation_type.cmp(&b.relation_type))
+    });
+
+    Ok(IndexArtifact {
+        repo_root: absolute_display_path(&repo_root),
+        managed_root: schema.managed_root.clone(),
+        generated_at_unix: now_unix(),
+        history_latest_snapshot: history_status.latest_snapshot.clone(),
+        history_dirty: is_history_dirty(&history_status),
+        history_tracked_files_count: history_status.tracked_files_count,
+        host_git_head: host_git.head,
+        host_git_branch: host_git.branch,
+        host_git_dirty: host_git.dirty,
+        docs,
+        relations,
+        checks,
+    })
+}
+
+pub(crate) fn write_index_artifact(target_dir: &Path, artifact: &IndexArtifact) -> Result<()> {
+    let state_dir = target_dir.join(".harnesskit").join("state");
+    ensure_writable_fact_store_dir(target_dir, &state_dir, "HarnessKit state")?;
+    fs::write(
+        state_dir.join("doc-index.json"),
+        render_index_json(artifact),
+    )
+    .map_err(|err| {
+        format!(
+            "cannot write HarnessKit index artifact: {}\n\n{}",
+            err,
+            fact_store_path_hint(target_dir, Some(&state_dir), None)
+        )
+    })?;
+    fs::write(
+        state_dir.join("doc-index-summary.md"),
+        render_index_summary(artifact),
+    )
+    .map_err(|err| {
+        format!(
+            "cannot write HarnessKit index summary: {}\n\n{}",
+            err,
+            fact_store_path_hint(target_dir, Some(&state_dir), None)
+        )
+    })?;
+    Ok(())
+}
+
+pub(crate) fn write_fact_store(target_dir: &Path, artifact: &IndexArtifact) -> Result<()> {
+    let state_dir = target_dir.join(".harnesskit").join("state");
+    ensure_writable_fact_store_dir(target_dir, &state_dir, "HarnessKit fact store")?;
+    let db_path = state_dir.join("facts.sqlite");
+    let tmp_path = state_dir.join(format!(
+        "facts.sqlite.rebuild-{}-{}",
+        std::process::id(),
+        now_unix()
+    ));
+    let _ = fs::remove_file(&tmp_path);
+    let db = SqliteConnection::open(&tmp_path).map_err(|err| {
+        format!(
+            "cannot create HarnessKit fact store at {}: {}\n\n{}",
+            tmp_path.display(),
+            err,
+            fact_store_path_hint(target_dir, Some(&state_dir), Some(&db_path))
+        )
+    })?;
+    initialize_fact_store(&db)?;
+    replace_fact_store_contents(&db, artifact)?;
+    db.exec("PRAGMA wal_checkpoint(TRUNCATE);")?;
+    drop(db);
+    replace_fact_store_file(&db_path, &tmp_path)?;
+    Ok(())
+}
+
+fn replace_fact_store_file(db_path: &Path, tmp_path: &Path) -> Result<()> {
+    for suffix in ["-wal", "-shm"] {
+        let _ = fs::remove_file(PathBuf::from(format!("{}{}", tmp_path.display(), suffix)));
+        let _ = fs::remove_file(PathBuf::from(format!("{}{}", db_path.display(), suffix)));
+    }
+    fs::rename(tmp_path, db_path).map_err(|err| {
+        let target_dir = db_path
+            .parent()
+            .and_then(|state| state.parent())
+            .and_then(|harnesskit| harnesskit.parent())
+            .unwrap_or_else(|| Path::new("."));
+        format!(
+            "cannot replace HarnessKit fact store at {}: {}\n\n{}",
+            db_path.display(),
+            err,
+            fact_store_path_hint(target_dir, db_path.parent(), Some(db_path))
+        )
+    })?;
+    Ok(())
+}
+
+pub(crate) fn open_fact_store(target_dir: &Path) -> Result<SqliteConnection> {
+    let state_dir = target_dir.join(".harnesskit").join("state");
+    ensure_writable_fact_store_dir(target_dir, &state_dir, "HarnessKit fact store")?;
+    let db_path = state_dir.join("facts.sqlite");
+    if !db_path.exists() {
+        return Err(format!(
+            "fact store not found at {}. Run `harnesskit index` first.\n\n{}",
+            db_path.display(),
+            fact_store_path_hint(target_dir, Some(&state_dir), Some(&db_path))
+        )
+        .into());
+    }
+    SqliteConnection::open(&db_path).map_err(|err| {
+        let err_text = err.to_string();
+        if err_text.contains("sqlite3 CLI not found") {
+            return format!(
+                "cannot open HarnessKit fact store at {} because sqlite3 is unavailable: {}\n\n{}",
+                db_path.display(),
+                trim_trailing_period(&err_text),
+                fact_store_path_hint(target_dir, Some(&state_dir), Some(&db_path))
+            )
+            .into();
+        }
+        format!(
+            "cannot open HarnessKit fact store at {}: {}. Check that the project path and `.harnesskit/state` are writable.\n\n{}",
+            db_path.display(),
+            err_text,
+            fact_store_path_hint(target_dir, Some(&state_dir), Some(&db_path))
+        )
+        .into()
+    })
+}
+
+fn trim_trailing_period(value: &str) -> &str {
+    value.strip_suffix('.').unwrap_or(value)
+}
+
+pub(crate) fn scalar_count(db: &SqliteConnection, sql: &str) -> Result<usize> {
+    let result = db.query(sql)?;
+    Ok(result
+        .rows
+        .first()
+        .map(|row| cell(row, 0).parse::<usize>().unwrap_or(0))
+        .unwrap_or(0))
+}
+
+pub(crate) fn refresh_fact_store(context: &EngineContext) -> Result<()> {
+    let db_path = context
+        .target_dir
+        .join(".harnesskit")
+        .join("state")
+        .join("facts.sqlite");
+    if !db_path.exists() {
+        rebuild_fact_store_full(context)?;
+        return Ok(());
+    }
+
+    let db = open_fact_store(&context.target_dir)?;
+    initialize_fact_store(&db)?;
+    if !fact_store_is_compatible(&db)? {
+        rebuild_fact_store_full(context)?;
+        return Ok(());
+    }
+
+    let delta = compute_fact_store_delta(context)?;
+    if delta.added_paths.is_empty()
+        && delta.changed_paths.is_empty()
+        && delta.removed_paths.is_empty()
+    {
+        if history_or_host_git_state_changed(context, &db)? {
+            refresh_fact_store_metadata(context, &db, "metadata")?;
+        }
+        return Ok(());
+    }
+
+    apply_fact_store_delta(context, &delta)?;
+    Ok(())
+}
+
+fn history_or_host_git_state_changed(
+    context: &EngineContext,
+    db: &SqliteConnection,
+) -> Result<bool> {
+    let history_status =
+        compute_history_status(&context.target_dir, &context.schema).unwrap_or_default();
+    let host_git = host_git_info(&context.target_dir, HostGitMode::Full);
+    let current = [
+        (
+            "history_latest_snapshot",
+            history_status.latest_snapshot.clone().unwrap_or_default(),
+        ),
+        (
+            "history_dirty",
+            if is_history_dirty(&history_status) {
+                "true"
+            } else {
+                "false"
+            }
+            .to_string(),
+        ),
+        (
+            "history_tracked_files_count",
+            history_status.tracked_files_count.to_string(),
+        ),
+        ("host_git_head", host_git.head.unwrap_or_default()),
+        ("host_git_branch", host_git.branch.unwrap_or_default()),
+        (
+            "host_git_dirty",
+            if host_git.dirty { "true" } else { "false" }.to_string(),
+        ),
+    ];
+    for (key, value) in current {
+        if meta_value(db, key)?.unwrap_or_default() != value {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn refresh_fact_store_metadata(
+    context: &EngineContext,
+    db: &SqliteConnection,
+    mode: &str,
+) -> Result<()> {
+    let artifact = read_index_artifact_from_fact_store(db)?;
+    let repo_root = context
+        .target_dir
+        .canonicalize()
+        .unwrap_or_else(|_| context.target_dir.clone());
+    let history_status = compute_history_status(&repo_root, &context.schema).unwrap_or_default();
+    let host_git = host_git_info(&repo_root, HostGitMode::Full);
+    let checks = build_index_checks(
+        &context.schema,
+        &repo_root,
+        &artifact.docs,
+        &artifact.relations,
+    );
+    replace_checks_and_meta(
+        db,
+        &absolute_display_path(&repo_root),
+        &context.schema.managed_root,
+        now_unix(),
+        mode,
+        &FactStoreDelta::default(),
+        &history_status,
+        &host_git,
+        &checks,
+    )
+}
+
+fn rebuild_fact_store_full(context: &EngineContext) -> Result<()> {
+    let artifact = build_index_artifact(&context.target_dir, &context.schema)?;
+    write_index_artifact(&context.target_dir, &artifact)?;
+    write_fact_store(&context.target_dir, &artifact)?;
+    Ok(())
+}
+
+fn fact_store_is_compatible(db: &SqliteConnection) -> Result<bool> {
+    let version = meta_value(db, "fact_schema_version")?;
+    if version.as_deref() != Some(FACT_SCHEMA_VERSION) {
+        return Ok(false);
+    }
+
+    let required_tables = [
+        "docs",
+        "file_states",
+        "headings",
+        "raw_links",
+        "path_mentions",
+        "relations",
+        "checks",
+        "scope_paths",
+        "supersedes",
+    ];
+    for table in required_tables {
+        let exists = db.query(&format!(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = {};",
+            sql_string_literal(table)
+        ))?;
+        if exists
+            .rows
+            .first()
+            .map(|row| cell(row, 0) != "1")
+            .unwrap_or(true)
+        {
+            return Ok(false);
+        }
+    }
+
+    let file_state_columns = db.query("PRAGMA table_info(file_states);")?;
+    let has_mtime_ns = file_state_columns
+        .rows
+        .iter()
+        .any(|row| cell(row, 1) == "mtime_ns");
+    if !has_mtime_ns {
+        return Ok(false);
+    }
+
+    Ok(true)
+}
+
+pub(crate) fn meta_value(db: &SqliteConnection, key: &str) -> Result<Option<String>> {
+    let result = db.query(&format!(
+        "SELECT value FROM meta WHERE key = {};",
+        sql_string_literal(key)
+    ))?;
+    Ok(result.rows.first().map(|row| cell(row, 0).to_string()))
+}
+
+pub(crate) fn compute_fact_store_delta(context: &EngineContext) -> Result<FactStoreDelta> {
+    let db = open_fact_store(&context.target_dir)?;
+    let rows = db.query("SELECT path, content_hash, file_size_bytes, mtime_unix, mtime_ns FROM file_states ORDER BY path ASC;")?;
+    let previous_states = parse_file_state_rows(&rows);
+    let current_states =
+        collect_current_file_states(&context.target_dir, &context.schema, &previous_states)?;
+
+    let mut added_paths = Vec::new();
+    let mut changed_paths = Vec::new();
+    let mut removed_paths = Vec::new();
+
+    for (path, current) in &current_states {
+        match previous_states.get(path) {
+            None => added_paths.push(path.clone()),
+            Some(previous) => {
+                if previous.content_hash != current.content_hash
+                    || previous.file_size_bytes != current.file_size_bytes
+                    || previous.mtime_unix != current.mtime_unix
+                    || previous.mtime_ns != current.mtime_ns
+                {
+                    changed_paths.push(path.clone());
+                }
+            }
+        }
+    }
+
+    for path in previous_states.keys() {
+        if !current_states.contains_key(path) {
+            removed_paths.push(path.clone());
+        }
+    }
+
+    added_paths.sort();
+    changed_paths.sort();
+    removed_paths.sort();
+
+    Ok(FactStoreDelta {
+        added_paths,
+        changed_paths,
+        removed_paths,
+    })
+}
+
+pub(crate) fn parse_file_state_rows(result: &QueryResult) -> BTreeMap<String, FileStateRecord> {
+    let mut states = BTreeMap::new();
+    for row in &result.rows {
+        let path = cell(row, 0).to_string();
+        if path.is_empty() {
+            continue;
+        }
+        states.insert(
+            path.clone(),
+            FileStateRecord {
+                content_hash: cell(row, 1).to_string(),
+                file_size_bytes: cell(row, 2).parse::<u64>().unwrap_or(0),
+                mtime_unix: cell(row, 3).parse::<u64>().unwrap_or(0),
+                mtime_ns: cell(row, 4).parse::<u64>().unwrap_or(0),
+            },
+        );
+    }
+    states
+}
+
+pub(crate) fn collect_current_file_states(
+    target_dir: &Path,
+    schema: &Schema,
+    previous_states: &BTreeMap<String, FileStateRecord>,
+) -> Result<BTreeMap<String, FileStateRecord>> {
+    let mut states = BTreeMap::new();
+    for rel_path in collect_managed_doc_paths(target_dir, schema)? {
+        let abs = target_dir.join(&rel_path);
+        let metadata = fs::metadata(&abs)?;
+        let (mtime_unix, mtime_ns) = file_modified_parts(&metadata)?;
+        if let Some(previous) = previous_states.get(&rel_path) {
+            if previous.file_size_bytes == metadata.len() && previous.mtime_ns == mtime_ns {
+                states.insert(rel_path.clone(), previous.clone());
+                continue;
+            }
+        }
+        let text = read_text_lossy(&abs)?;
+        states.insert(
+            rel_path.clone(),
+            FileStateRecord {
+                content_hash: simple_content_hash(&text),
+                file_size_bytes: metadata.len(),
+                mtime_unix,
+                mtime_ns,
+            },
+        );
+    }
+    Ok(states)
+}
+
+fn apply_fact_store_delta(context: &EngineContext, delta: &FactStoreDelta) -> Result<()> {
+    let db = open_fact_store(&context.target_dir)?;
+    let mut artifact = read_index_artifact_from_fact_store(&db)?;
+    let previous_docs = artifact.docs.clone();
+    let changed_set = delta
+        .added_paths
+        .iter()
+        .chain(delta.changed_paths.iter())
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let repo_root = context
+        .target_dir
+        .canonicalize()
+        .unwrap_or_else(|_| context.target_dir.clone());
+    let collection_by_path = collection_lookup(&context.schema);
+    let changed_docs = changed_set
+        .iter()
+        .map(|path| {
+            load_indexed_doc(
+                &context.target_dir,
+                &context.schema,
+                &collection_by_path,
+                path,
+            )
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    apply_doc_fact_delta(
+        &db,
+        &delta
+            .added_paths
+            .iter()
+            .chain(delta.changed_paths.iter())
+            .chain(delta.removed_paths.iter())
+            .cloned()
+            .collect::<Vec<_>>(),
+        &changed_docs,
+    )?;
+
+    let generated_at_unix = now_unix();
+    apply_doc_delta_to_artifact_docs(&mut artifact.docs, &changed_docs, &delta.removed_paths);
+    let path_set = artifact
+        .docs
+        .iter()
+        .map(|doc| doc.path.clone())
+        .collect::<BTreeSet<_>>();
+    let impacted_sources = collect_impacted_relation_sources(
+        &db,
+        &context.schema,
+        delta,
+        &changed_docs,
+        &previous_docs,
+        &path_set,
+    )?;
+    let impacted_docs = artifact
+        .docs
+        .iter()
+        .filter(|doc| impacted_sources.contains(&doc.path))
+        .cloned()
+        .collect::<Vec<_>>();
+    let rebuilt_relations = build_doc_relations(&context.schema, &impacted_docs, &path_set);
+    replace_relations_for_sources(&db, &impacted_sources, &rebuilt_relations)?;
+
+    artifact = read_index_artifact_from_fact_store(&db)?;
+    artifact.repo_root = absolute_display_path(&repo_root);
+    artifact.managed_root = context.schema.managed_root.clone();
+    artifact.generated_at_unix = generated_at_unix;
+    let history_status = compute_history_status(&repo_root, &context.schema).unwrap_or_default();
+    let host_git = host_git_info(&repo_root, HostGitMode::Full);
+    artifact.history_latest_snapshot = history_status.latest_snapshot.clone();
+    artifact.history_dirty = is_history_dirty(&history_status);
+    artifact.history_tracked_files_count = history_status.tracked_files_count;
+    artifact.host_git_head = host_git.head.clone();
+    artifact.host_git_branch = host_git.branch.clone();
+    artifact.host_git_dirty = host_git.dirty;
+    let mut relations = artifact.relations.clone();
+    relations.sort_by(|a, b| {
+        a.src_path
+            .cmp(&b.src_path)
+            .then_with(|| a.dst_path.cmp(&b.dst_path))
+            .then_with(|| a.relation_type.cmp(&b.relation_type))
+    });
+    annotate_link_counts(&mut artifact.docs, &relations);
+    update_doc_link_counts_in_db(&db, &artifact.docs)?;
+    let checks = build_index_checks(&context.schema, &repo_root, &artifact.docs, &relations);
+    replace_checks_and_meta(
+        &db,
+        &artifact.repo_root,
+        &artifact.managed_root,
+        generated_at_unix,
+        "delta",
+        delta,
+        &history_status,
+        &host_git,
+        &checks,
+    )?;
+    artifact.relations = relations;
+    artifact.checks = checks;
+    write_index_artifact(&context.target_dir, &artifact)?;
+    Ok(())
+}
+
+fn apply_doc_delta_to_artifact_docs(
+    docs: &mut Vec<IndexedDoc>,
+    changed_docs: &[IndexedDoc],
+    removed_paths: &[String],
+) {
+    let removed = removed_paths.iter().cloned().collect::<BTreeSet<_>>();
+    let mut changed_by_path = changed_docs
+        .iter()
+        .map(|doc| (doc.path.clone(), doc.clone()))
+        .collect::<BTreeMap<_, _>>();
+    let mut next = Vec::with_capacity(docs.len() + changed_docs.len());
+    for doc in docs.drain(..) {
+        if removed.contains(&doc.path) {
+            continue;
+        }
+        if let Some(changed) = changed_by_path.remove(&doc.path) {
+            next.push(changed);
+        } else {
+            next.push(doc);
+        }
+    }
+    next.extend(changed_by_path.into_values());
+    next.sort_by(|a, b| a.path.cmp(&b.path));
+    *docs = next;
+}
+
+fn initialize_fact_store(db: &SqliteConnection) -> Result<()> {
+    db.exec(
+        "PRAGMA journal_mode = WAL;
+         PRAGMA synchronous = NORMAL;
+         CREATE TABLE IF NOT EXISTS meta (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+         );
+         CREATE TABLE IF NOT EXISTS docs (
+            path TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            role TEXT NOT NULL,
+            status TEXT,
+            authority TEXT,
+            collection_name TEXT,
+            summary TEXT NOT NULL,
+            frontmatter_keys_text TEXT NOT NULL DEFAULT '',
+            headings_text TEXT NOT NULL,
+            content_hash TEXT NOT NULL,
+            file_size_bytes INTEGER NOT NULL,
+            incoming_links INTEGER NOT NULL,
+            outgoing_links INTEGER NOT NULL,
+            is_entrypoint INTEGER NOT NULL,
+            is_anchor_candidate INTEGER NOT NULL,
+            is_generated INTEGER NOT NULL,
+            is_reference INTEGER NOT NULL,
+            mtime_unix INTEGER NOT NULL
+         );
+         CREATE TABLE IF NOT EXISTS file_states (
+            path TEXT PRIMARY KEY,
+            content_hash TEXT NOT NULL,
+            file_size_bytes INTEGER NOT NULL,
+            mtime_unix INTEGER NOT NULL,
+            mtime_ns INTEGER NOT NULL DEFAULT 0
+         );
+         CREATE TABLE IF NOT EXISTS headings (
+            doc_path TEXT NOT NULL,
+            heading_index INTEGER NOT NULL,
+            heading_text TEXT NOT NULL
+         );
+         CREATE TABLE IF NOT EXISTS raw_links (
+            src_doc TEXT NOT NULL,
+            link_index INTEGER NOT NULL,
+            normalized_target TEXT NOT NULL
+         );
+         CREATE TABLE IF NOT EXISTS path_mentions (
+            doc_path TEXT NOT NULL,
+            mention_index INTEGER NOT NULL,
+            mentioned_path TEXT NOT NULL
+         );
+         CREATE TABLE IF NOT EXISTS relations (
+            src_path TEXT NOT NULL,
+            dst_path TEXT NOT NULL,
+            relation_type TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            explicit INTEGER NOT NULL,
+            confidence REAL NOT NULL,
+            evidence_json TEXT NOT NULL
+         );
+         CREATE TABLE IF NOT EXISTS checks (
+            rule_id TEXT NOT NULL,
+            severity TEXT NOT NULL,
+            subject_path TEXT NOT NULL,
+            message TEXT NOT NULL,
+            evidence_json TEXT NOT NULL DEFAULT '{}'
+         );
+         CREATE TABLE IF NOT EXISTS scope_paths (
+            doc_path TEXT NOT NULL,
+            scope_path TEXT NOT NULL
+         );
+         CREATE TABLE IF NOT EXISTS supersedes (
+            doc_path TEXT NOT NULL,
+            superseded_path TEXT NOT NULL
+         );
+         CREATE INDEX IF NOT EXISTS idx_docs_role ON docs(role);
+         CREATE INDEX IF NOT EXISTS idx_docs_collection ON docs(collection_name);
+         CREATE INDEX IF NOT EXISTS idx_docs_status ON docs(status);
+         CREATE INDEX IF NOT EXISTS idx_docs_mtime ON docs(mtime_unix);
+         CREATE INDEX IF NOT EXISTS idx_relations_src ON relations(src_path, relation_type);
+         CREATE INDEX IF NOT EXISTS idx_relations_dst ON relations(dst_path, relation_type);
+         CREATE INDEX IF NOT EXISTS idx_checks_subject ON checks(subject_path, severity);
+         CREATE VIRTUAL TABLE IF NOT EXISTS docs_fts USING fts5(
+            path UNINDEXED,
+            title,
+            headings_text,
+            summary,
+            body_tokens
+         );",
+    )?;
+    Ok(())
+}
+
+fn load_indexed_doc(
+    target_dir: &Path,
+    schema: &Schema,
+    collection_by_path: &BTreeMap<String, &DocCollectionSpec>,
+    rel_path: &str,
+) -> Result<IndexedDoc> {
+    let abs = target_dir.join(rel_path);
+    let text = read_text_lossy(&abs)?;
+    let parsed = parse_doc_text(rel_path, &text);
+    let metadata = fs::metadata(&abs)?;
+    let (mtime_unix, mtime_ns) = file_modified_parts(&metadata)?;
+    let collection = collection_name_for_path(schema, rel_path);
+    let authority = parsed.frontmatter.get("authority").cloned().or_else(|| {
+        collection.as_ref().and_then(|name| {
+            collection_by_path
+                .get(name)
+                .and_then(|spec| spec.authority.clone())
+        })
+    });
+    let status = parsed.frontmatter.get("status").cloned().or_else(|| {
+        collection.as_ref().and_then(|name| {
+            collection_by_path
+                .get(name)
+                .and_then(|spec| spec.status.clone())
+        })
+    });
+    let role = infer_index_role(schema, rel_path, collection.as_deref());
+    let is_generated = authority.as_deref() == Some("generated");
+    let is_reference = authority.as_deref() == Some("reference");
+
+    Ok(IndexedDoc {
+        path: rel_path.to_string(),
+        title: parsed.title.clone().unwrap_or_else(|| rel_path.to_string()),
+        summary: parsed.summary.clone(),
+        frontmatter_keys: parsed.frontmatter.keys().cloned().collect(),
+        content_text: parsed.body_text.clone(),
+        role,
+        status,
+        authority,
+        collection,
+        headings: parsed.headings.clone(),
+        links: parsed.links.clone(),
+        path_mentions: parsed.path_mentions.clone(),
+        scope_paths: parsed.scope_paths.clone(),
+        supersedes: parsed.supersedes.clone(),
+        incoming_links: 0,
+        outgoing_links: 0,
+        is_entrypoint: is_entrypoint_path(schema, rel_path),
+        is_anchor_candidate: is_anchor_candidate(schema, rel_path),
+        is_generated,
+        is_reference,
+        content_hash: simple_content_hash(&text),
+        file_size_bytes: metadata.len(),
+        mtime_unix,
+        mtime_ns,
+    })
+}
+
+fn apply_doc_fact_delta(
+    db: &SqliteConnection,
+    touched_paths: &[String],
+    changed_docs: &[IndexedDoc],
+) -> Result<()> {
+    let mut sql = String::from("BEGIN IMMEDIATE;");
+    for path in touched_paths {
+        let escaped = sql_string_literal(path);
+        sql.push_str(&format!(
+            "DELETE FROM docs WHERE path = {p};
+             DELETE FROM file_states WHERE path = {p};
+             DELETE FROM headings WHERE doc_path = {p};
+             DELETE FROM raw_links WHERE src_doc = {p};
+             DELETE FROM path_mentions WHERE doc_path = {p};
+             DELETE FROM scope_paths WHERE doc_path = {p};
+             DELETE FROM supersedes WHERE doc_path = {p};
+             DELETE FROM docs_fts WHERE path = {p};",
+            p = escaped
+        ));
+    }
+
+    for doc in changed_docs {
+        sql.push_str(&render_doc_fact_sql(doc));
+    }
+
+    sql.push_str("COMMIT;");
+    db.exec(&sql)?;
+    Ok(())
+}
+
+fn collect_impacted_relation_sources(
+    db: &SqliteConnection,
+    schema: &Schema,
+    delta: &FactStoreDelta,
+    changed_docs: &[IndexedDoc],
+    previous_docs: &[IndexedDoc],
+    path_set: &BTreeSet<String>,
+) -> Result<BTreeSet<String>> {
+    let mut impacted = BTreeSet::new();
+    let touched_paths = delta
+        .added_paths
+        .iter()
+        .chain(delta.changed_paths.iter())
+        .chain(delta.removed_paths.iter())
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let removed_paths = delta.removed_paths.iter().cloned().collect::<BTreeSet<_>>();
+
+    for doc in changed_docs {
+        impacted.insert(doc.path.clone());
+        if let Some(index_path) = collection_index_for_doc(schema, doc) {
+            impacted.insert(index_path);
+        }
+    }
+
+    for doc in previous_docs {
+        if removed_paths.contains(&doc.path) {
+            if let Some(index_path) = collection_index_for_doc(schema, doc) {
+                impacted.insert(index_path);
+            }
+            continue;
+        }
+        let depends_on_touched = doc.links.iter().any(|link| touched_paths.contains(link))
+            || doc
+                .path_mentions
+                .iter()
+                .any(|path| touched_paths.contains(path))
+            || doc
+                .scope_paths
+                .iter()
+                .any(|path| touched_paths.contains(path))
+            || doc
+                .supersedes
+                .iter()
+                .any(|path| touched_paths.contains(path));
+        if depends_on_touched {
+            impacted.insert(doc.path.clone());
+        }
+    }
+
+    for removed in &removed_paths {
+        let rows = db.query(&format!(
+            "SELECT DISTINCT src_path FROM relations WHERE dst_path = {} OR src_path = {};",
+            sql_string_literal(removed),
+            sql_string_literal(removed)
+        ))?;
+        for row in &rows.rows {
+            let path = cell(row, 0).to_string();
+            if !path.is_empty() && path_set.contains(&path) {
+                impacted.insert(path);
+            }
+        }
+    }
+
+    let manifest_path = schema.entrypoints.manifest.as_deref().unwrap_or("");
+    if !manifest_path.is_empty() {
+        impacted.insert(manifest_path.to_string());
+    }
+    if let Some(path) = &schema.entrypoints.agents {
+        impacted.insert(path.clone());
+    }
+    if let Some(path) = &schema.entrypoints.claude {
+        impacted.insert(path.clone());
+    }
+    if let Some(path) = &schema.entrypoints.architecture {
+        impacted.insert(path.clone());
+    }
+
+    Ok(impacted)
+}
+
+fn collection_index_for_doc(schema: &Schema, doc: &IndexedDoc) -> Option<String> {
+    let collection = doc.collection.as_deref()?;
+    let spec = schema
+        .doc_collections
+        .iter()
+        .find(|item| item.name == collection)?;
+    Some(format!("{}/{}/index.md", schema.managed_root, spec.path))
+}
+
+fn replace_relations_for_sources(
+    db: &SqliteConnection,
+    source_paths: &BTreeSet<String>,
+    relations: &[DocRelation],
+) -> Result<()> {
+    let mut statements = Vec::new();
+    let mut prelude = String::new();
+    for path in source_paths {
+        prelude.push_str(&format!(
+            "DELETE FROM relations WHERE src_path = {path};
+             DELETE FROM relations WHERE dst_path = {path} AND relation_type = 'code_mentions_doc';",
+            path = sql_string_literal(path)
+        ));
+    }
+    statements.push(prelude);
+
+    for relation in relations {
+        let mut statement = String::new();
+        append_relation_insert_sql(&mut statement, relation);
+        statements.push(statement);
+    }
+
+    exec_sql_batches(db, &statements, 500)
+}
+
+fn update_doc_link_counts_in_db(db: &SqliteConnection, docs: &[IndexedDoc]) -> Result<()> {
+    let mut statements = Vec::new();
+    for doc in docs {
+        statements.push(format!(
+            "UPDATE docs
+             SET incoming_links = {incoming_links},
+                 outgoing_links = {outgoing_links}
+             WHERE path = {path};",
+            incoming_links = doc.incoming_links,
+            outgoing_links = doc.outgoing_links,
+            path = sql_string_literal(&doc.path)
+        ));
+    }
+    exec_sql_batches(db, &statements, 500)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn replace_checks_and_meta(
+    db: &SqliteConnection,
+    repo_root: &str,
+    managed_root: &str,
+    generated_at_unix: u64,
+    mode: &str,
+    delta: &FactStoreDelta,
+    history_status: &HistoryStatus,
+    host_git: &HostGitInfo,
+    checks: &[IndexCheck],
+) -> Result<()> {
+    let mut sql = String::from(
+        "BEGIN IMMEDIATE;
+         DELETE FROM checks;
+         DELETE FROM meta;",
+    );
+
+    sql.push_str(&format!(
+        "INSERT INTO meta(key, value) VALUES
+            ('repo_root', {repo_root}),
+            ('managed_root', {managed_root}),
+            ('generated_at_unix', {generated_at_unix}),
+            ('fact_schema_version', {fact_schema_version}),
+            ('last_refresh_mode', {mode}),
+            ('last_delta_added', {added}),
+            ('last_delta_changed', {changed}),
+            ('last_delta_removed', {removed}),
+            ('history_latest_snapshot', {history_latest_snapshot}),
+            ('history_dirty', {history_dirty}),
+            ('history_tracked_files_count', {history_tracked_files_count}),
+            ('host_git_head', {host_git_head}),
+            ('host_git_branch', {host_git_branch}),
+            ('host_git_dirty', {host_git_dirty});",
+        repo_root = sql_string_literal(repo_root),
+        managed_root = sql_string_literal(managed_root),
+        generated_at_unix = sql_string_literal(&generated_at_unix.to_string()),
+        fact_schema_version = sql_string_literal(FACT_SCHEMA_VERSION),
+        mode = sql_string_literal(mode),
+        added = sql_string_literal(&delta.added_paths.len().to_string()),
+        changed = sql_string_literal(&delta.changed_paths.len().to_string()),
+        removed = sql_string_literal(&delta.removed_paths.len().to_string()),
+        history_latest_snapshot =
+            sql_string_literal(history_status.latest_snapshot.as_deref().unwrap_or("")),
+        history_dirty = sql_string_literal(if is_history_dirty(history_status) {
+            "true"
+        } else {
+            "false"
+        }),
+        history_tracked_files_count =
+            sql_string_literal(&history_status.tracked_files_count.to_string()),
+        host_git_head = sql_string_literal(host_git.head.as_deref().unwrap_or("")),
+        host_git_branch = sql_string_literal(host_git.branch.as_deref().unwrap_or("")),
+        host_git_dirty = sql_string_literal(if host_git.dirty { "true" } else { "false" })
+    ));
+
+    for check in checks {
+        append_check_insert_sql(&mut sql, check);
+    }
+
+    sql.push_str("COMMIT;");
+    db.exec(&sql)?;
+    Ok(())
+}
+
+fn render_doc_secondary_fact_sql(doc: &IndexedDoc) -> String {
+    let mut sql = String::new();
+    sql.push_str(&format!(
+        "INSERT INTO file_states(path, content_hash, file_size_bytes, mtime_unix, mtime_ns) VALUES ({path}, {content_hash}, {file_size_bytes}, {mtime_unix}, {mtime_ns});",
+        path = sql_string_literal(&doc.path),
+        content_hash = sql_string_literal(&doc.content_hash),
+        file_size_bytes = doc.file_size_bytes,
+        mtime_unix = doc.mtime_unix,
+        mtime_ns = doc.mtime_ns
+    ));
+
+    sql.push_str(&format!(
+        "INSERT INTO docs_fts(path, title, headings_text, summary, body_tokens) VALUES ({path}, {title}, {headings_text}, {summary}, {body_tokens});",
+        path = sql_string_literal(&doc.path),
+        title = sql_string_literal(&doc.title),
+        headings_text = sql_string_literal(&doc.headings.join(" | ")),
+        summary = sql_string_literal(&doc.summary),
+        body_tokens = sql_string_literal(&doc.content_text)
+    ));
+
+    for (index, heading) in doc.headings.iter().enumerate() {
+        sql.push_str(&format!(
+            "INSERT INTO headings(doc_path, heading_index, heading_text) VALUES ({doc_path}, {heading_index}, {heading_text});",
+            doc_path = sql_string_literal(&doc.path),
+            heading_index = index,
+            heading_text = sql_string_literal(heading)
+        ));
+    }
+
+    for (index, link) in doc.links.iter().enumerate() {
+        sql.push_str(&format!(
+            "INSERT INTO raw_links(src_doc, link_index, normalized_target) VALUES ({src_doc}, {link_index}, {normalized_target});",
+            src_doc = sql_string_literal(&doc.path),
+            link_index = index,
+            normalized_target = sql_string_literal(link)
+        ));
+    }
+
+    for (index, mentioned_path) in doc.path_mentions.iter().enumerate() {
+        sql.push_str(&format!(
+            "INSERT INTO path_mentions(doc_path, mention_index, mentioned_path) VALUES ({doc_path}, {mention_index}, {mentioned_path});",
+            doc_path = sql_string_literal(&doc.path),
+            mention_index = index,
+            mentioned_path = sql_string_literal(mentioned_path)
+        ));
+    }
+
+    for scope_path in &doc.scope_paths {
+        sql.push_str(&format!(
+            "INSERT INTO scope_paths(doc_path, scope_path) VALUES ({doc_path}, {scope_path});",
+            doc_path = sql_string_literal(&doc.path),
+            scope_path = sql_string_literal(scope_path)
+        ));
+    }
+
+    for superseded in &doc.supersedes {
+        sql.push_str(&format!(
+            "INSERT INTO supersedes(doc_path, superseded_path) VALUES ({doc_path}, {superseded_path});",
+            doc_path = sql_string_literal(&doc.path),
+            superseded_path = sql_string_literal(superseded)
+        ));
+    }
+
+    sql
+}
+
+fn render_doc_fact_sql(doc: &IndexedDoc) -> String {
+    let mut sql = String::new();
+    sql.push_str(&format!(
+        "INSERT INTO docs(
+            path, title, role, status, authority, collection_name, summary, frontmatter_keys_text, headings_text, content_hash, file_size_bytes,
+            incoming_links, outgoing_links, is_entrypoint, is_anchor_candidate, is_generated, is_reference, mtime_unix
+         ) VALUES (
+            {path}, {title}, {role}, {status}, {authority}, {collection_name}, {summary}, {frontmatter_keys_text}, {headings_text}, {content_hash}, {file_size_bytes},
+            0, 0, {is_entrypoint}, {is_anchor_candidate}, {is_generated}, {is_reference}, {mtime_unix}
+         );",
+        path = sql_string_literal(&doc.path),
+        title = sql_string_literal(&doc.title),
+        role = sql_string_literal(&doc.role),
+        status = sql_opt_literal(doc.status.as_deref()),
+        authority = sql_opt_literal(doc.authority.as_deref()),
+        collection_name = sql_opt_literal(doc.collection.as_deref()),
+        summary = sql_string_literal(&doc.summary),
+        frontmatter_keys_text = sql_string_literal(&doc.frontmatter_keys.join(" | ")),
+        headings_text = sql_string_literal(&doc.headings.join(" | ")),
+        content_hash = sql_string_literal(&doc.content_hash),
+        file_size_bytes = doc.file_size_bytes,
+        is_entrypoint = sql_bool(doc.is_entrypoint),
+        is_anchor_candidate = sql_bool(doc.is_anchor_candidate),
+        is_generated = sql_bool(doc.is_generated),
+        is_reference = sql_bool(doc.is_reference),
+        mtime_unix = doc.mtime_unix
+    ));
+    sql.push_str(&render_doc_secondary_fact_sql(doc));
+    sql
+}
+
+fn render_doc_full_sql(doc: &IndexedDoc) -> String {
+    let mut sql = String::new();
+    sql.push_str(&format!(
+        "INSERT INTO docs(
+            path, title, role, status, authority, collection_name, summary, frontmatter_keys_text, headings_text, content_hash, file_size_bytes,
+            incoming_links, outgoing_links, is_entrypoint, is_anchor_candidate, is_generated, is_reference, mtime_unix
+         ) VALUES (
+            {path}, {title}, {role}, {status}, {authority}, {collection_name}, {summary}, {frontmatter_keys_text}, {headings_text}, {content_hash}, {file_size_bytes},
+            {incoming_links}, {outgoing_links}, {is_entrypoint}, {is_anchor_candidate}, {is_generated}, {is_reference}, {mtime_unix}
+         );",
+        path = sql_string_literal(&doc.path),
+        title = sql_string_literal(&doc.title),
+        role = sql_string_literal(&doc.role),
+        status = sql_opt_literal(doc.status.as_deref()),
+        authority = sql_opt_literal(doc.authority.as_deref()),
+        collection_name = sql_opt_literal(doc.collection.as_deref()),
+        summary = sql_string_literal(&doc.summary),
+        frontmatter_keys_text = sql_string_literal(&doc.frontmatter_keys.join(" | ")),
+        headings_text = sql_string_literal(&doc.headings.join(" | ")),
+        content_hash = sql_string_literal(&doc.content_hash),
+        file_size_bytes = doc.file_size_bytes,
+        incoming_links = doc.incoming_links,
+        outgoing_links = doc.outgoing_links,
+        is_entrypoint = sql_bool(doc.is_entrypoint),
+        is_anchor_candidate = sql_bool(doc.is_anchor_candidate),
+        is_generated = sql_bool(doc.is_generated),
+        is_reference = sql_bool(doc.is_reference),
+        mtime_unix = doc.mtime_unix
+    ));
+
+    sql.push_str(&render_doc_secondary_fact_sql(doc));
+    sql
+}
+
+fn append_relation_insert_sql(sql: &mut String, relation: &DocRelation) {
+    sql.push_str(&format!(
+        "INSERT INTO relations(src_path, dst_path, relation_type, reason, explicit, confidence, evidence_json) VALUES ({src_path}, {dst_path}, {relation_type}, {reason}, {explicit}, {confidence}, {evidence_json});",
+        src_path = sql_string_literal(&relation.src_path),
+        dst_path = sql_string_literal(&relation.dst_path),
+        relation_type = sql_string_literal(&relation.relation_type),
+        reason = sql_string_literal(&relation.reason),
+        explicit = sql_bool(relation.explicit),
+        confidence = relation.confidence,
+        evidence_json = sql_string_literal(&relation.evidence_json)
+    ));
+}
+
+fn append_check_insert_sql(sql: &mut String, check: &IndexCheck) {
+    sql.push_str(&format!(
+        "INSERT INTO checks(rule_id, severity, subject_path, message, evidence_json) VALUES ({rule_id}, {severity}, {subject_path}, {message}, {evidence_json});",
+        rule_id = sql_string_literal(&check.rule_id),
+        severity = sql_string_literal(&check.severity),
+        subject_path = sql_string_literal(&check.subject_path),
+        message = sql_string_literal(&check.message),
+        evidence_json = sql_string_literal(&check.evidence_json)
+    ));
+}
+
+fn exec_sql_batches(db: &SqliteConnection, statements: &[String], batch_size: usize) -> Result<()> {
+    if statements.is_empty() {
+        return Ok(());
+    }
+    let chunk_size = batch_size.max(1);
+    for chunk in statements.chunks(chunk_size) {
+        let mut sql = String::from("BEGIN IMMEDIATE;");
+        for statement in chunk {
+            sql.push_str(statement);
+        }
+        sql.push_str("COMMIT;");
+        db.exec(&sql)?;
+    }
+    Ok(())
+}
+
+fn replace_fact_store_contents(db: &SqliteConnection, artifact: &IndexArtifact) -> Result<()> {
+    let mut sql = String::from(
+        "BEGIN IMMEDIATE;
+         DELETE FROM meta;
+         DELETE FROM docs;
+         DELETE FROM file_states;
+         DELETE FROM headings;
+         DELETE FROM raw_links;
+         DELETE FROM path_mentions;
+         DELETE FROM relations;
+         DELETE FROM checks;
+         DELETE FROM scope_paths;
+         DELETE FROM supersedes;
+         DELETE FROM docs_fts;",
+    );
+
+    sql.push_str(&format!(
+        "INSERT INTO meta(key, value) VALUES
+            ('repo_root', {repo_root}),
+            ('managed_root', {managed_root}),
+            ('generated_at_unix', {generated_at}),
+            ('fact_schema_version', {fact_schema_version}),
+            ('last_refresh_mode', 'full'),
+            ('last_delta_added', '0'),
+            ('last_delta_changed', '0'),
+            ('last_delta_removed', '0'),
+            ('history_latest_snapshot', {history_latest_snapshot}),
+            ('history_dirty', {history_dirty}),
+            ('history_tracked_files_count', {history_tracked_files_count}),
+            ('host_git_head', {host_git_head}),
+            ('host_git_branch', {host_git_branch}),
+            ('host_git_dirty', {host_git_dirty});",
+        repo_root = sql_string_literal(&artifact.repo_root),
+        managed_root = sql_string_literal(&artifact.managed_root),
+        generated_at = sql_string_literal(&artifact.generated_at_unix.to_string()),
+        fact_schema_version = sql_string_literal(FACT_SCHEMA_VERSION),
+        history_latest_snapshot =
+            sql_string_literal(artifact.history_latest_snapshot.as_deref().unwrap_or("")),
+        history_dirty = sql_string_literal(if artifact.history_dirty {
+            "true"
+        } else {
+            "false"
+        }),
+        history_tracked_files_count =
+            sql_string_literal(&artifact.history_tracked_files_count.to_string()),
+        host_git_head = sql_string_literal(artifact.host_git_head.as_deref().unwrap_or("")),
+        host_git_branch = sql_string_literal(artifact.host_git_branch.as_deref().unwrap_or("")),
+        host_git_dirty = sql_string_literal(if artifact.host_git_dirty {
+            "true"
+        } else {
+            "false"
+        })
+    ));
+
+    for doc in &artifact.docs {
+        sql.push_str(&render_doc_full_sql(doc));
+    }
+
+    for relation in &artifact.relations {
+        append_relation_insert_sql(&mut sql, relation);
+    }
+
+    for check in &artifact.checks {
+        append_check_insert_sql(&mut sql, check);
+    }
+
+    sql.push_str("COMMIT;");
+    db.exec(&sql)
+}
+
+pub(crate) fn read_index_artifact_from_fact_store(db: &SqliteConnection) -> Result<IndexArtifact> {
+    let meta = db.query("SELECT key, value FROM meta ORDER BY key ASC;")?;
+    let docs_rows = db.query(
+        "SELECT path, title, role, COALESCE(status, ''), COALESCE(authority, ''), COALESCE(collection_name, ''),
+                summary, frontmatter_keys_text, headings_text, content_hash, file_size_bytes, incoming_links, outgoing_links,
+                is_entrypoint, is_anchor_candidate, is_generated, is_reference, mtime_unix
+         FROM docs
+         ORDER BY path ASC;",
+    )?;
+    let headings_rows = db.query(
+        "SELECT doc_path, heading_text FROM headings ORDER BY doc_path ASC, heading_index ASC;",
+    )?;
+    let links_rows = db.query(
+        "SELECT src_doc, normalized_target FROM raw_links ORDER BY src_doc ASC, link_index ASC;",
+    )?;
+    let path_mentions_rows = db.query(
+        "SELECT doc_path, mentioned_path FROM path_mentions ORDER BY doc_path ASC, mention_index ASC;",
+    )?;
+    let file_state_rows = db.query("SELECT path, mtime_ns FROM file_states ORDER BY path ASC;")?;
+    let scope_rows = db.query(
+        "SELECT doc_path, scope_path FROM scope_paths ORDER BY doc_path ASC, scope_path ASC;",
+    )?;
+    let supersedes_rows = db.query(
+        "SELECT doc_path, superseded_path FROM supersedes ORDER BY doc_path ASC, superseded_path ASC;",
+    )?;
+    let relations_rows = db.query(
+        "SELECT src_path, dst_path, relation_type, reason, explicit, confidence, evidence_json
+         FROM relations
+         ORDER BY src_path ASC, dst_path ASC, relation_type ASC;",
+    )?;
+    let checks_rows = db.query(
+        "SELECT rule_id, severity, subject_path, message, evidence_json FROM checks ORDER BY subject_path ASC, rule_id ASC;",
+    )?;
+
+    let mut meta_map = BTreeMap::new();
+    for row in &meta.rows {
+        meta_map.insert(cell(row, 0).to_string(), cell(row, 1).to_string());
+    }
+
+    let headings_by_doc = group_second_column(&headings_rows);
+    let links_by_doc = group_second_column(&links_rows);
+    let path_mentions_by_doc = group_second_column(&path_mentions_rows);
+    let scope_by_doc = group_second_column(&scope_rows);
+    let supersedes_by_doc = group_second_column(&supersedes_rows);
+    let mut mtime_ns_by_path = BTreeMap::new();
+    for row in &file_state_rows.rows {
+        mtime_ns_by_path.insert(
+            cell(row, 0).to_string(),
+            cell(row, 1).parse::<u64>().unwrap_or(0),
+        );
+    }
+
+    let docs = docs_rows
+        .rows
+        .iter()
+        .map(|row| IndexedDoc {
+            path: cell(row, 0).to_string(),
+            title: cell(row, 1).to_string(),
+            summary: cell(row, 6).to_string(),
+            frontmatter_keys: split_pipe_list(cell(row, 7)),
+            content_text: String::new(),
+            role: cell(row, 2).to_string(),
+            status: empty_as_none(cell(row, 3)),
+            authority: empty_as_none(cell(row, 4)),
+            collection: empty_as_none(cell(row, 5)),
+            headings: headings_by_doc
+                .get(cell(row, 0))
+                .cloned()
+                .unwrap_or_default(),
+            links: links_by_doc.get(cell(row, 0)).cloned().unwrap_or_default(),
+            path_mentions: path_mentions_by_doc
+                .get(cell(row, 0))
+                .cloned()
+                .unwrap_or_default(),
+            scope_paths: scope_by_doc.get(cell(row, 0)).cloned().unwrap_or_default(),
+            supersedes: supersedes_by_doc
+                .get(cell(row, 0))
+                .cloned()
+                .unwrap_or_default(),
+            incoming_links: cell(row, 11).parse::<usize>().unwrap_or(0),
+            outgoing_links: cell(row, 12).parse::<usize>().unwrap_or(0),
+            is_entrypoint: cell(row, 13) == "1",
+            is_anchor_candidate: cell(row, 14) == "1",
+            is_generated: cell(row, 15) == "1",
+            is_reference: cell(row, 16) == "1",
+            content_hash: cell(row, 9).to_string(),
+            file_size_bytes: cell(row, 10).parse::<u64>().unwrap_or(0),
+            mtime_unix: cell(row, 17).parse::<u64>().unwrap_or(0),
+            mtime_ns: mtime_ns_by_path
+                .get(cell(row, 0))
+                .cloned()
+                .unwrap_or_else(|| {
+                    cell(row, 17)
+                        .parse::<u64>()
+                        .unwrap_or(0)
+                        .saturating_mul(1_000_000_000)
+                }),
+        })
+        .collect::<Vec<_>>();
+
+    let relations = relations_rows
+        .rows
+        .iter()
+        .map(|row| DocRelation {
+            src_path: cell(row, 0).to_string(),
+            dst_path: cell(row, 1).to_string(),
+            relation_type: cell(row, 2).to_string(),
+            reason: cell(row, 3).to_string(),
+            explicit: cell(row, 4) == "1",
+            confidence: cell(row, 5).parse::<f32>().unwrap_or(0.0),
+            evidence_json: cell(row, 6).to_string(),
+        })
+        .collect::<Vec<_>>();
+
+    let checks = checks_rows
+        .rows
+        .iter()
+        .map(|row| IndexCheck {
+            rule_id: cell(row, 0).to_string(),
+            severity: cell(row, 1).to_string(),
+            subject_path: cell(row, 2).to_string(),
+            message: cell(row, 3).to_string(),
+            evidence_json: cell(row, 4).to_string(),
+        })
+        .collect::<Vec<_>>();
+
+    Ok(IndexArtifact {
+        repo_root: meta_map.get("repo_root").cloned().unwrap_or_default(),
+        managed_root: meta_map.get("managed_root").cloned().unwrap_or_default(),
+        generated_at_unix: meta_map
+            .get("generated_at_unix")
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(0),
+        history_latest_snapshot: meta_map
+            .get("history_latest_snapshot")
+            .cloned()
+            .filter(|value| !value.is_empty()),
+        history_dirty: meta_map
+            .get("history_dirty")
+            .map(|value| value == "true")
+            .unwrap_or(false),
+        history_tracked_files_count: meta_map
+            .get("history_tracked_files_count")
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(0),
+        host_git_head: meta_map
+            .get("host_git_head")
+            .cloned()
+            .filter(|value| !value.is_empty()),
+        host_git_branch: meta_map
+            .get("host_git_branch")
+            .cloned()
+            .filter(|value| !value.is_empty()),
+        host_git_dirty: meta_map
+            .get("host_git_dirty")
+            .map(|value| value == "true")
+            .unwrap_or(false),
+        docs,
+        relations,
+        checks,
+    })
+}
+
+fn group_second_column(result: &QueryResult) -> BTreeMap<String, Vec<String>> {
+    let mut grouped = BTreeMap::<String, Vec<String>>::new();
+    for row in &result.rows {
+        let key = cell(row, 0).to_string();
+        let value = cell(row, 1).to_string();
+        if !key.is_empty() && !value.is_empty() {
+            grouped.entry(key).or_default().push(value);
+        }
+    }
+    grouped
+}
+
+pub(crate) fn split_pipe_list(value: &str) -> Vec<String> {
+    value
+        .split('|')
+        .map(|item| item.trim())
+        .filter(|item| !item.is_empty())
+        .map(|item| item.to_string())
+        .collect()
+}
+
+fn empty_as_none(value: &str) -> Option<String> {
+    if value.is_empty() {
+        None
+    } else {
+        Some(value.to_string())
+    }
+}
+
+fn build_doc_relations(
+    schema: &Schema,
+    docs: &[IndexedDoc],
+    path_set: &BTreeSet<String>,
+) -> Vec<DocRelation> {
+    let manifest_path = schema
+        .entrypoints
+        .manifest
+        .clone()
+        .unwrap_or_else(|| format!("{}/index.md", schema.managed_root));
+    let mut relations = Vec::new();
+    let mut seen = BTreeSet::new();
+
+    for doc in docs {
+        if let Some(collection) = &doc.collection {
+            if let Some(spec) = schema
+                .doc_collections
+                .iter()
+                .find(|item| item.name == *collection)
+            {
+                let collection_index = format!("{}/{}/index.md", schema.managed_root, spec.path);
+                if doc.path != collection_index {
+                    push_relation(
+                        &mut relations,
+                        &mut seen,
+                        collection_index,
+                        doc.path.clone(),
+                        "doc_indexes_doc",
+                        "collection-membership",
+                        true,
+                    );
+                }
+            }
+        }
+
+        for link in &doc.links {
+            if path_set.contains(link) {
+                let relation_type = if doc.path == manifest_path
+                    || is_entrypoint_path(schema, &doc.path)
+                    || doc.path.ends_with("/index.md")
+                {
+                    "doc_indexes_doc"
+                } else {
+                    "doc_links_doc"
+                };
+                push_relation(
+                    &mut relations,
+                    &mut seen,
+                    doc.path.clone(),
+                    link.clone(),
+                    relation_type,
+                    "markdown-link",
+                    true,
+                );
+            }
+        }
+
+        for mentioned in &doc.path_mentions {
+            if path_set.contains(mentioned) {
+                let relation_type = if is_navigation_doc(doc) {
+                    "doc_indexes_doc"
+                } else {
+                    "doc_mentions_code_path"
+                };
+                push_relation(
+                    &mut relations,
+                    &mut seen,
+                    doc.path.clone(),
+                    mentioned.clone(),
+                    relation_type,
+                    "inline-code-path",
+                    true,
+                );
+            }
+        }
+
+        for scope_path in &doc.scope_paths {
+            push_relation(
+                &mut relations,
+                &mut seen,
+                doc.path.clone(),
+                scope_path.clone(),
+                "doc_scopes_code",
+                "frontmatter.scope_paths",
+                true,
+            );
+            push_relation(
+                &mut relations,
+                &mut seen,
+                scope_path.clone(),
+                doc.path.clone(),
+                "code_mentions_doc",
+                "frontmatter.scope_paths.reverse",
+                false,
+            );
+        }
+
+        for superseded in &doc.supersedes {
+            push_relation(
+                &mut relations,
+                &mut seen,
+                doc.path.clone(),
+                superseded.clone(),
+                "supersedes",
+                "frontmatter.supersedes",
+                true,
+            );
+        }
+    }
+
+    relations
+}
+
+pub(crate) fn is_navigation_doc(doc: &IndexedDoc) -> bool {
+    doc.is_entrypoint
+        || matches!(
+            doc.role.as_str(),
+            "manifest" | "collection-index" | "architecture"
+        )
+}
+
+fn push_relation(
+    relations: &mut Vec<DocRelation>,
+    seen: &mut BTreeSet<(String, String, String)>,
+    src_path: String,
+    dst_path: String,
+    relation_type: &str,
+    reason: &str,
+    explicit: bool,
+) {
+    let key = (
+        src_path.clone(),
+        dst_path.clone(),
+        relation_type.to_string(),
+    );
+    if seen.insert(key) {
+        relations.push(DocRelation {
+            src_path,
+            dst_path,
+            relation_type: relation_type.to_string(),
+            reason: reason.to_string(),
+            explicit,
+            confidence: relation_confidence(relation_type, explicit),
+            evidence_json: relation_evidence_json(reason),
+        });
+    }
+}
+
+fn relation_confidence(relation_type: &str, explicit: bool) -> f32 {
+    if explicit {
+        match relation_type {
+            "doc_scopes_code" | "supersedes" => 1.0,
+            "doc_indexes_doc" => 0.95,
+            "doc_links_doc" => 0.9,
+            "doc_mentions_code_path" => 0.75,
+            "code_mentions_doc" => 0.55,
+            _ => 0.8,
+        }
+    } else {
+        0.5
+    }
+}
+
+fn relation_evidence_json(reason: &str) -> String {
+    format!("{{\"reason\":{}}}", json_string(reason))
+}
+
+fn annotate_link_counts(docs: &mut [IndexedDoc], relations: &[DocRelation]) {
+    let mut incoming = BTreeMap::<String, usize>::new();
+    let mut outgoing = BTreeMap::<String, usize>::new();
+
+    for relation in relations {
+        if !counts_for_doc_navigation(relation) {
+            continue;
+        }
+        if relation.dst_path.ends_with(".md") {
+            *incoming.entry(relation.dst_path.clone()).or_insert(0) += 1;
+        }
+        if relation.src_path.ends_with(".md") {
+            *outgoing.entry(relation.src_path.clone()).or_insert(0) += 1;
+        }
+    }
+
+    for doc in docs {
+        doc.incoming_links = incoming.get(&doc.path).copied().unwrap_or(0);
+        doc.outgoing_links = outgoing.get(&doc.path).copied().unwrap_or(0);
+    }
+}
+
+fn counts_for_doc_navigation(relation: &DocRelation) -> bool {
+    matches!(
+        relation.relation_type.as_str(),
+        "doc_indexes_doc" | "doc_links_doc" | "supersedes"
+    )
+}
+
+pub(crate) fn sql_string_literal(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
+
+fn sql_opt_literal(value: Option<&str>) -> String {
+    value
+        .map(sql_string_literal)
+        .unwrap_or_else(|| "NULL".to_string())
+}
+
+fn sql_bool(value: bool) -> i32 {
+    if value {
+        1
+    } else {
+        0
+    }
+}
+
+pub(crate) fn cell(row: &[Option<String>], index: usize) -> &str {
+    row.get(index)
+        .and_then(|value| value.as_deref())
+        .unwrap_or("")
+}
