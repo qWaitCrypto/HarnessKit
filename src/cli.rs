@@ -1,7 +1,8 @@
 mod args;
 
 use args::{
-    option_value, Cli, Command, ContextArgs, DiffArgs, HistoryCommand, InputArgs, QueryArgs,
+    option_value, CheckArgs, CheckFormat, Cli, Command, ContextArgs, DiffArgs, HistoryCommand,
+    InputArgs, QueryArgs,
 };
 pub(crate) use args::{CommonArgs, TargetArgs};
 use clap::{CommandFactory, Parser};
@@ -10,7 +11,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::{env, fs};
 
-use crate::checks::filter_and_suppress_checks;
+use crate::checks::{check_baseline, filter_and_suppress_checks, BaselineDelta, CheckView};
 use crate::context::{
     build_current_context, build_handoff_context, context_packet_for_doc, doc_exists,
 };
@@ -37,7 +38,7 @@ use crate::render::{
 };
 use crate::schema::{
     default_context_schema_arg, load_schema, parse_schema, render_schema_copy,
-    rewrite_docs_root_bound_paths, Schema, BUNDLED_SCHEMA_PATH,
+    rewrite_docs_root_bound_paths, Schema, SchemaParseError, BUNDLED_SCHEMA_PATH,
 };
 use crate::templates::{materialize_from_schema, validate_init_templates};
 use crate::update::{detect_release_target, update_from_release};
@@ -123,16 +124,73 @@ fn run_index(args: &TargetArgs) -> Result<()> {
     Ok(())
 }
 
-fn run_check(args: &TargetArgs) -> Result<()> {
-    let context = load_engine_context(args)?;
-    let options = command_options(&args.options, Some(&context.schema));
+fn run_check(args: &CheckArgs) -> Result<()> {
+    let format = args.format.unwrap_or(if args.target.options.json {
+        CheckFormat::Json
+    } else {
+        CheckFormat::Summary
+    });
+    let context = match load_engine_context(&args.target) {
+        Ok(context) => context,
+        Err(error) => {
+            if let Some(error) = error.downcast_ref::<SchemaParseError>() {
+                let checks = vec![CheckView {
+                    severity: "error".to_string(),
+                    rule_id: "schema-parse-error".to_string(),
+                    subject_path: error.path.clone(),
+                    message: error.message.clone(),
+                    hint: Some(format!(
+                        "Repair the schema syntax in {} and rerun check.",
+                        error.path
+                    )),
+                    fixable: false,
+                    evidence_json: serde_json::json!({"error": error.message}).to_string(),
+                    suppressed: false,
+                    suppression_reason: None,
+                }];
+                let target = Path::new(args.target.target_dir.as_deref().unwrap_or("."));
+                let hints = vec![
+                    "Schema parsing failed; coverage and baseline were not evaluated or updated."
+                        .to_string(),
+                ];
+                if format == CheckFormat::Json {
+                    println!(
+                        "{}",
+                        render_check_json(
+                            target,
+                            0,
+                            0,
+                            &checks,
+                            &Default::default(),
+                            &hints,
+                            &BaselineDelta::default(),
+                            args.all
+                        )
+                    );
+                } else {
+                    print_check_output(
+                        target,
+                        0,
+                        0,
+                        &checks,
+                        &BaselineDelta::default(),
+                        args.all || format == CheckFormat::Full,
+                    );
+                    println!("Hint: {}", hints[0]);
+                }
+                std::process::exit(1);
+            }
+            return Err(error);
+        }
+    };
+    let options = command_options(&args.target.options, Some(&context.schema));
     let coverage = discover_docs(&context.target_dir, &context.schema)?;
     let orphan_hints = orphan_state_hints(&context.target_dir, &context.schema)?;
     refresh_fact_store(&context)?;
     let target_dir = &context.target_dir;
     let db = open_fact_store(target_dir)?;
     let mut hints = indexed_hints(&context, &db)?;
-    hints.extend(orphan_hints);
+    hints.extend(orphan_hints.iter().cloned());
     let docs_count = scalar_count(&db, "SELECT COUNT(*) FROM docs;")?;
     let relation_count = scalar_count(&db, "SELECT COUNT(*) FROM relations;")?;
     let check_rows = db.query(
@@ -143,6 +201,9 @@ fn run_check(args: &TargetArgs) -> Result<()> {
         [],
     )?;
     let checks = filter_and_suppress_checks(&check_rows, &context.schema, &options);
+    let all_checks =
+        filter_and_suppress_checks(&check_rows, &context.schema, &CommandOptions::default());
+    let baseline = check_baseline(target_dir, &all_checks, &options, args.update_baseline)?;
     let warning_count = checks
         .iter()
         .filter(|check| !check.suppressed && check.severity == "warning")
@@ -151,7 +212,7 @@ fn run_check(args: &TargetArgs) -> Result<()> {
         .iter()
         .filter(|check| !check.suppressed && check.severity == "error")
         .count();
-    if options.json {
+    if format == CheckFormat::Json {
         println!(
             "{}",
             render_check_json(
@@ -160,7 +221,9 @@ fn run_check(args: &TargetArgs) -> Result<()> {
                 relation_count,
                 &checks,
                 &coverage,
-                &hints
+                &hints,
+                &baseline,
+                args.all
             )
         );
         if error_count > 0 || (options.strict && warning_count > 0) {
@@ -169,8 +232,29 @@ fn run_check(args: &TargetArgs) -> Result<()> {
         return Ok(());
     }
 
-    print_check_output(&target_dir, docs_count, relation_count, &checks);
-    print_coverage(&coverage, &hints);
+    let full = args.all || format == CheckFormat::Full;
+    print_check_output(
+        target_dir,
+        docs_count,
+        relation_count,
+        &checks,
+        &baseline,
+        full,
+    );
+    if full {
+        print_coverage(&coverage, &hints);
+    } else {
+        println!("{}", coverage.summary());
+        for hint in orphan_hints.iter().take(3) {
+            println!("Hint: {}", hint);
+        }
+        if orphan_hints.len() > 3 {
+            println!(
+                "Hint: {} more orphan-state hints; use check --all to review.",
+                orphan_hints.len() - 3
+            );
+        }
+    }
 
     if error_count > 0 || (options.strict && warning_count > 0) {
         std::process::exit(1);
@@ -727,7 +811,12 @@ pub(crate) fn load_engine_context(args: &TargetArgs) -> Result<EngineContext> {
         .unwrap_or_else(|| default_context_schema_arg(&target_dir));
 
     let schema_load = load_schema(&target_dir, &schema_arg)?;
-    let mut schema = parse_schema(&schema_load.text)?;
+    let mut schema = parse_schema(&schema_load.text).map_err(|error| SchemaParseError {
+        path: schema_load.source.clone(),
+        message: error.to_string(),
+    })?;
+    schema.inferred_layout =
+        args.options.schema.is_empty() && !target_dir.join(".harnesskit/schema.yaml").exists();
     let original_managed_root = schema.managed_root.clone();
     if let Some(ref docs_root) = docs_root_override {
         schema.managed_root = docs_root.clone();

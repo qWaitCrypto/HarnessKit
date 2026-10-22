@@ -5,7 +5,7 @@ use serde::{Serialize, Serializer};
 use serde_json::ser::Formatter;
 use serde_json::value::RawValue;
 
-use crate::checks::{rule_group, CheckView};
+use crate::checks::{rule_group, BaselineDelta, CheckSummary, CheckView};
 use crate::context::ContextPacket;
 use crate::discover::Coverage;
 use crate::doctor::DoctorReport;
@@ -219,6 +219,8 @@ pub(crate) fn render_check_json(
     checks: &[CheckView],
     coverage: &Coverage,
     hints: &[String],
+    baseline: &BaselineDelta,
+    all: bool,
 ) -> String {
     #[derive(Serialize)]
     struct Check<'a> {
@@ -229,6 +231,7 @@ pub(crate) fn render_check_json(
         message: &'a str,
         #[serde(skip_serializing_if = "Option::is_none")]
         hint: Option<&'a str>,
+        fixable: bool,
         #[serde(serialize_with = "serialize_evidence")]
         evidence_json: &'a str,
         suppressed: bool,
@@ -240,11 +243,18 @@ pub(crate) fn render_check_json(
         docs_count: usize,
         relation_count: usize,
         checks: Vec<Check<'a>>,
-        coverage: &'a Coverage,
+        summary: CheckSummary,
+        baseline: serde_json::Value,
+        truncated: usize,
+        coverage: serde_json::Value,
         hints: &'a [String],
     }
+    let limit = if all { usize::MAX } else { 20 };
+    let summary = CheckSummary::from_checks(checks);
+    let truncated = checks.len().saturating_sub(limit);
     let checks = checks
         .iter()
+        .take(limit)
         .map(|check| Check {
             severity: &check.severity,
             rule_id: &check.rule_id,
@@ -252,22 +262,69 @@ pub(crate) fn render_check_json(
             subject_path: &check.subject_path,
             message: &check.message,
             hint: check.hint.as_deref(),
+            fixable: check.fixable,
             evidence_json: &check.evidence_json,
             suppressed: check.suppressed,
             suppression_reason: check.suppression_reason.as_deref(),
         })
         .collect();
-    to_json(
-        &Report {
-            target_dir: absolute_display_path(target_dir),
-            docs_count,
-            relation_count,
-            checks,
-            coverage,
-            hints,
-        },
-        false,
-    ) + "\n"
+    let mut report = serde_json::to_value(Report {
+        target_dir: absolute_display_path(target_dir),
+        docs_count,
+        relation_count,
+        checks,
+        summary,
+        baseline: serde_json::to_value(baseline).expect("serialize check baseline"),
+        truncated,
+        coverage: serde_json::to_value(coverage).expect("serialize check coverage"),
+        hints,
+    })
+    .expect("serialize check report");
+    if !all {
+        // Include precise counts even when nested evidence/coverage lists are
+        // large. --all is the explicit escape hatch for complete machine output.
+        limit_check_lists(&mut report, limit);
+        report["truncated"] = truncated.into();
+    }
+    serde_json::to_string_pretty(&report).expect("render check report") + "\n"
+}
+
+fn limit_check_lists(value: &mut serde_json::Value, limit: usize) {
+    match value {
+        serde_json::Value::Object(object) => {
+            let mut omitted = 0;
+            let mut list_counts = Vec::new();
+            for (name, value) in object.iter_mut() {
+                if name != "by_rule" {
+                    if let Some(items) = value.as_array_mut() {
+                        let count = items.len().saturating_sub(limit);
+                        if count > 0 {
+                            items.truncate(limit);
+                            omitted += count;
+                            list_counts.push((format!("{}_truncated", name), count));
+                        }
+                    }
+                }
+                limit_check_lists(value, limit);
+            }
+            for (name, count) in list_counts {
+                object.insert(name, count.into());
+            }
+            if omitted > 0 {
+                let existing = object
+                    .get("truncated")
+                    .and_then(|value| value.as_u64())
+                    .unwrap_or(0);
+                object.insert("truncated".to_string(), (existing + omitted as u64).into());
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                limit_check_lists(item, limit);
+            }
+        }
+        _ => {}
+    }
 }
 
 pub(crate) fn render_query_json(

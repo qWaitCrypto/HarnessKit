@@ -1,3 +1,4 @@
+mod baseline;
 mod contamination;
 mod coverage;
 mod duplicate;
@@ -12,6 +13,8 @@ pub(crate) use stale::newest_existing_path_mtime;
 
 use std::path::Path;
 
+pub(crate) use baseline::{check_baseline, BaselineDelta, CheckSummary};
+
 use crate::cli::CommandOptions;
 use crate::index::{cell, DocRelation, IndexedDoc};
 use crate::schema::Schema;
@@ -24,7 +27,7 @@ use self::history::add_history_checks;
 use self::manifest::build_manifest_checks;
 use self::stale::add_stale_anchor_checks;
 
-#[derive(Clone, serde::Serialize)]
+#[derive(Clone, PartialEq, Eq, serde::Serialize)]
 pub(crate) struct IndexCheck {
     pub(crate) rule_id: String,
     pub(crate) severity: String,
@@ -32,6 +35,7 @@ pub(crate) struct IndexCheck {
     pub(crate) message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) hint: Option<String>,
+    pub(crate) fixable: bool,
     #[serde(skip_serializing)]
     pub(crate) evidence_json: String,
 }
@@ -43,6 +47,7 @@ pub(crate) struct CheckView {
     pub(crate) subject_path: String,
     pub(crate) message: String,
     pub(crate) hint: Option<String>,
+    pub(crate) fixable: bool,
     pub(crate) evidence_json: String,
     pub(crate) suppressed: bool,
     pub(crate) suppression_reason: Option<String>,
@@ -68,9 +73,14 @@ pub(crate) fn build_index_checks(
     if schema.rules.minimal_frontmatter_only.unwrap_or(false) {
         add_frontmatter_constraint_checks(schema, docs, &mut checks);
     }
-    add_history_checks(schema, repo_root, &mut checks);
+    frontmatter::add_frontmatter_parse_checks(repo_root, docs, &mut checks)?;
+    add_history_checks(schema, repo_root, docs, &mut checks)?;
     lifecycle::add_lifecycle_checks(schema, repo_root, docs, &mut checks)?;
     coverage::add_coverage_checks(schema, repo_root, docs, &mut checks)?;
+
+    for check in &mut checks {
+        complete_check(check);
+    }
 
     Ok(checks)
 }
@@ -92,8 +102,51 @@ fn push_check(
             .iter()
             .find(|(key, _)| *key == "hint")
             .map(|(_, value)| value.to_string()),
+        fixable: false,
         evidence_json: evidence_object_json(evidence),
     });
+}
+
+pub(crate) fn complete_check(check: &mut IndexCheck) {
+    let hint = check
+        .hint
+        .clone()
+        .or_else(|| hint_from_evidence(&check.evidence_json))
+        .unwrap_or_else(|| repair_hint(&check.rule_id, &check.subject_path, &check.evidence_json));
+    let mut evidence: serde_json::Value =
+        serde_json::from_str(&check.evidence_json).unwrap_or_else(|_| serde_json::json!({}));
+    evidence["hint"] = hint.clone().into();
+    evidence["fixable"] = check.fixable.into();
+    check.hint = Some(hint);
+    check.evidence_json = evidence.to_string();
+}
+
+fn repair_hint(rule: &str, path: &str, evidence: &str) -> String {
+    let evidence: serde_json::Value = serde_json::from_str(evidence).unwrap_or_default();
+    let target = evidence
+        .get("target")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
+    match rule {
+        "missing-entrypoint-doc" | "missing-required-doc" | "missing-collection-index" =>
+            format!("Restore {}, or change its declaration in .harnesskit/schema.yaml if this layout is intentional.", path),
+        "entrypoint-manifest-link" => format!("Add a link in {} to the configured manifest {}.", path, evidence["manifest"].as_str().unwrap_or("")),
+        "manifest-missing-doc" => format!("Add a link to {} in {}.", path, evidence["manifest"].as_str().unwrap_or("")),
+        "broken-link" => format!("Correct or remove the link to {} in {}, or restore the missing target.", target, path),
+        "wrong-docs-navigation-target" => format!("Point navigation in {} to a Markdown document instead of {}.", path, target),
+        "orphan-managed-doc" => format!("Link the documents in {} from an entrypoint or a nearby index.", path),
+        "stale-explicit-anchor" => format!("Review the newer scoped code against {} and update the document if its contract changed.", path),
+        "missing-scope-path" => format!("Correct or remove the missing scope_paths entry in {}.", path),
+        "duplicate-content" | "overlap-heading-fingerprint" => format!("Compare {} with the related paths in evidence; consolidate repeated content or clarify each document's scope.", path),
+        "canonical-links-generated" | "canonical-links-reference" => format!("Review {}: link to the source contract for {}, and label supporting evidence as such.", path, target),
+        "frontmatter-field-not-allowed" => format!("Remove the unsupported field from {}, or add it to the collection's allowed_frontmatter in .harnesskit/schema.yaml.", path),
+        "frontmatter-parse-error" => format!("Repair the YAML frontmatter and its closing --- delimiter in {}.", path),
+        "schema-parse-error" => format!("Repair the schema syntax in {} and rerun check.", path),
+        "managed-file-not-excluded" | "host-git-exclude-missing" => format!("For local-only docs, add {} to .gitignore or .git/info/exclude; for shared docs, track them with git.", path),
+        "history-missing" | "history-dirty-since-snapshot" | "history-schema-not-snapshotted" =>
+            "Review the document changes, then run harnesskit history snapshot -m \"Reviewed docs\" in this project.".to_string(),
+        _ => format!("Review {} and the evidence for {}; update the affected document or its schema declaration.", path, rule),
+    }
 }
 
 fn evidence_object_json(items: &[(&str, &str)]) -> String {
@@ -119,6 +172,18 @@ pub(crate) fn filter_and_suppress_checks(
     schema: &Schema,
     options: &CommandOptions,
 ) -> Vec<CheckView> {
+    let suppressions = schema
+        .suppressions
+        .iter()
+        .map(|item| {
+            (
+                item,
+                item.path_glob.then(|| {
+                    crate::schema::glob_matcher(&item.path).expect("validated suppression glob")
+                }),
+            )
+        })
+        .collect::<Vec<_>>();
     result
         .rows
         .iter()
@@ -130,15 +195,27 @@ pub(crate) fn filter_and_suppress_checks(
                 }
             }
             let subject_path = cell(row, 2).to_string();
-            let suppression = schema.suppressions.iter().find(|suppression| {
-                suppression.rule_id == rule_id && suppression.path == subject_path
-            });
+            let suppression = suppressions
+                .iter()
+                .find(|(item, matcher)| {
+                    item.rule_id == rule_id
+                        && (item.path == subject_path
+                            || matcher
+                                .as_ref()
+                                .map(|matcher| matcher.is_match(&subject_path))
+                                .unwrap_or(false))
+                })
+                .map(|(item, _)| *item);
             Some(CheckView {
                 severity: cell(row, 0).to_string(),
                 rule_id,
                 subject_path,
                 message: cell(row, 3).to_string(),
-                hint: hint_from_evidence(cell(row, 4)),
+                hint: Some(
+                    hint_from_evidence(cell(row, 4))
+                        .unwrap_or_else(|| repair_hint(cell(row, 1), cell(row, 2), cell(row, 4))),
+                ),
+                fixable: false,
                 evidence_json: cell(row, 4).to_string(),
                 suppressed: suppression.is_some(),
                 suppression_reason: suppression.map(|item| item.reason.clone()),
@@ -161,7 +238,7 @@ pub(crate) fn rule_group(rule_id: &str) -> String {
         "stale-explicit-anchor" | "missing-scope-path" => "stale".to_string(),
         "duplicate-content" | "overlap-heading-fingerprint" => "duplicate".to_string(),
         "canonical-links-generated" | "canonical-links-reference" => "contamination".to_string(),
-        "frontmatter-field-not-allowed" => "frontmatter".to_string(),
+        "frontmatter-field-not-allowed" | "frontmatter-parse-error" => "frontmatter".to_string(),
         "entrypoint-too-long"
         | "duplicated-current-pointer"
         | "active-but-historical"

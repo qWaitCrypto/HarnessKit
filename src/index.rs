@@ -277,9 +277,10 @@ pub(crate) fn scalar_count(db: &SqliteConnection, sql: &str) -> Result<usize> {
 
 pub(crate) fn refresh_fact_store(context: &EngineContext) -> Result<()> {
     let schema_fingerprint = simple_content_hash(&format!(
-        "{}{:?}",
+        "{}{:?}{}:checks-s7",
         crate::schema::render_schema_copy(&context.schema),
-        context.schema.inferred_root
+        context.schema.inferred_root,
+        context.schema.inferred_layout
     ));
     let database = context.target_dir.join(".harnesskit/state/facts.sqlite");
     if database.exists() {
@@ -327,14 +328,21 @@ pub(crate) fn refresh_fact_store(context: &EngineContext) -> Result<()> {
         link_states,
         stale_plan_states,
     ))?);
-    if meta_value(&db, "discovery_fingerprint")?.as_deref() != Some(&fingerprint) {
-        artifact.checks = build_index_checks(
-            &context.schema,
-            &context.target_dir,
-            &artifact.docs,
-            &artifact.relations,
-        )?;
-        artifact.checks.extend(external_checks);
+    // Git commits, ignore rules and scoped code may change without a doc edit.
+    let mut checks = build_index_checks(
+        &context.schema,
+        &context.target_dir,
+        &artifact.docs,
+        &artifact.relations,
+    )?;
+    checks.extend(external_checks);
+    checks.sort_by(|left, right| {
+        (&left.subject_path, &left.rule_id).cmp(&(&right.subject_path, &right.rule_id))
+    });
+    if meta_value(&db, "discovery_fingerprint")?.as_deref() != Some(&fingerprint)
+        || artifact.checks != checks
+    {
+        artifact.checks = checks;
         artifact.coverage = coverage;
         artifact.hints = artifact.coverage.hints();
         for check in artifact
@@ -1480,6 +1488,7 @@ pub(crate) fn read_index_artifact_from_fact_store(db: &SqliteConnection) -> Resu
             subject_path: cell(row, 2).to_string(),
             message: cell(row, 3).to_string(),
             hint: crate::checks::hint_from_evidence(cell(row, 4)),
+            fixable: false,
             evidence_json: cell(row, 4).to_string(),
         })
         .collect::<Vec<_>>();

@@ -1,52 +1,44 @@
-use std::fs;
 use std::path::Path;
 
 use crate::checks::{push_check, IndexCheck};
-use crate::git::find_host_git_dir;
+use crate::git::{find_host_git_dir, ignored_paths, tracked_doc_paths};
 use crate::history::{
     compute_history_status, has_history_doc_changes, history_dir, latest_history_snapshot_id,
 };
-use crate::schema::{managed_memory_paths, Schema};
+use crate::index::IndexedDoc;
+use crate::schema::Schema;
 
-pub(super) fn add_history_checks(schema: &Schema, repo_root: &Path, checks: &mut Vec<IndexCheck>) {
-    let expected_excludes = managed_memory_paths(schema);
-    match find_host_git_dir(repo_root) {
-        Some(git_dir) => {
-            let exclude_path = git_dir.join("info").join("exclude");
-            let exclude_text = fs::read_to_string(exclude_path).unwrap_or_default();
-            if exclude_text.trim().is_empty() {
+pub(super) fn add_history_checks(
+    schema: &Schema,
+    repo_root: &Path,
+    docs: &[IndexedDoc],
+    checks: &mut Vec<IndexCheck>,
+) -> crate::Result<()> {
+    // Merely inspecting an inferred layout does not opt it into local isolation
+    // or mandatory checkpoints. Existing history is still checked normally.
+    if !schema.inferred_layout && find_host_git_dir(repo_root).is_some() {
+        let paths = docs.iter().map(|doc| doc.path.clone()).collect::<Vec<_>>();
+        if tracked_doc_paths(repo_root, &paths)?.is_empty() {
+            let mut expected = paths;
+            expected.push(".harnesskit/".to_string());
+            let ignored = ignored_paths(repo_root, &expected)?;
+            for path in expected.iter().filter(|path| !ignored.contains(path)) {
                 push_check(
                     checks,
-                    "host-git-exclude-missing",
+                    "managed-file-not-excluded",
                     "warning",
-                    ".git/info/exclude",
-                    "host git local exclude does not contain HarnessKit isolation rules",
-                    &[("path", ".git/info/exclude")],
+                    path,
+                    &format!(
+                        "{} is neither tracked nor covered by git ignore rules",
+                        path
+                    ),
+                    &[("path", path)],
                 );
             }
-            for path in expected_excludes {
-                if !exclude_text.lines().any(|line| line.trim() == path) {
-                    push_check(
-                        checks,
-                        "managed-file-not-excluded",
-                        "warning",
-                        &path,
-                        &format!("{} is not listed in host git local exclude", path),
-                        &[("path", &path)],
-                    );
-                }
-            }
         }
-        None => {
-            push_check(
-                checks,
-                "host-git-exclude-missing",
-                "info",
-                ".git/info/exclude",
-                "host git repo not found; HarnessKit cannot install local exclude rules",
-                &[("path", ".git/info/exclude")],
-            );
-        }
+    }
+    if schema.inferred_layout && !history_dir(repo_root).exists() {
+        return Ok(());
     }
 
     if !history_dir(repo_root).exists() || latest_history_snapshot_id(repo_root).is_none() {
@@ -58,7 +50,7 @@ pub(super) fn add_history_checks(schema: &Schema, repo_root: &Path, checks: &mut
             "no HarnessKit history snapshot exists",
             &[("path", ".harnesskit/history")],
         );
-        return;
+        return Ok(());
     }
 
     if let Ok(status) = compute_history_status(repo_root, schema) {
@@ -91,4 +83,5 @@ pub(super) fn add_history_checks(schema: &Schema, repo_root: &Path, checks: &mut
             );
         }
     }
+    Ok(())
 }

@@ -95,7 +95,10 @@ fn init_can_create_missing_targets_but_preview_is_read_only() {
     assert!(!repo.root.join("new").exists());
     repo.run(&["init", "new/project", "--tracked"]);
     assert!(repo.root.join("new/project/AGENTS.md").is_file());
-    assert!(repo.root.join("new/project/.harnesskit/schema.yaml").is_file());
+    assert!(repo
+        .root
+        .join("new/project/.harnesskit/schema.yaml")
+        .is_file());
     repo.run(&["index", "new/project"]);
 }
 
@@ -114,7 +117,7 @@ fn usage_and_schema_errors_exit_two_without_creating_state() {
         vec!["history", "diff", "a", "b", ".", "extra"],
         vec!["init", "--local", "--tracked"],
         vec!["check", "--schema", "missing.yaml"],
-        vec!["check", "--schema", "invalid.yaml"],
+        vec!["index", "--schema", "invalid.yaml"],
         vec!["update", "--repo", "invalid"],
     ] {
         let output = repo.command(&args).output().unwrap();
@@ -132,6 +135,8 @@ fn usage_and_schema_errors_exit_two_without_creating_state() {
 #[test]
 fn warnings_exit_one_only_in_strict_mode() {
     let repo = TestRepo::new(None);
+    repo.run(&["init", "--tracked"]);
+    fs::remove_file(repo.root.join("AGENTS.md")).unwrap();
     for (flags, code) in [
         (vec![], 0),
         (vec!["--strict"], 1),
@@ -170,12 +175,7 @@ fn schema_strict_mode_honors_no_strict_and_suppressions() {
     fs::write(&path, &schema).unwrap();
     let args = ["check", "--rules", "missing-entrypoint-doc", "--json"];
     assert_exit(&repo.command(&args).output().unwrap(), 1, &args);
-    repo.run(&[
-        "check",
-        "--rules",
-        "missing-entrypoint-doc",
-        "--no-strict",
-    ]);
+    repo.run(&["check", "--rules", "missing-entrypoint-doc", "--no-strict"]);
     fs::write(
         &path,
         format!("{}\nsuppressions:\n  missing_agent:\n    rule_id: missing-entrypoint-doc\n    path: AGENTS.md\n    reason: Synthetic suppression\n", schema),
@@ -188,22 +188,18 @@ fn schema_strict_mode_honors_no_strict_and_suppressions() {
 #[test]
 fn error_findings_exit_one_without_strict_mode() {
     let repo = TestRepo::new(Some("standard"));
-    repo.run(&["index"]);
-    let db = rusqlite::Connection::open(repo.root.join(".harnesskit/state/facts.sqlite")).unwrap();
-    // S3 changes exit handling, not the rule severities scheduled for S7.
-    db.execute(
-        "INSERT INTO checks (rule_id, severity, subject_path, message) VALUES ('synthetic-error', 'error', 'AGENTS.md', 'Synthetic exit-code finding')",
-        [],
+    fs::write(
+        repo.root.join("docs/broken.md"),
+        "# Broken\n\n[Missing](missing.md)\n",
     )
     .unwrap();
-    drop(db);
     for args in [
-        vec!["check", "--rules", "synthetic-error"],
-        vec!["check", "--rules", "synthetic-error", "--json"],
+        vec!["check", "--rules", "broken-link"],
+        vec!["check", "--rules", "broken-link", "--json"],
     ] {
         let output = repo.command(&args).output().unwrap();
         assert_exit(&output, 1, &args);
-        assert!(String::from_utf8_lossy(&output.stdout).contains("synthetic-error"));
+        assert!(String::from_utf8_lossy(&output.stdout).contains("broken-link"));
     }
 }
 
@@ -215,7 +211,10 @@ fn every_target_command_hints_when_project_docs_are_absent() {
         let repo = TestRepo::new(None);
         let output = repo.command(&args).output().unwrap();
         let stderr = String::from_utf8_lossy(&output.stderr);
-        let hints: Vec<_> = stderr.lines().filter(|line| line.starts_with("Hint:")).collect();
+        let hints: Vec<_> = stderr
+            .lines()
+            .filter(|line| line.starts_with("Hint:"))
+            .collect();
         assert_eq!(hints.len(), 1, "{:?}: {}", args, stderr);
         assert!(hints[0].contains("harnesskit init --preview"));
         if args.contains(&"--json") && output.status.success() {
@@ -283,7 +282,10 @@ fn doctor_and_check_report_nested_orphans_without_touching_their_history() {
         assert!(hints[0].contains("accidental/json/.harnesskit"));
         assert!(hints[0].contains("preserve .harnesskit/history"));
         assert!(repo.run(&[command]).contains("accidental/json/.harnesskit"));
-        assert_eq!(fs::read(history.join("keep.txt")).unwrap(), b"preserve history");
+        assert_eq!(
+            fs::read(history.join("keep.txt")).unwrap(),
+            b"preserve history"
+        );
     }
     // Discovery is live even when no indexed docs changed.
     fs::create_dir(repo.root.join("accidental/json/docs")).unwrap();
@@ -320,10 +322,9 @@ fn orphan_scan_respects_nested_schemas_and_skips_hidden_build_and_dependency_tre
     fs::create_dir_all(repo.root.join("ordinary/docs")).unwrap();
     fs::create_dir(repo.root.join("ordinary/.harnesskit")).unwrap();
     for command in ["doctor", "check"] {
-        let report: Value = serde_json::from_str(&repo.run(&[
-            command, "--docs-root", "knowledge", "--json",
-        ]))
-        .unwrap();
+        let report: Value =
+            serde_json::from_str(&repo.run(&[command, "--docs-root", "knowledge", "--json"]))
+                .unwrap();
         assert!(orphan_hints(&report).is_empty());
     }
 }
@@ -383,8 +384,10 @@ fn history_diff_preserves_legacy_ids_and_explicit_targets() {
     repo.run(&["history", "snapshot", "-m", "first"]);
     let latest = fs::read_to_string(repo.root.join(".harnesskit/history/refs/latest")).unwrap();
     fs::copy(
-        repo.root.join(format!(".harnesskit/history/snapshots/{}.json", latest)),
-        repo.root.join(".harnesskit/history/snapshots/legacy-id.json"),
+        repo.root
+            .join(format!(".harnesskit/history/snapshots/{}.json", latest)),
+        repo.root
+            .join(".harnesskit/history/snapshots/legacy-id.json"),
     )
     .unwrap();
     for args in [
@@ -392,7 +395,10 @@ fn history_diff_preserves_legacy_ids_and_explicit_targets() {
         vec!["history", "diff", "latest", "legacy-id", "."],
         vec!["history", "diff", "latest", "."],
     ] {
-        assert_eq!(repo.run(&args), "Added:\n- none\nChanged:\n- none\nRemoved:\n- none\n");
+        assert_eq!(
+            repo.run(&args),
+            "Added:\n- none\nChanged:\n- none\nRemoved:\n- none\n"
+        );
     }
     for target in ["missing", "./missing", "missing/nested"] {
         let args = ["history", "diff", "latest", target];
@@ -496,7 +502,12 @@ mod unix {
         let repo = TestRepo::new(None);
         let output = repo
             .command(&["--version"])
-            .stdout(fs::OpenOptions::new().write(true).open("/dev/full").unwrap())
+            .stdout(
+                fs::OpenOptions::new()
+                    .write(true)
+                    .open("/dev/full")
+                    .unwrap(),
+            )
             .output()
             .unwrap();
         assert_exit(&output, 2, &["--version"]);

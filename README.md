@@ -273,10 +273,63 @@ references are never added to history unless explicitly included as managed Mark
 #### Health Check
 
 ```bash
-harnesskit check [--json] [--strict] [--rules <rule-list>]
+harnesskit check [--format summary|full|json] [--all] [--update-baseline]
+                [--json] [--strict] [--rules <rule-list>]
 ```
 
 Validates all managed docs — missing required files, broken links, stale anchors, duplicate content, frontmatter issues, and more.
+
+The default summary groups counts by rule and shows at most three current examples
+and three new/resolved examples each. `--all` or `--format full` expands the text;
+`--json` remains an alias for `--format json`. Every finding includes a repair
+`hint` and a `fixable` boolean. Automatic repairs are not currently implemented,
+so `fixable` is false; suggested edits require review.
+
+The first successful evaluation creates `.harnesskit/state/check-baseline.json`,
+including when findings cause exit 1. Later checks report `baseline.new` and
+`baseline.resolved` against that baseline without replacing it. Use
+`--update-baseline` to accept the current findings **after** seeing their difference.
+Finding identity uses rule, path, severity and, where needed, the linked target or
+frontmatter field; wording and timestamps do not create new findings. Suppressed
+findings are excluded from the baseline. `--rules` filters the report and its
+differences, while baseline creation/updates always retain every active rule.
+The baseline is derived data and is recreated if missing or incompatible.
+
+JSON includes complete severity/rule counts. By default `checks` contains at most
+20 findings and `truncated` counts omitted findings; other lists (including
+coverage mappings, evidence paths and new/resolved entries) also stop at 20 with
+`<list>_truncated` and a local `truncated` count. `--json --all` returns every list
+in full. Exit status always uses all selected, unsuppressed findings, including
+those omitted from the output; accepting a baseline does not suppress failures.
+
+Without an explicit project schema, the inferred layout does not require the
+bundled scaffold's entrypoints, core files, collection indexes or a first history
+snapshot. Explicit schemas retain those requirements, including older schemas.
+Only when **all** configured, non-ignored entrypoints are missing does
+`missing-entrypoint-doc` become an error; an individually missing entrypoint is a
+warning in an explicit layout. Broken links and malformed YAML frontmatter are
+errors in either layout. `check` reports schema syntax/validation failures as
+`schema-parse-error` errors without evaluating coverage or updating the baseline.
+
+Stale scope checks use the last Git commit for each document/scope, resolved in
+one batch and cached by HEAD and paths. Uncommitted files without commit times
+are skipped. Without Git, mtime is only informational. Decisions and historical
+documents are skipped, and multiple stale scopes share one finding per document.
+Tracked documentation does not need local isolation; local layouts honor both
+`.gitignore` and `.git/info/exclude`, including Git's negation rules. Reference
+citations only produce informational findings for Markdown links, and orphan
+documents are grouped by directory.
+
+Suppressions using `rule` accept repository-relative path globs and a reason.
+Existing named entries with `rule_id` retain exact path matching, including
+literal glob characters in filenames. Both forms survive schema roundtrips:
+
+```yaml
+suppressions:
+  - rule: canonical-links-reference
+    path: 'docs/design-docs/**/*.md'
+    reason: 'These links deliberately cite supporting evidence.'
+```
 
 #### Environment Diagnostics
 
@@ -320,8 +373,8 @@ harnesskit update --version <release-tag> # Update to a pinned release
 | Code | Meaning |
 |:--|:--|
 | `0` | Normal completion, including help/version and a closed output pipe (for example, `harnesskit list-docs \| head`). |
-| `1` | `check` found an unsuppressed error, or an unsuppressed warning with `--strict` (including schema strict mode). |
-| `2` | Usage or environment error: invalid arguments, missing or non-directory target, unreadable schema, or failed I/O. |
+| `1` | `check` found an unsuppressed error (including malformed schema/frontmatter, broken links or all explicitly configured entrypoints missing), or an unsuppressed warning with `--strict` (including schema strict mode). Baselines and output truncation do not change this. |
+| `2` | Usage or environment error: invalid arguments, missing or non-directory target, unreadable schema, or failed I/O. Schema syntax errors in commands other than `check` also return 2. |
 
 Only `init` may create a missing target directory; `init --preview` never writes files. Other commands validate `target_dir` before creating state and suggest checking whether an argument was mistaken for the target. Commands operating on a directory without configured docs or entrypoints emit a one-line hint on stderr suggesting `harnesskit init --preview`; they can still inspect or restore existing history. Help, version, and update do not operate on a project target.
 

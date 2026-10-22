@@ -107,6 +107,7 @@ pub(crate) fn refresh_external_refs(
                         rule_id: "external-ref-changed".to_string(), severity: "info".to_string(),
                         subject_path: doc.path.clone(),
                         hint: None,
+                        fixable: false,
                         message: format!("{} changed since {} recorded it; review the evidence and update the referring document.", target, doc.path),
                         evidence_json: serde_json::json!({"source": doc.path, "target": target, "recorded_hash": content_hash, "current_hash": observed_hash}).to_string(),
                     });
@@ -116,5 +117,8 @@ pub(crate) fn refresh_external_refs(
         }
         Ok(())
     })?;
+    for check in &mut checks {
+        crate::checks::complete_check(check);
+    }
     Ok((refs, checks))
 }

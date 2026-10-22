@@ -24,6 +24,8 @@ pub(crate) struct Schema {
     pub(crate) ignore: Vec<String>,
     // Runtime-only explanation of zero-config root inference, never a schema key.
     pub(crate) inferred_root: Option<String>,
+    // Default schema mappings are suggestions until a project opts into a schema.
+    pub(crate) inferred_layout: bool,
 }
 
 #[derive(Clone)]
@@ -83,6 +85,7 @@ pub(crate) struct Rules {
 pub(crate) struct SuppressionSpec {
     pub(crate) name: String,
     pub(crate) rule_id: String,
+    pub(crate) path_glob: bool,
     pub(crate) path: String,
     pub(crate) reason: String,
 }
@@ -91,6 +94,20 @@ pub(crate) struct SchemaLoad {
     pub(crate) text: String,
     pub(crate) source: String,
 }
+
+#[derive(Debug)]
+pub(crate) struct SchemaParseError {
+    pub(crate) path: String,
+    pub(crate) message: String,
+}
+
+impl std::fmt::Display for SchemaParseError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{}: {}", self.path, self.message)
+    }
+}
+
+impl std::error::Error for SchemaParseError {}
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Section {
@@ -289,10 +306,22 @@ pub(crate) fn parse_schema(text: &str) -> Result<Schema> {
                 }
                 Section::Suppressions => {
                     flush_suppression(&mut schema, &mut current_suppression);
-                    current_suppression = Some(SuppressionSpec {
-                        name: parse_item_header(trimmed, "suppression")?,
-                        ..SuppressionSpec::default()
-                    });
+                    let mut spec = SuppressionSpec::default();
+                    if let Some(item) = trimmed.strip_prefix("- ") {
+                        let (key, value) = parse_key_value(item)
+                            .ok_or("invalid schema: suppression expects rule: <rule-id>")?;
+                        if !matches!(key.as_str(), "rule" | "rule_id") {
+                            return Err(
+                                "invalid schema: suppression expects rule or rule_id".into()
+                            );
+                        }
+                        spec.name = format!("suppression_{}", schema.suppressions.len() + 1);
+                        spec.rule_id = unquote(&value)?;
+                        spec.path_glob = key == "rule";
+                    } else {
+                        spec.name = parse_item_header(trimmed, "suppression")?;
+                    }
+                    current_suppression = Some(spec);
                 }
                 Section::Rules => {
                     if let Some((key, value)) = parse_key_value(trimmed) {
@@ -417,9 +446,12 @@ pub(crate) fn parse_schema(text: &str) -> Result<Schema> {
                             "invalid schema: suppression property without item".to_string()
                         })?;
                         match key.as_str() {
-                            "rule_id" => spec.rule_id = value,
-                            "path" => spec.path = value,
-                            "reason" => spec.reason = value,
+                            "rule" | "rule_id" => {
+                                spec.rule_id = unquote(&value)?;
+                                spec.path_glob = key == "rule";
+                            }
+                            "path" => spec.path = unquote(&value)?,
+                            "reason" => spec.reason = unquote(&value)?,
                             other => {
                                 return Err(format!(
                                     "invalid schema: unknown suppression property `{}`",
@@ -735,6 +767,14 @@ fn validate_schema(schema: &Schema) -> Result<()> {
                 format!("invalid schema: suppression `{}` missing reason", spec.name).into(),
             );
         }
+        if spec.path_glob {
+            glob_matcher(&spec.path).map_err(|error| {
+                format!(
+                    "invalid schema: suppression {} has invalid path glob: {}",
+                    spec.name, error
+                )
+            })?;
+        }
     }
 
     Ok(())
@@ -865,9 +905,19 @@ pub(crate) fn render_schema_copy(schema: &Schema) -> String {
         lines.push("suppressions:".to_string());
         for spec in &schema.suppressions {
             lines.push(format!("  {}:", spec.name));
-            lines.push(format!("    rule_id: {}", spec.rule_id));
-            lines.push(format!("    path: {}", spec.path));
-            lines.push(format!("    reason: {}", spec.reason));
+            lines.push(format!(
+                "    {}: {}",
+                if spec.path_glob { "rule" } else { "rule_id" },
+                spec.rule_id
+            ));
+            lines.push(format!(
+                "    path: {}",
+                serde_json::to_string(&spec.path).unwrap()
+            ));
+            lines.push(format!(
+                "    reason: {}",
+                serde_json::to_string(&spec.reason).unwrap()
+            ));
         }
     }
 

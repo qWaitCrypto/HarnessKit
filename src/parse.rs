@@ -83,18 +83,35 @@ fn split_frontmatter(text: &str) -> (Option<&str>, &str) {
     if !text.starts_with("---\n") {
         return (None, text);
     }
-    if let Some(end) = text[4..].find("\n---") {
-        let fm_end = 4 + end;
-        let after_marker = fm_end + 4;
-        if after_marker == text.len() {
-            (Some(&text[4..fm_end]), "")
-        } else if text[after_marker..].starts_with('\n') {
-            (Some(&text[4..fm_end]), &text[after_marker + 1..])
-        } else {
-            (None, text)
+    let mut offset = 4;
+    for line in text[4..].split_inclusive('\n') {
+        if matches!(line.trim_end(), "---" | "...") {
+            return (Some(&text[4..offset]), &text[offset + line.len()..]);
         }
-    } else {
-        (None, text)
+        offset += line.len();
+    }
+    (None, text)
+}
+
+pub(crate) fn frontmatter_error(text: &str) -> Option<String> {
+    let normalized = text.replace("\r\n", "\n");
+    if !normalized.starts_with("---\n") {
+        return None;
+    }
+    let (frontmatter, _) = split_frontmatter(&normalized);
+    let raw = match frontmatter {
+        Some(raw) => raw,
+        None => return Some("opening --- has no closing delimiter".to_string()),
+    };
+    match serde_yaml::from_str::<serde_yaml::Value>(raw) {
+        Ok(serde_yaml::Value::Mapping(mapping))
+            if mapping.keys().all(|key| key.as_str().is_some()) =>
+        {
+            None
+        }
+        Ok(serde_yaml::Value::Null) => None,
+        Ok(_) => Some("frontmatter must be a mapping with string keys".to_string()),
+        Err(error) => Some(error.to_string()),
     }
 }
 

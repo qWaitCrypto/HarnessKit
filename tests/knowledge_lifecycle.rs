@@ -474,7 +474,7 @@ fn entrypoint_length_uses_raw_lines_and_schema_threshold_roundtrips() {
         );
         assert_eq!(
             repo.command(&["check"]).output().unwrap().status.code(),
-            Some(2)
+            Some(1)
         );
     }
 }

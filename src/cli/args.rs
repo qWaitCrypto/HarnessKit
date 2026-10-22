@@ -1,4 +1,4 @@
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use crate::output::eprintln;
 
@@ -16,7 +16,7 @@ pub(super) enum Command {
     /// Refresh the derived document index.
     Index(TargetArgs),
     /// Check managed documentation.
-    Check(TargetArgs),
+    Check(CheckArgs),
     /// Rank documents by incoming links.
     Rank(TargetArgs),
     /// List managed documents.
@@ -66,6 +66,28 @@ pub(crate) struct TargetArgs {
     pub(crate) target_dir: Option<String>,
     #[command(flatten)]
     pub(crate) options: CommonArgs,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, ValueEnum)]
+pub(crate) enum CheckFormat {
+    Summary,
+    Full,
+    Json,
+}
+
+#[derive(Args)]
+pub(super) struct CheckArgs {
+    #[command(flatten)]
+    pub(super) target: TargetArgs,
+    /// Output format (default: summary); --json remains an alias for json.
+    #[arg(long, value_enum, conflicts_with = "json")]
+    pub(super) format: Option<CheckFormat>,
+    /// Expand every finding and list, including JSON lists.
+    #[arg(long)]
+    pub(super) all: bool,
+    /// Replace the derived baseline after reporting changes against it.
+    #[arg(long)]
+    pub(super) update_baseline: bool,
 }
 
 #[derive(Args)]

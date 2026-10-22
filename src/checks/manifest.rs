@@ -80,17 +80,31 @@ pub(super) fn build_manifest_checks(
         .clone()
         .unwrap_or_else(|| format!("{}/index.md", schema.managed_root));
 
-    for (entrypoint_name, entrypoint_path) in [
+    let entrypoints = [
         ("agents", schema.entrypoints.agents.as_deref()),
         ("claude", schema.entrypoints.claude.as_deref()),
         ("architecture", schema.entrypoints.architecture.as_deref()),
-    ] {
-        if let Some(path) = entrypoint_path {
-            if !doc_map.contains_key(path) && !is_ignored(schema, path) {
+    ]
+    .into_iter()
+    .filter_map(|(name, path)| path.map(|path| (name, path)))
+    .filter(|(_, path)| !is_ignored(schema, path))
+    .collect::<Vec<_>>();
+    let all_entrypoints_missing = !entrypoints.is_empty()
+        && entrypoints
+            .iter()
+            .all(|(_, path)| !doc_map.contains_key(*path));
+
+    if !schema.inferred_layout {
+        for (entrypoint_name, path) in entrypoints {
+            if !doc_map.contains_key(path) {
                 push_check(
                     &mut checks,
                     "missing-entrypoint-doc",
-                    "warning",
+                    if all_entrypoints_missing {
+                        "error"
+                    } else {
+                        "warning"
+                    },
                     path,
                     &format!(
                         "configured {} entrypoint is missing: {}",
@@ -102,7 +116,7 @@ pub(super) fn build_manifest_checks(
         }
     }
 
-    for spec in &schema.core_files {
+    for spec in schema.core_files.iter().filter(|_| !schema.inferred_layout) {
         let rel_path = core_file_rel_path(schema, spec);
         if spec.required && !doc_map.contains_key(&rel_path) && !is_ignored(schema, &rel_path) {
             push_check(
@@ -116,7 +130,7 @@ pub(super) fn build_manifest_checks(
         }
     }
 
-    if schema.rules.index_required.unwrap_or(false) {
+    if !schema.inferred_layout && schema.rules.index_required.unwrap_or(false) {
         for spec in &schema.doc_collections {
             let collection_index_path = normalize_path(
                 &std::path::Path::new(&schema.managed_root)
@@ -149,7 +163,10 @@ pub(super) fn build_manifest_checks(
             let points_to_manifest = relations
                 .iter()
                 .any(|relation| relation.src_path == path && relation.dst_path == manifest_path);
-            if !points_to_manifest && !is_ignored(schema, &manifest_path) {
+            if !points_to_manifest
+                && !is_ignored(schema, &manifest_path)
+                && (!schema.inferred_layout || doc_map.contains_key(&manifest_path))
+            {
                 push_check(
                     &mut checks,
                     "entrypoint-manifest-link",
@@ -162,24 +179,41 @@ pub(super) fn build_manifest_checks(
         }
     }
 
-    if schema.rules.index_required.unwrap_or(false) {
+    if !schema.inferred_layout && schema.rules.index_required.unwrap_or(false) {
         add_manifest_constraint_checks(schema, docs, relations, &doc_map, &mut checks);
     }
 
+    let mut orphans = BTreeMap::<String, Vec<&str>>::new();
     for doc in docs
         .iter()
         .filter(|doc| doc.collection.is_some() && !doc.path.ends_with("/index.md"))
     {
         if doc.incoming_links == 0 {
-            push_check(
-                &mut checks,
-                "orphan-managed-doc",
-                "info",
-                &doc.path,
-                &format!("{} has no incoming managed-doc navigation edges", doc.path),
-                &[("path", &doc.path)],
-            );
+            let dir = std::path::Path::new(&doc.path)
+                .parent()
+                .filter(|path| !path.as_os_str().is_empty())
+                .unwrap_or_else(|| std::path::Path::new("."));
+            let dir = normalize_path(dir);
+            orphans
+                .entry(if dir.is_empty() { ".".to_string() } else { dir })
+                .or_default()
+                .push(&doc.path);
         }
+    }
+    for (dir, paths) in orphans {
+        checks.push(IndexCheck {
+            rule_id: "orphan-managed-doc".to_string(),
+            severity: "info".to_string(),
+            subject_path: dir.clone(),
+            message: format!(
+                "{} document(s) in {} have no incoming managed-doc navigation edges",
+                paths.len(),
+                dir
+            ),
+            hint: None,
+            fixable: false,
+            evidence_json: serde_json::json!({"directory": dir, "paths": paths}).to_string(),
+        });
     }
 
     checks

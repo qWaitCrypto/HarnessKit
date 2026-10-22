@@ -18,6 +18,9 @@ pub(super) fn add_contamination_checks(
             continue;
         };
         if src.authority.as_deref() == Some("canonical") && (dst.is_generated || dst.is_reference) {
+            if dst.is_reference && relation.reason != "markdown-link" {
+                continue;
+            }
             let rule = if dst.is_generated {
                 "canonical-links-generated"
             } else {
@@ -26,7 +29,7 @@ pub(super) fn add_contamination_checks(
             push_check(
                 checks,
                 rule,
-                "warning",
+                if dst.is_reference { "info" } else { "warning" },
                 &src.path,
                 &format!(
                     "canonical doc {} links to non-source doc {}",

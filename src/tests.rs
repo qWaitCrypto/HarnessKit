@@ -16,8 +16,8 @@ use crate::history::{
 use crate::index::{
     build_index_artifact, cell, collect_current_file_states, compute_fact_store_delta, meta_value,
     open_fact_store, parse_file_state_rows, read_index_artifact_from_fact_store,
-    refresh_fact_store, scalar_count, write_fact_store, write_index_artifact,
-    EngineContext, FACT_SCHEMA_VERSION,
+    refresh_fact_store, scalar_count, write_fact_store, write_index_artifact, EngineContext,
+    FACT_SCHEMA_VERSION,
 };
 use crate::parse::{extract_inline_code_path_mentions, parse_doc_text};
 use crate::query::{query_candidates, DEFAULT_LIMIT};
@@ -1447,7 +1447,12 @@ fn query_candidates_include_snippet_heading_location_and_json() {
     assert!(candidate.snippet_location.starts_with("line "));
     assert!(candidate.snippet.contains("phrase search"));
     let json = render_query_json(
-        "phrase search", &candidates, &Default::default(), &[], None, &[],
+        "phrase search",
+        &candidates,
+        &Default::default(),
+        &[],
+        None,
+        &[],
     );
     assert!(json.contains("\"snippet_location\""));
 
@@ -1534,7 +1539,12 @@ fn json_parser_decodes_surrogate_pairs() {
 #[test]
 fn json_string_escapes_all_control_characters() {
     let rendered = render_query_json(
-        "a\u{0001}\u{0008}\u{000c}z", &[], &Default::default(), &[], None, &[],
+        "a\u{0001}\u{0008}\u{000c}z",
+        &[],
+        &Default::default(),
+        &[],
+        None,
+        &[],
     );
     assert!(rendered.contains("\"query\": \"a\\u0001\\b\\fz\""));
 }
@@ -1547,14 +1557,25 @@ fn render_check_json_emits_evidence_as_json_value() {
         subject_path: ".harnesskit/history".to_string(),
         message: "dirty".to_string(),
         hint: None,
+        fixable: false,
         evidence_json: "{\"changed\":\"1\"}".to_string(),
         suppressed: false,
         suppression_reason: None,
     }];
 
-    let rendered = render_check_json(Path::new("/tmp/demo"), 1, 2, &checks, &Default::default(), &[]);
+    let rendered = render_check_json(
+        Path::new("/tmp/demo"),
+        1,
+        2,
+        &checks,
+        &Default::default(),
+        &[],
+        &Default::default(),
+        true,
+    );
 
-    assert!(rendered.contains("\"evidence_json\": {\"changed\":\"1\"}"));
+    let report: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+    assert_eq!(report["checks"][0]["evidence_json"]["changed"], "1");
 }
 
 #[test]
@@ -1601,8 +1622,10 @@ fn context_packet_collects_graph_neighbors_and_reading_order() {
         packet.recommended_reading_order.first().map(String::as_str),
         Some("docs/design-docs/semantic-layer.md")
     );
-    assert!(render_context_packet_json("context", "semantic", &packet, &Default::default(), &[])
-        .contains("\"recommended_reading_order\""));
+    assert!(
+        render_context_packet_json("context", "semantic", &packet, &Default::default(), &[])
+            .contains("\"recommended_reading_order\"")
+    );
 
     fs::remove_dir_all(target).unwrap();
 }

@@ -65,7 +65,7 @@ fn all_five_fixtures_share_coverage_across_index_check_list_and_history() {
         assert_eq!(coverage["ratio"], 1.0);
         assert!(index["hints"].is_array());
         for command in [
-            vec!["check", "--json"],
+            vec!["check", "--json", "--all"],
             vec!["list-docs", "--json"],
             vec!["history", "snapshot", "--json"],
         ] {
@@ -249,7 +249,10 @@ fn unknown_directories_are_aggregated_live_and_hint_can_be_pasted() {
     for name in ["a.md", "b.MARKDOWN"] {
         write(&repo, &format!("docs/misc/{}", name), "# Unknown\n");
     }
-    let report = json(&repo, &["check", "--json", "--rules", "unmanaged-docs"]);
+    let report = json(
+        &repo,
+        &["check", "--json", "--all", "--rules", "unmanaged-docs"],
+    );
     let checks = report["checks"].as_array().unwrap();
     assert_eq!(checks.len(), 1);
     assert_eq!(checks[0]["subject_path"], "docs/misc");
@@ -439,7 +442,11 @@ fn nested_projects_and_fixtures_are_excluded_and_explained_across_commands() {
     for prefix in ["", "docs/"] {
         let repo = TestRepo::new(None);
         let mut expected = vec!["AGENTS.md".to_string(), "CLAUDE.md".to_string()];
-        for path in ["index.md", "reference/fixtures/guide.md", "testdata-notes.md"] {
+        for path in [
+            "index.md",
+            "reference/fixtures/guide.md",
+            "testdata-notes.md",
+        ] {
             expected.push(format!("{}{}", prefix, path));
         }
         if prefix.is_empty() {
@@ -517,7 +524,13 @@ fn nested_projects_and_fixtures_are_excluded_and_explained_across_commands() {
         }
         for args in [
             vec!["index", "--json"],
-            vec!["check", "--json", "--rules", "broken-link,unmanaged-docs"],
+            vec![
+                "check",
+                "--json",
+                "--all",
+                "--rules",
+                "broken-link,unmanaged-docs",
+            ],
             vec!["history", "snapshot", "--json"],
             vec!["doctor", "--layout", "--json"],
         ] {
@@ -593,7 +606,10 @@ fn schema_include_overrides_default_exclusions_but_ignore_wins() {
         mapping(&report, "projects/child/nested/guide.md")["role"],
         "references"
     );
-    assert_eq!(mapping(&report, "testdata/ignored.md")["status"], "excluded");
+    assert_eq!(
+        mapping(&report, "testdata/ignored.md")["status"],
+        "excluded"
+    );
     assert_eq!(
         mapping(&report, "testdata/ignored.md")["reason"],
         "schema.ignore: testdata/ignored.md"

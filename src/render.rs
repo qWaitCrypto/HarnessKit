@@ -9,7 +9,7 @@ pub(crate) use json::{
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use crate::checks::CheckView;
+use crate::checks::{BaselineDelta, CheckSummary, CheckView};
 use crate::cli::InitMode;
 use crate::context::{ContextDoc, ContextPacket, CurrentContext, HandoffContext};
 use crate::discover::Coverage;
@@ -708,19 +708,10 @@ pub(crate) fn print_check_output(
     docs_count: usize,
     relation_count: usize,
     checks: &[CheckView],
+    baseline: &BaselineDelta,
+    full: bool,
 ) {
-    let warning_count = checks
-        .iter()
-        .filter(|check| !check.suppressed && check.severity == "warning")
-        .count();
-    let error_count = checks
-        .iter()
-        .filter(|check| !check.suppressed && check.severity == "error")
-        .count();
-    let info_count = checks
-        .iter()
-        .filter(|check| !check.suppressed && check.severity == "info")
-        .count();
+    let summary = CheckSummary::from_checks(checks);
     let active_count = checks.iter().filter(|check| !check.suppressed).count();
 
     println!(
@@ -731,16 +722,47 @@ pub(crate) fn print_check_output(
         active_count
     );
 
-    if checks.iter().all(|check| check.suppressed) {
-        println!("No checks emitted.");
-        return;
-    }
-
     println!(
-        "Severity summary: error {}, warning {}, info {}",
-        error_count, warning_count, info_count
+        "Severity summary: error {}, warning {}, info {}, suppressed {}",
+        summary.error, summary.warning, summary.info, summary.suppressed
     );
-    for check in checks {
+    if baseline.available {
+        println!(
+            "Baseline: {}new {}, resolved {}{}",
+            if baseline.created { "created; " } else { "" },
+            baseline.new_count,
+            baseline.resolved_count,
+            if baseline.updated { "; updated" } else { "" }
+        );
+    } else {
+        println!("Baseline: not evaluated");
+    }
+    for rule in &summary.by_rule {
+        println!(
+            "- {}: error {}, warning {}, info {}, suppressed {}",
+            rule.rule_id, rule.error, rule.warning, rule.info, rule.suppressed
+        );
+    }
+    for (label, changes) in [("new", &baseline.new), ("resolved", &baseline.resolved)] {
+        for finding in changes.iter().take(if full { usize::MAX } else { 3 }) {
+            println!(
+                "[{}] {} {} - {}",
+                label,
+                finding.rule_id,
+                finding.subject_path,
+                if full {
+                    finding.message.clone()
+                } else {
+                    check_example(&finding.message)
+                }
+            );
+        }
+    }
+    let examples = checks
+        .iter()
+        .filter(|check| full || !check.suppressed)
+        .take(if full { usize::MAX } else { 3 });
+    for check in examples {
         if check.suppressed {
             println!(
                 "[suppressed] {} {} - {}",
@@ -752,15 +774,41 @@ pub(crate) fn print_check_output(
         }
         println!(
             "[{}] {} {} - {}",
-            check.severity, check.rule_id, check.subject_path, check.message
+            check.severity,
+            check.rule_id,
+            check.subject_path,
+            if full {
+                check.message.clone()
+            } else {
+                check_example(&check.message)
+            }
         );
         if let Some(hint) = &check.hint {
-            println!("  Hint: {}", hint);
+            println!(
+                "  Hint: {}",
+                if full {
+                    hint.clone()
+                } else {
+                    check_example(hint)
+                }
+            );
         }
-        if !check.evidence_json.is_empty() && check.evidence_json != "{}" {
+        if full && !check.evidence_json.is_empty() && check.evidence_json != "{}" {
             println!("  evidence: {}", check.evidence_json);
         }
     }
+    if !full {
+        println!("Hint: Use check --all for all findings; --update-baseline accepts the current findings as the baseline.");
+    }
+}
+
+fn check_example(text: &str) -> String {
+    let line = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut example = line.chars().take(240).collect::<String>();
+    if line.chars().count() > 240 {
+        example.push_str("...");
+    }
+    example
 }
 
 pub(crate) fn print_history_snapshot_result(snapshot: &HistorySnapshot) {

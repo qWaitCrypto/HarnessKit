@@ -82,6 +82,7 @@ pub(super) fn add_coverage_checks(
             rule_id: "unmanaged-docs".to_string(), severity: "warning".to_string(),
             subject_path: dir.clone(),
             hint: None,
+            fixable: false,
             message: format!("{} Markdown file(s) in {} are not managed. Merge this mapping into .harnesskit/schema.yaml:\n{}", paths.len(), dir, hint),
             evidence_json: serde_json::json!({"directory": dir, "paths": paths, "hint": hint}).to_string(),
         });

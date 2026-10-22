@@ -1,9 +1,31 @@
 use std::collections::BTreeSet;
+use std::path::Path;
 
 use crate::checks::{push_check, IndexCheck};
 use crate::discover::collection_lookup;
 use crate::index::IndexedDoc;
 use crate::schema::Schema;
+
+pub(super) fn add_frontmatter_parse_checks(
+    root: &Path,
+    docs: &[IndexedDoc],
+    checks: &mut Vec<IndexCheck>,
+) -> crate::Result<()> {
+    for doc in docs {
+        let text = crate::fs_utils::read_text_lossy(&root.join(&doc.path))?;
+        if let Some(error) = crate::parse::frontmatter_error(&text) {
+            push_check(
+                checks,
+                "frontmatter-parse-error",
+                "error",
+                &doc.path,
+                &format!("Cannot parse frontmatter in {}: {}", doc.path, error),
+                &[("doc", &doc.path), ("error", &error)],
+            );
+        }
+    }
+    Ok(())
+}
 
 pub(super) fn add_frontmatter_constraint_checks(
     schema: &Schema,
