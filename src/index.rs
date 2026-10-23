@@ -355,6 +355,7 @@ pub(crate) fn refresh_fact_store(context: &EngineContext) -> Result<()> {
         &artifact.docs,
         &artifact.relations,
     )?;
+    crate::checks::add_undocumented_hotspot_checks(&db, &context.schema, &mut checks)?;
     checks.extend(external_checks);
     checks.extend(anchor_checks);
     checks.extend(knowledge.checks);

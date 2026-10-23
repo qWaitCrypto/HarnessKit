@@ -7,7 +7,7 @@ pub(crate) use code_context::{print_code_context_with_options, print_diff_contex
 pub(crate) use contract::{
     compact, cursor_for_offset, cursor_offset, edge_badge, freshness_badge, highlight,
     kwic_excerpt, merge_names, paginate_lines, short_hint, RenderLine, RenderOptions,
-    RenderedPage,
+    RenderedPage, token_cost,
 };
 
 #[allow(unused_imports)]

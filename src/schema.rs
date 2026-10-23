@@ -84,6 +84,10 @@ pub(crate) struct Rules {
     /// Maximum number of files in a commit considered for inferred cochange
     /// edges.  Large formatting/vendor commits are ignored by default.
     pub(crate) cochange_max_files: Option<u32>,
+    /// Minimum same-commit history count before an undocumented hotspot is reported.
+    pub(crate) undocumented_hotspot_min_commits: Option<u32>,
+    /// Maximum number of undocumented hotspots shown by check.
+    pub(crate) undocumented_hotspot_max: Option<u32>,
 }
 
 #[derive(Default, Clone)]
@@ -254,14 +258,28 @@ pub(crate) fn parse_schema(text: &str) -> Result<Schema> {
                         "cochange_ignore" => {
                             schema.cochange_ignore = Some(parse_inline_list(&value));
                         }
-                        "cochange_max_files" | "max_cochange_files" | "max_commit_files" => {
+                        "cochange_max_files" | "max_cochange_files" | "max_commit_files"
+                        | "undocumented_hotspot_min_commits"
+                        | "hotspot_min_commits"
+                        | "undocumented_hotspot_threshold"
+                        | "hotspot_threshold"
+                        | "undocumented_hotspot_max"
+                        | "hotspot_max" => {
                             let parsed = parse_u32(&value)?;
                             if parsed == 0 {
                                 return Err(
                                     format!("invalid schema: {} must be positive", key).into()
                                 );
                             }
-                            schema.rules.cochange_max_files = Some(parsed);
+                            match key.as_str() {
+                                "cochange_max_files" | "max_cochange_files" | "max_commit_files" => {
+                                    schema.rules.cochange_max_files = Some(parsed)
+                                }
+                                "undocumented_hotspot_max" | "hotspot_max" => {
+                                    schema.rules.undocumented_hotspot_max = Some(parsed)
+                                }
+                                _ => schema.rules.undocumented_hotspot_min_commits = Some(parsed),
+                            }
                         }
                         other => {
                             return Err(format!(
@@ -363,6 +381,12 @@ pub(crate) fn parse_schema(text: &str) -> Result<Schema> {
                                 | "cochange_max_files"
                                 | "max_cochange_files"
                                 | "max_commit_files"
+                                | "undocumented_hotspot_min_commits"
+                                | "hotspot_min_commits"
+                                | "undocumented_hotspot_threshold"
+                                | "hotspot_threshold"
+                                | "undocumented_hotspot_max"
+                                | "hotspot_max"
                         ) {
                             let parsed = parse_u32(&value)?;
                             if parsed == 0 {
@@ -381,7 +405,10 @@ pub(crate) fn parse_schema(text: &str) -> Result<Schema> {
                                 | "max_commit_files" => {
                                     schema.rules.cochange_max_files = Some(parsed)
                                 }
-                                _ => unreachable!("validated numeric schema rule"),
+                                "undocumented_hotspot_max" | "hotspot_max" => {
+                                    schema.rules.undocumented_hotspot_max = Some(parsed)
+                                }
+                                _ => schema.rules.undocumented_hotspot_min_commits = Some(parsed),
                             }
                             continue;
                         }
@@ -945,6 +972,12 @@ pub(crate) fn render_schema_copy(schema: &Schema) -> String {
     }
     if let Some(value) = schema.rules.cochange_max_files {
         lines.push(format!("  cochange_max_files: {}", value));
+    }
+    if let Some(value) = schema.rules.undocumented_hotspot_min_commits {
+        lines.push(format!("  undocumented_hotspot_min_commits: {}", value));
+    }
+    if let Some(value) = schema.rules.undocumented_hotspot_max {
+        lines.push(format!("  undocumented_hotspot_max: {}", value));
     }
 
     if !schema.suppressions.is_empty() {

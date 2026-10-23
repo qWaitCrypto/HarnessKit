@@ -2,7 +2,8 @@ mod args;
 
 use args::{
     option_value, CheckArgs, CheckFormat, Cli, Command, ContextArgs, DiffArgs, DoctorArgs,
-    HistoryCommand, InputArgs, QueryArgs, ShowArgs, SnapshotArgs,
+    HistoryCommand, HookCommand, InputArgs, InstallArgs, QueryArgs,
+    RestoreArgs, ShowArgs, SnapshotArgs, SuggestAnchorsArgs,
 };
 pub(crate) use args::{CommonArgs, TargetArgs};
 use clap::{CommandFactory, Parser};
@@ -51,6 +52,7 @@ use crate::schema::{
 use crate::templates::{materialize_from_schema, validate_init_templates};
 use crate::update::{detect_release_target, update_from_release};
 use crate::usage;
+use crate::{hooks, suggest};
 use crate::Result;
 
 #[derive(Default)]
@@ -1113,6 +1115,99 @@ fn run_history(command: Option<HistoryCommand>) -> Result<()> {
     }
 }
 
+fn run_suggest_anchors(args: &SuggestAnchorsArgs) -> Result<()> {
+    let mut target = args.input.target.clone();
+    let mut doc = args.input.input.clone();
+    // With no document, the established positional convention permits the
+    // target directory as the sole argument.  A real document path wins.
+    if target.target_dir.is_none() {
+        if let Some(candidate) = doc.as_deref() {
+            let path = Path::new(candidate);
+            if path.is_dir() && !candidate.ends_with(".md") {
+                target.target_dir = Some(candidate.to_string());
+                doc = None;
+            }
+        }
+    }
+    let context = load_engine_context(&target)?;
+    refresh_fact_store(&context)?;
+    let db = open_fact_store(&context.target_dir)?;
+    let suggestions = suggest::suggest_anchors(
+        &db,
+        &context.target_dir,
+        &context.schema,
+        doc.as_deref(),
+    )?;
+    if !args.apply.is_empty() {
+        let applied = suggest::apply_anchor_suggestions(
+            &context.target_dir,
+            &suggestions,
+            &args.apply,
+        )?;
+        if args.input.target.options.json {
+            let coverage = discover_docs(&context.target_dir, &context.schema)?;
+            let hints = vec![format!("Applied {} anchor suggestion(s).", applied.len())];
+            let options = render_options(&args.input.target.options);
+            println!(
+                "{}",
+                suggest::render_suggest_json(
+                    &suggestions,
+                    &coverage,
+                    &hints,
+                    &options,
+                    &applied,
+                )
+            );
+        } else {
+            let options = render_options(&args.input.target.options);
+            suggest::print_suggest_anchors(&suggestions, &applied, &options);
+        }
+        return Ok(());
+    }
+
+    let options = render_options(&args.input.target.options);
+    let coverage = discover_docs(&context.target_dir, &context.schema)?;
+    let hints = if suggestions.is_empty() {
+        vec!["No new anchor suggestions were found from mentions or same-commit history.".to_string()]
+    } else {
+        vec!["Review the evidence, then rerun with --apply <N...> to append selected Code lines.".to_string()]
+    };
+    if args.input.target.options.json {
+        println!(
+            "{}",
+            suggest::render_suggest_json(&suggestions, &coverage, &hints, &options, &[])
+        );
+    } else {
+        suggest::print_suggest_anchors(&suggestions, &[], &options);
+        if suggestions.is_empty() {
+            println!("Hint: {}", hints[0]);
+        }
+    }
+    Ok(())
+}
+
+fn run_hook(command: Option<HookCommand>) -> Result<()> {
+    // Hooks are an agent safety surface: every parsing, indexing, and I/O
+    // failure is deliberately swallowed so an unavailable HarnessKit state
+    // never blocks the edit that triggered it.
+    let Some(command) = command else { return Ok(()); };
+    let result = match command {
+        HookCommand::PreEdit(args) => hooks::run_hook_pre_edit(args.path.as_deref()),
+        HookCommand::PostEdit(args) => hooks::run_hook_post_edit(args.path.as_deref()),
+    };
+    let _ = result;
+    Ok(())
+}
+
+fn run_install(args: &InstallArgs) -> Result<()> {
+    if !args.hooks {
+        return Err("install requires --hooks".into());
+    }
+    let target = PathBuf::from(args.target_dir.as_deref().unwrap_or("."));
+    validate_target_dir(&target, false)?;
+    hooks::install_hooks(&target, args.write)
+}
+
 fn run_history_snapshot(args: &SnapshotArgs) -> Result<()> {
     let message = option_value(&args.target.options.short_message, "-m")
         .or_else(|| option_value(&args.target.options.message, "--message"))
@@ -1239,14 +1334,15 @@ fn history_diff_snapshot_args(positionals: &[String]) -> Vec<String> {
     }
 }
 
-fn run_history_restore(args: &InputArgs) -> Result<()> {
-    let snapshot_arg = args
+fn run_history_restore(args: &RestoreArgs) -> Result<()> {
+    let input = &args.input;
+    let snapshot_arg = input
         .input
         .as_deref()
         .ok_or("history restore requires <snapshot-id|latest>")?;
-    let apply = args.target.options.apply;
-    let force = args.target.options.force;
-    let context = load_engine_context(&args.target)?;
+    let apply = args.apply;
+    let force = input.target.options.force;
+    let context = load_engine_context(&input.target)?;
     let snapshot = resolve_snapshot_arg(&context.target_dir, snapshot_arg)?;
     let dirty = compute_history_status(&context.target_dir, &context.schema)?;
 
@@ -1258,10 +1354,10 @@ fn run_history_restore(args: &InputArgs) -> Result<()> {
     }
 
     let plan = restore_plan(&context.target_dir, &context.schema, &snapshot)?;
-    if args.target.options.json {
+    if input.target.options.json {
         print_history_json(
             &context,
-            &args.target.options,
+            &input.target.options,
             &serde_json::json!({
                 "snapshot": snapshot.id, "apply": apply,
                 "restore_files": plan.restore_files, "remove_paths": plan.remove_paths
@@ -1485,6 +1581,9 @@ pub(crate) fn run() -> Result<()> {
         Some(Command::History { command }) => run_history(command),
         Some(Command::Doctor(args)) => run_doctor(&args),
         Some(Command::Update(args)) => run_update(&args),
+        Some(Command::SuggestAnchors(args)) => run_suggest_anchors(&args),
+        Some(Command::Hook { command }) => run_hook(command),
+        Some(Command::Install(args)) => run_install(&args),
         Some(Command::Unknown(_)) | None => {
             Cli::command().write_help(&mut std::io::stderr())?;
             eprintln!();

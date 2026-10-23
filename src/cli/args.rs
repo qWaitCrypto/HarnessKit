@@ -40,6 +40,15 @@ pub(super) enum Command {
     Doctor(DoctorArgs),
     /// Update from a release archive.
     Update(CommonArgs),
+    /// Suggest document-to-code anchors from inferred relationships.
+    SuggestAnchors(SuggestAnchorsArgs),
+    /// Run a lightweight agent edit hook.
+    Hook {
+        #[command(subcommand)]
+        command: Option<HookCommand>,
+    },
+    /// Print or install agent hook settings.
+    Install(InstallArgs),
     #[command(external_subcommand)]
     Unknown(Vec<String>),
 }
@@ -55,7 +64,7 @@ pub(super) enum HistoryCommand {
     /// Compare a checkpoint with current documents or another checkpoint.
     Diff(DiffArgs),
     /// Preview or apply a checkpoint restore.
-    Restore(InputArgs),
+    Restore(RestoreArgs),
     /// Export snapshots and objects to a portable .tar.gz archive.
     Export(InputArgs),
     /// Merge a history archive, preserving existing snapshot IDs.
@@ -64,6 +73,58 @@ pub(super) enum HistoryCommand {
     Show(ShowArgs),
     #[command(external_subcommand)]
     Unknown(Vec<String>),
+}
+
+#[derive(Args)]
+pub(super) struct RestoreArgs {
+    #[command(flatten)]
+    pub(super) input: InputArgs,
+    /// Apply the restore after the preflight preview.
+    #[arg(long)]
+    pub(super) apply: bool,
+}
+
+#[derive(Args)]
+pub(super) struct SuggestAnchorsArgs {
+    #[command(flatten)]
+    pub(super) input: InputArgs,
+    /// Apply one or more displayed suggestions (one-based indexes).
+    #[arg(
+        long,
+        value_name = "N",
+        num_args = 1..,
+        value_delimiter = ',',
+        value_parser = clap::value_parser!(usize)
+    )]
+    pub(super) apply: Vec<usize>,
+}
+
+#[derive(Subcommand)]
+pub(super) enum HookCommand {
+    /// Print the most relevant constraints before an edit.
+    PreEdit(HookPathArgs),
+    /// Report anchor drift after an edit.
+    PostEdit(HookPathArgs),
+}
+
+#[derive(Args)]
+pub(super) struct HookPathArgs {
+    /// File path; when omitted it is read from Claude Code hook JSON on stdin.
+    #[arg(value_name = "PATH")]
+    pub(super) path: Option<String>,
+}
+
+#[derive(Args)]
+pub(super) struct InstallArgs {
+    /// Print or write Claude Code Edit/Write/MultiEdit hooks.
+    #[arg(long)]
+    pub(super) hooks: bool,
+    /// Write project-local settings after creating a backup.
+    #[arg(long)]
+    pub(super) write: bool,
+    /// Project directory (defaults to the current directory).
+    #[arg(value_name = "TARGET_DIR")]
+    pub(super) target_dir: Option<String>,
 }
 
 #[derive(Args)]
@@ -220,8 +281,6 @@ pub(crate) struct CommonArgs {
     pub(crate) no_strict: bool,
     #[arg(long, action = clap::ArgAction::SetTrue, overrides_with = "force")]
     pub(crate) force: bool,
-    #[arg(long, action = clap::ArgAction::SetTrue, overrides_with = "apply")]
-    pub(crate) apply: bool,
     #[arg(long, action = clap::ArgAction::SetTrue, overrides_with = "local")]
     pub(crate) local: bool,
     #[arg(long, action = clap::ArgAction::SetTrue, overrides_with = "tracked")]

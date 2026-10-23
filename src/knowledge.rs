@@ -24,9 +24,9 @@ const LOCK_HEADER: &str = "# HarnessKit knowledge.lock: confirmed document ancho
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct LockEntry {
-    doc: String,
-    anchor: String,
-    fingerprint: String,
+    pub(crate) doc: String,
+    pub(crate) anchor: String,
+    pub(crate) fingerprint: String,
 }
 
 #[derive(Clone, Debug)]

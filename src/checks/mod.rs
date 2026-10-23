@@ -4,6 +4,7 @@ mod coverage;
 mod duplicate;
 mod frontmatter;
 mod history;
+mod hotspot;
 mod lifecycle;
 mod manifest;
 mod stale;
@@ -83,6 +84,14 @@ pub(crate) fn build_index_checks(
     }
 
     Ok(checks)
+}
+
+pub(crate) fn add_undocumented_hotspot_checks(
+    db: &crate::sqlite::SqliteConnection,
+    schema: &Schema,
+    checks: &mut Vec<IndexCheck>,
+) -> crate::Result<()> {
+    hotspot::add_undocumented_hotspot_checks(db, schema, checks)
 }
 
 fn push_check(
@@ -257,6 +266,7 @@ pub(crate) fn rule_group(rule_id: &str) -> String {
         | "active-but-historical"
         | "superseded-not-marked"
         | "stale-active-plan" => "lifecycle".to_string(),
+        "undocumented-hotspot" => "weave".to_string(),
         "host-git-exclude-missing"
         | "managed-file-not-excluded"
         | "history-missing"

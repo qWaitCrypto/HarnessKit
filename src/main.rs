@@ -23,6 +23,8 @@ mod templates;
 mod update;
 mod usage;
 mod weave;
+mod hooks;
+mod suggest;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
