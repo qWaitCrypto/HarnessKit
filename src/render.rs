@@ -205,6 +205,18 @@ pub(crate) fn print_doctor_report(report: &DoctorReport) {
         "Current executable directory on PATH: {}",
         yes_no_bool(report.path_contains_cli_dir)
     );
+    if let Some(code) = &report.code {
+        println!(
+            "Code: {} files, {} symbols ({})",
+            code.files, code.symbols, code.scan_mode
+        );
+        for language in &code.languages {
+            println!(
+                "- {}: {} files, {} symbols",
+                language.lang, language.files, language.symbols
+            );
+        }
+    }
     for hint in &report.hints {
         println!("Hint: {}", hint);
     }

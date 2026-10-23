@@ -23,7 +23,7 @@ use crate::schema::{core_file_rel_path, DocCollectionSpec, Schema};
 use crate::sqlite::{QueryResult, SqliteConnection};
 use crate::Result;
 
-pub(crate) const FACT_SCHEMA_VERSION: &str = "6";
+pub(crate) const FACT_SCHEMA_VERSION: &str = "7";
 
 #[derive(Clone, Default, Serialize)]
 pub(crate) struct IndexedDoc {
@@ -296,6 +296,7 @@ pub(crate) fn refresh_fact_store(context: &EngineContext) -> Result<()> {
     }
     refresh_doc_facts(context)?;
     let db = open_fact_store(&context.target_dir)?;
+    crate::code::refresh_code_facts(&db, &context.target_dir, &context.schema)?;
     let mut artifact = read_index_artifact_from_fact_store(&db)?;
     let coverage = discover_docs(&context.target_dir, &context.schema)?;
     let (external_refs, external_checks) = crate::external_refs::refresh_external_refs(
@@ -502,6 +503,7 @@ fn fact_store_is_compatible(db: &SqliteConnection) -> Result<bool> {
         "meta",
         "docs",
         "file_states",
+        "nodes",
         "headings",
         "raw_links",
         "path_mentions",
@@ -540,7 +542,11 @@ fn fact_store_is_compatible(db: &SqliteConnection) -> Result<bool> {
         .rows
         .iter()
         .any(|row| cell(row, 1) == "mtime_ns");
-    if !has_mtime_ns {
+    let has_kind = file_state_columns
+        .rows
+        .iter()
+        .any(|row| cell(row, 1) == "kind");
+    if !has_mtime_ns || !has_kind {
         return Ok(false);
     }
 
@@ -554,7 +560,7 @@ pub(crate) fn meta_value(db: &SqliteConnection, key: &str) -> Result<Option<Stri
 
 pub(crate) fn compute_fact_store_delta(context: &EngineContext) -> Result<FactStoreDelta> {
     let db = open_fact_store(&context.target_dir)?;
-    let rows = db.query("SELECT path, content_hash, file_size_bytes, mtime_unix, mtime_ns FROM file_states ORDER BY path ASC;", [])?;
+    let rows = db.query("SELECT path, content_hash, file_size_bytes, mtime_unix, mtime_ns FROM file_states WHERE kind = 'doc' ORDER BY path ASC;", [])?;
     let previous_states = parse_file_state_rows(&rows);
     let current_states =
         collect_current_file_states(&context.target_dir, &context.schema, &previous_states)?;
@@ -806,11 +812,22 @@ fn initialize_fact_store(db: &SqliteConnection) -> Result<()> {
          );
          CREATE TABLE IF NOT EXISTS file_states (
             path TEXT PRIMARY KEY,
+            kind TEXT NOT NULL DEFAULT 'doc',
             content_hash TEXT NOT NULL,
             file_size_bytes INTEGER NOT NULL,
             mtime_unix INTEGER NOT NULL,
             mtime_ns INTEGER NOT NULL DEFAULT 0
          );
+         CREATE TABLE IF NOT EXISTS nodes (
+            id TEXT PRIMARY KEY,
+            kind TEXT NOT NULL,
+            path TEXT NOT NULL,
+            name TEXT NOT NULL,
+            span_start INTEGER NOT NULL,
+            span_end INTEGER NOT NULL,
+            fingerprint TEXT NOT NULL,
+            lang TEXT NOT NULL
+         ) WITHOUT ROWID;
          CREATE TABLE IF NOT EXISTS headings (
             doc_path TEXT NOT NULL,
             heading_index INTEGER NOT NULL,
@@ -1295,6 +1312,7 @@ fn replace_fact_store_contents(db: &SqliteConnection, artifact: &IndexArtifact) 
              DELETE FROM meta;
              DELETE FROM docs;
              DELETE FROM file_states;
+             DELETE FROM nodes;
              DELETE FROM headings;
              DELETE FROM raw_links;
              DELETE FROM path_mentions;

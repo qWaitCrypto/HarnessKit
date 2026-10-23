@@ -283,6 +283,9 @@ fn run_check(args: &CheckArgs) -> Result<()> {
 fn run_doctor(doctor_args: &DoctorArgs) -> Result<()> {
     let args = &doctor_args.target;
     let context = load_engine_context(args)?;
+    if doctor_args.code {
+        refresh_fact_store(&context)?;
+    }
     let json = args.options.json;
     let mut report = build_doctor_report(&context.target_dir);
     report
@@ -291,6 +294,13 @@ fn run_doctor(doctor_args: &DoctorArgs) -> Result<()> {
     report.coverage = discover_docs(&context.target_dir, &context.schema)?;
     usage::coverage(report.coverage.ratio);
     report.hints.extend(project_hints(&context, &args.options)?);
+    if doctor_args.code {
+        let code = crate::code::code_report(&open_fact_store(&context.target_dir)?)?;
+        if code.scan_mode == "git-unavailable" {
+            report.hints.push("Code index was not refreshed because Git could not inspect this repository; counts may be stale. Check that git is available and can access this worktree, then rerun `doctor --code`.".to_string());
+        }
+        report.code = Some(code);
+    }
     if doctor_args.usage {
         let usage = usage::summarize(doctor_args.days);
         report.hints.extend(usage.hints.iter().cloned());

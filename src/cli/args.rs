@@ -97,6 +97,9 @@ pub(crate) struct TargetArgs {
 pub(super) struct DoctorArgs {
     #[command(flatten)]
     pub(super) target: TargetArgs,
+    /// Refresh code nodes and report language, file and symbol counts.
+    #[arg(long)]
+    pub(super) code: bool,
     /// Summarize local usage across projects (all time unless --days is given).
     #[arg(
         long,

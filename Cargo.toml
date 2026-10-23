@@ -8,12 +8,21 @@ repository = "https://github.com/qWaitCrypto/HarnessKit"
 publish = false
 
 [dependencies]
+blake3 = "=1.5.1"
 # Keep clap compatible with the Rust 1.75 toolchain used by local builds.
 clap = { version = "~4.4.18", features = ["derive"] }
 flate2 = "1.0"
 globset = "=0.4.15"
+ignore = "=0.4.23"
 rusqlite = { version = "0.31", features = ["bundled"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["raw_value", "float_roundtrip"] }
 serde_yaml = "0.9"
 tar = { version = "0.4", default-features = false }
+# These grammars and runtime support the Rust 1.75 toolchain above.
+tree-sitter = "~0.22.6"
+tree-sitter-go = "~0.21.2"
+tree-sitter-javascript = "~0.21.4"
+tree-sitter-python = "~0.21.0"
+tree-sitter-rust = "~0.21.2"
+tree-sitter-typescript = "~0.21.2"

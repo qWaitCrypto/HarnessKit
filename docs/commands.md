@@ -79,6 +79,7 @@ A clean docs check does not validate application behavior or delivery.
 
 ```bash
 harnesskit doctor --layout --json
+harnesskit doctor --code --json                  # Language, file and symbol counts
 harnesskit doctor --layout --write-schema --preview
 harnesskit doctor --layout --write-schema
 harnesskit doctor --layout --write-schema --force  # Replace an existing schema
@@ -87,11 +88,24 @@ harnesskit init /path/to/new-project --tracked     # Team-visible docs
 harnesskit init --local                           # Local Git excludes if in Git
 ```
 
-Preview never writes project files. Doctor explains layout without indexing;
+Preview never writes project files. Ordinary doctor explains layout without indexing;
 `--write-schema` previews an existing schema unless `--force` is given. Review
 inferred coverage before saving it. Ordinary commands show inferred-layout
 explanations once; `--verbose` repeats them. Doctor also checks installed skill
 versions and provides release update or source sync instructions.
+
+Source builds implementing Weave W1 refresh code nodes during indexing and with
+`doctor --code`. Rust, TypeScript/TSX, JavaScript/JSX, Python and Go use tree-sitter
+symbol queries; other UTF-8 text files retain file nodes, while binary files and
+Markdown are excluded from the code scan. Git projects scan tracked files only,
+respecting Git ignores and schema `ignore`; other directories use a walk honoring
+`.gitignore` and `.ignore`. File states reuse unchanged mtime/size entries. Supported
+languages fingerprint comment-free, whitespace-free token streams with literals
+preserved; Python retains semantic INDENT/DEDENT boundaries and ignores explicit
+line continuations. Unsupported files use content hashes. Node spans are inclusive
+source line numbers starting at one. Existing document index output remains unchanged.
+If Git cannot inspect an existing worktree, its cached code nodes are preserved;
+`doctor --code` reports that the counts may be stale instead of scanning untracked files.
 
 Coverage and `unmanaged-docs` use the same Markdown paths, including existing
 Markdown referenced by managed documents outside the scan root. Unmanaged files

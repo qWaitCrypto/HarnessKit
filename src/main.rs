@@ -1,5 +1,6 @@
 mod checks;
 mod cli;
+mod code;
 mod context;
 mod discover;
 mod doctor;
