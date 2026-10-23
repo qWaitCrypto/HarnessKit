@@ -112,11 +112,16 @@ fn frozen_query_metrics_improve_on_s4_without_per_query_regressions() {
         let bytes = fs::metadata(database).unwrap().len();
         // The S5 budget bounds document/trigram storage. W1/W2 add a separate
         // graph; count its actual SQLite pages without relaxing the old gate.
-        let weave_bytes: u64 = db.query_row(
-            "SELECT COALESCE(SUM(pgsize), 0) FROM dbstat
-             WHERE name IN ('nodes', 'idx_nodes_path', 'edges', 'idx_edges_dst', 'inline_code_spans');",
-            [], |row| row.get(0),
-        ).unwrap();
+        let weave_bytes: u64 = db
+            .query_row(
+                "SELECT COALESCE(SUM(pgsize), 0) FROM dbstat
+             WHERE name IN ('nodes', 'idx_nodes_path', 'edges', 'idx_edges_dst',
+                            'cochange_stats', 'idx_cochange_stats_doc', 'cochange_files',
+                            'inline_code_spans');",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
         let doc_index_bytes = bytes.checked_sub(weave_bytes).unwrap();
         total_bytes += bytes;
         total_doc_index_bytes += doc_index_bytes;

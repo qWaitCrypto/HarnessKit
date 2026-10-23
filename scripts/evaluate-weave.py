@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Validate the W0 corpus and report pending Weave evaluations as JSON.
+"""Validate the W0 corpus and execute the W3/W4 Weave evaluations.
 
-This runner generates history in temporary storage. It checks fixture inputs,
-not Weave behavior: no retrieval, drift or cochange score is reported until the
-corresponding implementation steps supply an evaluator.
+Retrieval cases remain pending until W5 supplies the mixed document/code
+ranking evaluator.  Drift and cochange cases are run against the derived index.
 """
 
 import argparse
 import json
 import os
+import sqlite3
 from pathlib import Path, PurePosixPath
 import subprocess
 import sys
@@ -111,11 +111,14 @@ def evaluate(corpus):
         manifest = json.loads(result.stdout)
         validate_fixture(corpus, repo, manifest["revisions"])
         drift_cases = run_drift_cases(corpus, repo)
+        cochange_cases, cochange_coverage = run_cochange_cases(corpus, repo)
     cases = []
     for kind in REQUIRED_STEPS:
         for case in corpus[kind]:
             if kind == "drift":
                 cases.append(drift_cases[case["id"]])
+            elif kind == "cochange":
+                cases.append(cochange_cases[case["id"]])
             else:
                 cases.append(dict(id=case["id"], kind=kind, status="pending",
                                   required_steps=REQUIRED_STEPS[kind]))
@@ -125,7 +128,7 @@ def evaluate(corpus):
                 summary=dict(total=len(cases), executed=executed,
                              pending=len(cases) - executed,
                              by_kind={kind: len(corpus[kind]) for kind in REQUIRED_STEPS}),
-                cases=cases)
+                cases=cases, cochange_coverage=cochange_coverage)
 
 
 def harnesskit_command():
@@ -197,6 +200,54 @@ def run_drift_cases(corpus, repo):
                                     required_steps=REQUIRED_STEPS["drift"],
                                     expected_rule=expected)
     return results
+
+
+def run_cochange_cases(corpus, repo):
+    """Run W4's top-eight cochange checks against the derived SQLite graph."""
+    results = {}
+    known_expected = 0
+    known_matched = 0
+    for case in corpus["cochange"]:
+        reset_derived_state(repo)
+        subprocess.run(["git", "checkout", "--quiet", "--detach", case["revision"]],
+                       cwd=repo, check=True)
+        run_cli(repo, "index")
+        database = sqlite3.connect(repo / ".harnesskit" / "state" / "facts.sqlite")
+        rows = database.execute(
+            """SELECT t.path
+               FROM edges e
+               JOIN nodes s ON s.id = e.src
+               JOIN nodes t ON t.id = e.dst
+               WHERE s.path = ? AND e.kind = 'cochange'
+               ORDER BY e.weight DESC, t.path ASC
+               LIMIT ?""",
+            (case["doc"], case["top_k"]),
+        ).fetchall()
+        database.close()
+        observed = [row[0] for row in rows]
+        expected = case["expected_paths"]
+        forbidden = case["forbidden_paths"]
+        matched = sum(path in observed for path in expected)
+        known_expected += len(expected)
+        known_matched += matched
+        passed = (matched == len(expected)
+                  and all(path not in observed for path in forbidden))
+        results[case["id"]] = dict(
+            id=case["id"], kind="cochange", status="passed" if passed else "failed",
+            required_steps=REQUIRED_STEPS["cochange"], expected_paths=expected,
+            forbidden_paths=forbidden, observed_paths=observed,
+            matched=matched, expected=len(expected),
+            score=(matched / len(expected) if expected else 1.0),
+        )
+        if not passed:
+            raise ValueError(
+                f"cochange case failed: {case['id']} observed={observed} "
+                f"expected={expected} forbidden={forbidden}"
+            )
+    coverage = known_matched / known_expected if known_expected else 1.0
+    if coverage < 0.9:
+        raise ValueError(f"W4 cochange coverage {coverage:.3f} is below 0.900")
+    return results, coverage
 
 
 def main():

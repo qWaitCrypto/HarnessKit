@@ -55,6 +55,7 @@ impl Extractor {
             span_end: text.lines().count().max(1),
             fingerprint: blake3::hash(text.as_bytes()).to_hex()[..12].to_string(),
             lang: lang.clone(),
+            is_definition: false,
         };
         if !self.languages.contains_key(grammar_key) {
             let Some((language, tags)) = grammar(grammar_key) else {
@@ -106,6 +107,13 @@ impl Extractor {
                 span_end: definition.end_position().row + 1,
                 fingerprint: fingerprint(definition, text, &lang),
                 lang: lang.clone(),
+                is_definition: match definition.kind() {
+                    "mod_item" | "module" | "internal_module" => {
+                        definition.child_by_field_name("body").is_some()
+                    }
+                    "package_clause" => false,
+                    _ => true,
+                },
             });
         }
         Ok(nodes)

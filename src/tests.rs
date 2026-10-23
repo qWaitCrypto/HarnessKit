@@ -209,6 +209,41 @@ rules:
 }
 
 #[test]
+fn cochange_schema_overrides_roundtrip_without_changing_old_defaults() {
+    let base = "schema_version: 0\nmanaged_root: docs\nentrypoints:\n  manifest: docs/index.md\n  project_map: docs/project.md\n";
+    assert!(parse_schema(base).unwrap().cochange_ignore.is_none());
+    for (suffix, expected) in [
+        ("cochange_ignore: []\n", Vec::new()),
+        (
+            "cochange_ignore: ['*.lock', 'generated/**']\n",
+            vec!["*.lock", "generated/**"],
+        ),
+        (
+            "cochange_ignore:\n  - '*.lock'\n  - 'generated/**'\n",
+            vec!["*.lock", "generated/**"],
+        ),
+    ] {
+        let schema =
+            parse_schema(&format!("{base}{suffix}rules:\n  cochange_max_files: 45\n")).unwrap();
+        assert_eq!(schema.cochange_ignore.as_ref().unwrap(), &expected);
+        let copy = parse_schema(&render_schema_copy(&schema)).unwrap();
+        assert_eq!(copy.cochange_ignore, schema.cochange_ignore);
+        assert_eq!(copy.rules.cochange_max_files, Some(45));
+    }
+}
+
+#[test]
+fn cochange_schema_rejects_invalid_globs_and_nonpositive_commit_limits() {
+    let base = "schema_version: 0\nentrypoints:\n  manifest: docs/index.md\n  project_map: docs/project.md\n";
+    for suffix in [
+        "cochange_ignore:\n  - '[broken'\n",
+        "rules:\n  cochange_max_files: 0\n",
+    ] {
+        assert!(parse_schema(&format!("{base}{suffix}")).is_err());
+    }
+}
+
+#[test]
 fn parse_schema_rejects_tabs_with_clear_message() {
     let raw = "schema_version: 0\nmanaged_root: docs\nentrypoints:\n\tagents: AGENTS.md\n";
 

@@ -12,19 +12,19 @@ python3 scripts/evaluate-weave.py
 ```
 
 The runner generates history inside `TemporaryDirectory`, validates the corpus
-against its tagged revisions, removes the repository, and emits JSON. All 37
-behavior cases are explicitly `pending`, with their required W steps listed;
-`executed` is zero and there are no quality scores. A successful exit means the
-fixture inputs are valid, not that any Weave feature passes. W3/W4/W5 will
-connect the remaining evaluators; W9 will enforce the design's metric thresholds. The
-existing S5 corpus and regression gates remain independent and unchanged.
+against its tagged revisions, executes the W3 drift and W4 cochange cases,
+removes the repository, and emits JSON. The eight W5 retrieval cases remain
+`pending`; the current fixture report has 29 executed cases and enforces at
+least 90% known cochange pairs in the document top eight. W9 will enforce the
+remaining design metrics. The existing S5 corpus and regression gates remain
+independent and unchanged.
 
 `tests/anchors.rs` connects the W2 prerequisites to the existing corpus: all eight
 retrieval cases must have real section-to-symbol EXTRACTED edges, and all twenty
 drift cases must resolve their anchors before each change. At the after revision,
 logic/format/review changes keep the edge; moves/deletions produce W2 info
-diagnostics. These assertions do not claim retrieval ranking or W3 drift behavior,
-so the full feature evaluations remain pending in the skeleton runner.
+diagnostics. These assertions do not claim retrieval ranking; W3 drift and W4
+cochange behavior are evaluated by the runner described above.
 
 For manual inspection, generate only in a disposable directory:
 
@@ -71,4 +71,4 @@ conflicting cochange expectations. `tests/weave_fixture.rs` additionally checks
 history reproducibility under hostile Git settings, nonempty destination safety,
 the scripted changes, bulk exclusion controls, pending reporting, invalid inputs,
 and document indexing/search through the existing CLI. These are fixture tests,
-not implementations of symbol extraction, structural hashing or graph scoring.
+not implementations of symbol extraction, structural hashing or mixed retrieval.

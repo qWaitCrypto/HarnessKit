@@ -22,6 +22,8 @@ pub(crate) struct Schema {
     pub(crate) suppressions: Vec<SuppressionSpec>,
     pub(crate) include: Vec<IncludeSpec>,
     pub(crate) ignore: Vec<String>,
+    /// None uses the built-in noise filter; an explicit list replaces it.
+    pub(crate) cochange_ignore: Option<Vec<String>>,
     // Runtime-only explanation of zero-config root inference, never a schema key.
     pub(crate) inferred_root: Option<String>,
     // Default schema mappings are suggestions until a project opts into a schema.
@@ -79,6 +81,9 @@ pub(crate) struct Rules {
     pub(crate) strict_checks: Option<bool>,
     pub(crate) entrypoint_max_lines: Option<u32>,
     pub(crate) stale_active_plan_days: Option<u32>,
+    /// Maximum number of files in a commit considered for inferred cochange
+    /// edges.  Large formatting/vendor commits are ignored by default.
+    pub(crate) cochange_max_files: Option<u32>,
 }
 
 #[derive(Default, Clone)]
@@ -119,6 +124,7 @@ enum Section {
     Suppressions,
     Include,
     Ignore,
+    CochangeIgnore,
 }
 
 pub(crate) fn managed_memory_paths(schema: &Schema) -> Vec<String> {
@@ -230,6 +236,10 @@ pub(crate) fn parse_schema(text: &str) -> Result<Schema> {
                         "suppressions" => Section::Suppressions,
                         "include" => Section::Include,
                         "ignore" => Section::Ignore,
+                        "cochange_ignore" => {
+                            schema.cochange_ignore = Some(Vec::new());
+                            Section::CochangeIgnore
+                        }
                         other => {
                             return Err(
                                 format!("invalid schema: unknown section `{}`", other).into()
@@ -241,6 +251,18 @@ pub(crate) fn parse_schema(text: &str) -> Result<Schema> {
                         "schema_version" => schema.schema_version = parse_u32(&value)?,
                         "managed_root" => schema.managed_root = value,
                         "ignore" => schema.ignore = parse_inline_list(&value),
+                        "cochange_ignore" => {
+                            schema.cochange_ignore = Some(parse_inline_list(&value));
+                        }
+                        "cochange_max_files" | "max_cochange_files" | "max_commit_files" => {
+                            let parsed = parse_u32(&value)?;
+                            if parsed == 0 {
+                                return Err(
+                                    format!("invalid schema: {} must be positive", key).into()
+                                );
+                            }
+                            schema.rules.cochange_max_files = Some(parsed);
+                        }
                         other => {
                             return Err(format!(
                                 "invalid schema: unknown top-level key `{}`",
@@ -267,6 +289,15 @@ pub(crate) fn parse_schema(text: &str) -> Result<Schema> {
                         .strip_prefix("- ")
                         .ok_or("invalid schema: ignore expects a list of globs")?;
                     schema.ignore.push(unquote(pattern)?);
+                }
+                Section::CochangeIgnore => {
+                    let pattern = trimmed
+                        .strip_prefix("- ")
+                        .ok_or("invalid schema: cochange_ignore expects a list of globs")?;
+                    schema
+                        .cochange_ignore
+                        .get_or_insert_with(Vec::new)
+                        .push(unquote(pattern)?);
                 }
                 Section::EntryPoints => {
                     if let Some((key, value)) = parse_key_value(trimmed) {
@@ -327,7 +358,11 @@ pub(crate) fn parse_schema(text: &str) -> Result<Schema> {
                     if let Some((key, value)) = parse_key_value(trimmed) {
                         if matches!(
                             key.as_str(),
-                            "entrypoint_max_lines" | "stale_active_plan_days"
+                            "entrypoint_max_lines"
+                                | "stale_active_plan_days"
+                                | "cochange_max_files"
+                                | "max_cochange_files"
+                                | "max_commit_files"
                         ) {
                             let parsed = parse_u32(&value)?;
                             if parsed == 0 {
@@ -339,7 +374,14 @@ pub(crate) fn parse_schema(text: &str) -> Result<Schema> {
                                 "entrypoint_max_lines" => {
                                     schema.rules.entrypoint_max_lines = Some(parsed)
                                 }
-                                _ => schema.rules.stale_active_plan_days = Some(parsed),
+                                "stale_active_plan_days" => {
+                                    schema.rules.stale_active_plan_days = Some(parsed)
+                                }
+                                "cochange_max_files" | "max_cochange_files"
+                                | "max_commit_files" => {
+                                    schema.rules.cochange_max_files = Some(parsed)
+                                }
+                                _ => unreachable!("validated numeric schema rule"),
                             }
                             continue;
                         }
@@ -472,7 +514,8 @@ pub(crate) fn parse_schema(text: &str) -> Result<Schema> {
                 | Section::EntryPoints
                 | Section::None
                 | Section::Include
-                | Section::Ignore => {
+                | Section::Ignore
+                | Section::CochangeIgnore => {
                     return Err(
                         format!("invalid schema: unexpected indentation for `{}`", trimmed).into(),
                     )
@@ -645,6 +688,7 @@ fn validate_schema(schema: &Schema) -> Result<()> {
         .ignore
         .iter()
         .chain(schema.include.iter().map(|item| &item.pattern))
+        .chain(schema.cochange_ignore.iter().flatten())
     {
         glob_matcher(pattern)
             .map_err(|error| format!("invalid schema glob {:?}: {}", pattern, error))?;
@@ -899,6 +943,9 @@ pub(crate) fn render_schema_copy(schema: &Schema) -> String {
     if let Some(value) = schema.rules.stale_active_plan_days {
         lines.push(format!("  stale_active_plan_days: {}", value));
     }
+    if let Some(value) = schema.rules.cochange_max_files {
+        lines.push(format!("  cochange_max_files: {}", value));
+    }
 
     if !schema.suppressions.is_empty() {
         lines.push(String::new());
@@ -937,6 +984,17 @@ pub(crate) fn render_schema_copy(schema: &Schema) -> String {
         lines.push("ignore:".to_string());
         for pattern in &schema.ignore {
             lines.push(format!("  - {}", serde_json::to_string(pattern).unwrap()));
+        }
+    }
+    if let Some(patterns) = &schema.cochange_ignore {
+        lines.push(String::new());
+        if patterns.is_empty() {
+            lines.push("cochange_ignore: []".to_string());
+        } else {
+            lines.push("cochange_ignore:".to_string());
+            for pattern in patterns {
+                lines.push(format!("  - {}", serde_json::to_string(pattern).unwrap()));
+            }
         }
     }
     lines.join("\n") + "\n"

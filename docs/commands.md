@@ -118,6 +118,30 @@ names, commands such as `cargo test`, and options such as `--json` are ignored.
 Diagnostics are skipped for example/template/fixture documents and placeholder
 anchors containing `<...>`, `{...}` or `*`.
 
+W4 adds inferred `cochange` and `mention` edges while indexing. Cochange history
+uses non-merge commits incrementally, applies a 90-day half-life and cosine
+normalisation, skips commits over 30 files (`rules.cochange_max_files` overrides
+the limit), and keeps the eight strongest code files per document. The cursor is
+reset when Git history or the indexed file scope changes; non-Git projects skip
+cochange edges. Weight is the decayed joint commit count divided by
+`sqrt(doc_commits * code_commits)`, multiplied by the bounded, smoothed IDF
+`(1 + ln((history_commits + 1) / (code_commits + 1))) / (1 + ln(history_commits + 1))`.
+Both file counts include commits that changed only docs or only code; weights
+stay in [0, 1]. Evidence records the counts, cosine, IDF and most recent commit.
+Lockfiles (`*.lock`, `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `go.sum`),
+package manifests (including `Cargo.toml`, `package.json`, `pyproject.toml`,
+`go.mod`, `plugin.json`, `manifest.json`), changelogs and generated/vendor/build
+artifacts are excluded by default on both sides. Top-level `cochange_ignore`
+replaces this list with glob patterns matched against paths and basenames;
+`cochange_ignore: []` disables it.
+The built-in list matches without case sensitivity. These exclusions affect
+cochange evidence only, leaving file nodes and explicit anchors available.
+Inline identifier mentions require at least four characters and an underscore
+or uppercase letter. They target definitions, excluding module/import/use
+declarations, and use path proximity and cochange weight to resolve symbols.
+Unresolved ties carry `ambiguous: true` evidence for retrieval weighting and are
+excluded from direct related-code presentation.
+
 `check --rules anchors --all --json` reports `anchor-unresolved`, `anchor-ambiguous`
 and `anchor-line-number` as info, with source lines, repair hints and candidates.
 Line anchors such as `src/auth.rs#L10-L20` resolve to the file with the requested

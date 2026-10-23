@@ -23,7 +23,7 @@ use crate::schema::{core_file_rel_path, DocCollectionSpec, Schema};
 use crate::sqlite::{QueryResult, SqliteConnection};
 use crate::Result;
 
-pub(crate) const FACT_SCHEMA_VERSION: &str = "8";
+pub(crate) const FACT_SCHEMA_VERSION: &str = "10";
 
 #[derive(Clone, Default, Serialize)]
 pub(crate) struct IndexedDoc {
@@ -315,6 +315,7 @@ pub(crate) fn refresh_fact_store(context: &EngineContext) -> Result<()> {
         key.map(|key| !knowledge.locked_unresolved.contains(&key))
             .unwrap_or(true)
     });
+    crate::weave::refresh(&db, &context.target_dir, &context.schema)?;
     let coverage = discover_docs(&context.target_dir, &context.schema)?;
     let (external_refs, external_checks) = crate::external_refs::refresh_external_refs(
         &db,
@@ -524,6 +525,8 @@ fn fact_store_is_compatible(db: &SqliteConnection) -> Result<bool> {
         "file_states",
         "nodes",
         "edges",
+        "cochange_stats",
+        "cochange_files",
         "inline_code_spans",
         "headings",
         "raw_links",
@@ -847,7 +850,8 @@ fn initialize_fact_store(db: &SqliteConnection) -> Result<()> {
             span_start INTEGER NOT NULL,
             span_end INTEGER NOT NULL,
             fingerprint TEXT NOT NULL,
-            lang TEXT NOT NULL
+            lang TEXT NOT NULL,
+            is_definition INTEGER NOT NULL DEFAULT 0
          ) WITHOUT ROWID;
          CREATE TABLE IF NOT EXISTS edges (
             src TEXT NOT NULL,
@@ -857,6 +861,20 @@ fn initialize_fact_store(db: &SqliteConnection) -> Result<()> {
             weight REAL NOT NULL,
             evidence_json TEXT NOT NULL,
             PRIMARY KEY (src, dst, kind, evidence_json)
+         ) WITHOUT ROWID;
+         CREATE TABLE IF NOT EXISTS cochange_stats (
+            doc_path TEXT NOT NULL,
+            code_path TEXT NOT NULL,
+            weight REAL NOT NULL,
+            decayed_count REAL NOT NULL,
+            cochange_count INTEGER NOT NULL,
+            last_commit TEXT NOT NULL,
+            last_timestamp INTEGER NOT NULL,
+            PRIMARY KEY (doc_path, code_path)
+         ) WITHOUT ROWID;
+         CREATE TABLE IF NOT EXISTS cochange_files (
+            path TEXT PRIMARY KEY,
+            commit_count INTEGER NOT NULL
          ) WITHOUT ROWID;
          CREATE TABLE IF NOT EXISTS inline_code_spans (
             doc_path TEXT NOT NULL,
@@ -929,6 +947,7 @@ fn initialize_fact_store(db: &SqliteConnection) -> Result<()> {
          CREATE INDEX IF NOT EXISTS idx_docs_mtime ON docs(mtime_unix);
          CREATE INDEX IF NOT EXISTS idx_nodes_path ON nodes(path, kind);
          CREATE INDEX IF NOT EXISTS idx_edges_dst ON edges(dst, kind);
+         CREATE INDEX IF NOT EXISTS idx_cochange_stats_doc ON cochange_stats(doc_path, weight DESC);
          CREATE INDEX IF NOT EXISTS idx_relations_src ON relations(src_path, relation_type);
          CREATE INDEX IF NOT EXISTS idx_relations_dst ON relations(dst_path, relation_type);
          CREATE INDEX IF NOT EXISTS idx_checks_subject ON checks(subject_path, severity);
@@ -1214,6 +1233,22 @@ fn replace_checks_and_meta(
     host_git: &HostGitInfo,
     checks: &[IndexCheck],
 ) -> Result<()> {
+    // W4 keeps its Git cursor and pair statistics across document metadata
+    // refreshes.  This function rebuilds the generic meta table on every
+    // delta, so carry those derived cursor values forward explicitly.
+    let mut preserved_weave_meta = Vec::new();
+    for key in [
+        "cochange_last_commit",
+        "cochange_head",
+        "cochange_indexed_at",
+        "cochange_scan_mode",
+        "cochange_scope",
+        "cochange_accepted_commits",
+    ] {
+        if let Some(value) = meta_value(db, key)? {
+            preserved_weave_meta.push((key, value));
+        }
+    }
     db.transaction(|db| {
         db.exec("DELETE FROM checks; DELETE FROM meta;")?;
         insert_meta(
@@ -1250,6 +1285,12 @@ fn replace_checks_and_meta(
                 ),
             ],
         )?;
+        for (key, value) in &preserved_weave_meta {
+            db.execute(
+                "INSERT INTO meta(key, value) VALUES (?1, ?2);",
+                params![key, value],
+            )?;
+        }
         for check in checks {
             insert_check(db, check)?;
         }
@@ -1356,6 +1397,8 @@ fn replace_fact_store_contents(db: &SqliteConnection, artifact: &IndexArtifact) 
              DELETE FROM file_states;
              DELETE FROM nodes;
              DELETE FROM edges;
+             DELETE FROM cochange_stats;
+             DELETE FROM cochange_files;
              DELETE FROM inline_code_spans;
              DELETE FROM headings;
              DELETE FROM raw_links;

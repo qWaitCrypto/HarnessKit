@@ -249,6 +249,7 @@ fn commands_options_unknown_symbols_and_markdown_examples_are_not_anchors() {
         ),
     );
     assert!(findings(&repo).is_empty());
+    // W4 ignores common lowercase words such as `known` too.
     assert!(edges(&repo).is_empty());
 }
 

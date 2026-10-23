@@ -262,7 +262,7 @@ fn cochange_expectations_have_small_commit_evidence_and_bulk_only_negative_contr
 }
 
 #[test]
-fn runner_validates_all_three_corpora_and_executes_w3_drift_cases() {
+fn runner_validates_all_three_corpora_and_executes_w3_and_w4_cases() {
     let output = python("evaluate-weave.py").output().unwrap();
     assert_success(&output, &["evaluate-weave.py"]);
     let report: Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -270,9 +270,10 @@ fn runner_validates_all_three_corpora_and_executes_w3_drift_cases() {
     assert_eq!(report["fixture_commits"], 10);
     assert_eq!(
         report["summary"],
-        json!({"total": 37, "executed": 20, "pending": 17,
+        json!({"total": 37, "executed": 29, "pending": 8,
             "by_kind": {"retrieval": 8, "drift": 20, "cochange": 9}})
     );
+    assert!(report["cochange_coverage"].as_f64().unwrap() >= 0.9);
     let cases = report["cases"].as_array().unwrap();
     let ids = cases
         .iter()
@@ -280,13 +281,17 @@ fn runner_validates_all_three_corpora_and_executes_w3_drift_cases() {
         .collect::<BTreeSet<_>>();
     assert_eq!(ids.len(), 37);
     for case in cases {
-        if case["kind"] == "drift" {
+        if case["kind"] == "drift" || case["kind"] == "cochange" {
             assert_eq!(case["status"], "passed");
         } else {
             assert_eq!(case["status"], "pending");
         }
         assert!(!case["required_steps"].as_array().unwrap().is_empty());
-        assert!(case.get("score").is_none());
+        if case["kind"] == "cochange" {
+            assert!(case["score"].as_f64().unwrap() >= 0.9);
+        } else {
+            assert!(case.get("score").is_none());
+        }
     }
     assert!(!Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/weave/.git")
