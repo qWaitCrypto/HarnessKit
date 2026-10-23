@@ -129,6 +129,37 @@ harnesskit query "token 刷新"
 - `--docs` / `--code` 只看一侧；默认混合。
 - 输出预算：默认 ≤5 个 bundle、≤40 行，保护 agent 的上下文。
 
+### 5.1 输出契约：信号优先，结构服务于内容
+
+关联做得越多，越容易把输出变成一堆元数据。所有面向 agent 的输出（query、context、check、hook）都必须遵守以下契约，并纳入评测。
+
+1. **每行都要有内容**：每个结果至少带一行真实文本，元数据只能附在后面。真实文本指命中片段、函数签名或决策原文，不能只有路径加标签。
+2. **片段跟着查询走**：摘要从命中查询词的句子中截取（KWIC），没有命中才回退到章节首句。查询词高亮用 `«»`，以纯文本形式输出。
+3. **默认值不显示，只显示异常**：`current`、`EXTRACTED`、`anchor` 这类正常状态不打印。只有漂移 `⚠drift`、断链 `✗broken`、推断 `~`（INFERRED）、已取代 `superseded` 才显示徽章。
+4. **不凑数**：关联节点必须超过相关度阈值才显示，宁可只给 1 条，也不为填满 3 个槽位放进弱关联。主结果同理：分数低于首条一定比例就截断，并提示还有 N 条。
+5. **去重合并**：同一文件的多个符号合并为一行（`src/usage.rs: log_path, record, …`）。同一文档的多个命中章节，合并为文档加章节列表。
+6. **按 token 预算，而不是按条数**：`--budget <tokens>`，默认约 1500。按"主结果 → 关联 → 提示"的优先级装填，装不下的给出计数和续取方法。
+7. **渐进展开**：默认是概览，`--expand <n>` 展开第 n 个知识束（完整章节、关联代码的签名和 doc comment），`--page <k>` 或 `--cursor <token>` 取下一页。
+8. **结果缓存**：查询结果集按"规范化查询 + 参数 + 索引代际号"缓存在 `.harnesskit/state/query-cache/`。翻页和展开直接复用，无需重算；index 变化时代际号加一，旧缓存自动失效。缓存采用 LRU，上限 64 条。
+9. **JSON 一样节制**：`--json` 默认只给要点字段，`--json --full` 才给证据明细。所有 JSON 输出都带 `next_cursor` 和 `truncated` 计数。
+
+示意，默认输出：
+
+```
+1. 决策 docs/decisions/0007-token.md §刷新策略
+   刷新必须单飞：并发请求共享同一个 «refresh» 结果，失败不重试。
+   ↳ src/auth/refresh.rs: refresh_token  ⚠drift 3天前 a1b2c3d
+   ↳ ~ src/auth/session.rs: Session::renew
+2. 经验 docs/notes/auth-pitfalls.md §并发刷新
+   两个 tab 同时 «refresh» 会让旧 token 失效……
+… 另有 4 条（harnesskit query --page 2）
+```
+
+**评测（加入门禁）**：
+- **信号密度**：输出行中包含实际文本或查询词的比例 ≥ 70%。
+- **元数据占比**：徽章和路径字符占比 ≤ 35%。
+- **金标对照**：维护 10 条固定查询的期望输出快照，行为改动必须人工确认差异。
+
 ## 6. 双向入口
 
 | 命令 | 作用 |
@@ -185,6 +216,7 @@ harnesskit query "token 刷新"
 - **W3** knowledge.lock：封印、共改自动复核、`code-drift`、`check --ack`、`anchor-moved` 加 `check --fix`、`anchor-broken`。
 - **W4** 同提交边与提及边：增量 git 读取、余弦和时间衰减、大提交过滤、提及消歧。
 - **W5** 代码卡片和词汇桥接：`code_fts`，`query` 中的 RRF、一跳传播、bundle 输出与预算。
+- **W5b** 输出契约（§5.1）：KWIC 片段、只显示异常徽章、相关度阈值不凑数、合并去重、token 预算、--expand/--page/--cursor、结果缓存、JSON 节制，加信号密度评测和金标快照；对 query、context、check、hook 统一生效。
 - **W6** 双向入口：`context --for`、`context --diff`，`--current` 中的代码节。
 - **W7** 写侧与 hook：`suggest-anchors`、`undocumented-hotspot`、`hook pre-edit/post-edit`、`install --hooks`。
 - **W8** 迁移：`migrate --plan/--apply`、`references/migration.md`、版本落后提示。
