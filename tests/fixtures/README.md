@@ -41,3 +41,8 @@ check, `context --current` and query.
   documents. Preserve its snapshot JSON, object bytes, hashes, and latest ref as
   a frozen input: regenerating it with the implementation under test would no
   longer prove that old snapshots can still be listed, diffed, and restored.
+
+[Weave W0](weave/README.md) adds a separate multilingual history generator and
+retrieval/drift/cochange expectation corpus. Its Git repository is created only
+in temporary storage at test time; no nested `.git` directory is stored here.
+The runner validates inputs and marks future behavior evaluations as pending.

@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "fixture": "weave",
+  "as_of": "2026-01-11T00:00:00Z",
+  "retrieval": [
+    {"id":"rust-chinese","revision":"baseline","query":"令牌刷新","top_k":3,"expected_sections":[{"path":"docs/decisions/rust.md","heading":"刷新策略"}],"expected_symbols":["src/auth/refresh.rs#refresh_token"]},
+    {"id":"typescript-chinese","revision":"baseline","query":"缓存续期","top_k":3,"expected_sections":[{"path":"docs/decisions/typescript.md","heading":"缓存有效期"}],"expected_symbols":["web/cache.ts#cacheTtl"]},
+    {"id":"python-chinese","revision":"baseline","query":"队列重试","top_k":3,"expected_sections":[{"path":"docs/decisions/python.md","heading":"重试退避"}],"expected_symbols":["worker/retry.py#retry_delay"]},
+    {"id":"go-chinese","revision":"baseline","query":"网关限流","top_k":3,"expected_sections":[{"path":"docs/decisions/go.md","heading":"请求限流"}],"expected_symbols":["gateway/limit.go#limitRequests"]},
+    {"id":"rust-identifier","revision":"reviewed-rust","query":"refresh_token","top_k":3,"expected_sections":[{"path":"docs/decisions/rust.md","heading":"刷新策略"}],"expected_symbols":["src/auth/refresh.rs#refresh_token"]},
+    {"id":"typescript-identifier","revision":"reviewed-typescript","query":"cacheTtl","top_k":3,"expected_sections":[{"path":"docs/decisions/typescript.md","heading":"缓存有效期"}],"expected_symbols":["web/cache.ts#cacheTtl"]},
+    {"id":"python-identifier","revision":"reviewed-python","query":"retry_delay","top_k":3,"expected_sections":[{"path":"docs/decisions/python.md","heading":"重试退避"}],"expected_symbols":["worker/retry.py#retry_delay"]},
+    {"id":"go-identifier","revision":"reviewed-go","query":"limitRequests","top_k":3,"expected_sections":[{"path":"docs/decisions/go.md","heading":"请求限流"}],"expected_symbols":["gateway/limit.go#limitRequests"]}
+  ],
+  "drift": [
+    {"id":"rust-logic","before":"baseline","after":"logic","doc":"docs/decisions/rust.md","anchor":"src/auth/refresh.rs#refresh_token","expected_rule":"code-drift"},
+    {"id":"typescript-logic","before":"baseline","after":"logic","doc":"docs/decisions/typescript.md","anchor":"web/cache.ts#cacheTtl","expected_rule":"code-drift"},
+    {"id":"python-logic","before":"baseline","after":"logic","doc":"docs/decisions/python.md","anchor":"worker/retry.py#retry_delay","expected_rule":"code-drift"},
+    {"id":"go-logic","before":"baseline","after":"logic","doc":"docs/decisions/go.md","anchor":"gateway/limit.go#limitRequests","expected_rule":"code-drift"},
+    {"id":"rust-format","before":"logic","after":"format","doc":"docs/decisions/rust.md","anchor":"src/auth/refresh.rs#refresh_token","expected_rule":null},
+    {"id":"typescript-format","before":"logic","after":"format","doc":"docs/decisions/typescript.md","anchor":"web/cache.ts#cacheTtl","expected_rule":null},
+    {"id":"python-format","before":"logic","after":"format","doc":"docs/decisions/python.md","anchor":"worker/retry.py#retry_delay","expected_rule":null},
+    {"id":"go-format","before":"logic","after":"format","doc":"docs/decisions/go.md","anchor":"gateway/limit.go#limitRequests","expected_rule":null},
+    {"id":"rust-moved","before":"format","after":"moved","doc":"docs/notes/rust-pitfalls.md","anchor":"src/auth/refresh.rs#normalize_token","expected_rule":"anchor-moved","expected_target":"src/auth/normalize.rs#normalize_token"},
+    {"id":"typescript-moved","before":"format","after":"moved","doc":"docs/notes/typescript-pitfalls.md","anchor":"web/cache.ts#normalizeKey","expected_rule":"anchor-moved","expected_target":"web/keys.ts#normalizeKey"},
+    {"id":"python-moved","before":"format","after":"moved","doc":"docs/notes/python-pitfalls.md","anchor":"worker/retry.py#normalize_queue","expected_rule":"anchor-moved","expected_target":"worker/queues.py#normalize_queue"},
+    {"id":"go-moved","before":"format","after":"moved","doc":"docs/notes/go-pitfalls.md","anchor":"gateway/limit.go#normalizeRoute","expected_rule":"anchor-moved","expected_target":"gateway/routes.go#normalizeRoute"},
+    {"id":"rust-deleted","before":"moved","after":"deleted","doc":"docs/notes/rust-pitfalls.md","anchor":"src/auth/refresh.rs#legacy_token","expected_rule":"anchor-broken"},
+    {"id":"typescript-deleted","before":"moved","after":"deleted","doc":"docs/notes/typescript-pitfalls.md","anchor":"web/cache.ts#legacyCache","expected_rule":"anchor-broken"},
+    {"id":"python-deleted","before":"moved","after":"deleted","doc":"docs/notes/python-pitfalls.md","anchor":"worker/retry.py#legacy_retry","expected_rule":"anchor-broken"},
+    {"id":"go-deleted","before":"moved","after":"deleted","doc":"docs/notes/go-pitfalls.md","anchor":"gateway/limit.go#legacyLimit","expected_rule":"anchor-broken"},
+    {"id":"rust-reviewed","before":"deleted","after":"reviewed-rust","doc":"docs/decisions/rust.md","anchor":"src/auth/refresh.rs#refresh_token","expected_rule":null},
+    {"id":"typescript-reviewed","before":"reviewed-rust","after":"reviewed-typescript","doc":"docs/decisions/typescript.md","anchor":"web/cache.ts#cacheTtl","expected_rule":null},
+    {"id":"python-reviewed","before":"reviewed-typescript","after":"reviewed-python","doc":"docs/decisions/python.md","anchor":"worker/retry.py#retry_delay","expected_rule":null},
+    {"id":"go-reviewed","before":"reviewed-python","after":"reviewed-go","doc":"docs/decisions/go.md","anchor":"gateway/limit.go#limitRequests","expected_rule":null}
+  ],
+  "cochange": [
+    {"id":"rust-decision-pair","revision":"bulk","doc":"docs/decisions/rust.md","top_k":8,"expected_paths":["src/auth/refresh.rs"],"forbidden_paths":["web/cache.ts","worker/retry.py","gateway/limit.go","bulk/unrelated.rs"]},
+    {"id":"rust-notes-pair","revision":"bulk","doc":"docs/notes/rust-pitfalls.md","top_k":8,"expected_paths":["src/auth/refresh.rs"],"forbidden_paths":["web/cache.ts","worker/retry.py","gateway/limit.go","bulk/unrelated.rs"]},
+    {"id":"typescript-decision-pair","revision":"bulk","doc":"docs/decisions/typescript.md","top_k":8,"expected_paths":["web/cache.ts"],"forbidden_paths":["src/auth/refresh.rs","worker/retry.py","gateway/limit.go","bulk/unrelated.rs"]},
+    {"id":"typescript-notes-pair","revision":"bulk","doc":"docs/notes/typescript-pitfalls.md","top_k":8,"expected_paths":["web/cache.ts"],"forbidden_paths":["src/auth/refresh.rs","worker/retry.py","gateway/limit.go","bulk/unrelated.rs"]},
+    {"id":"python-decision-pair","revision":"bulk","doc":"docs/decisions/python.md","top_k":8,"expected_paths":["worker/retry.py"],"forbidden_paths":["src/auth/refresh.rs","web/cache.ts","gateway/limit.go","bulk/unrelated.rs"]},
+    {"id":"python-notes-pair","revision":"bulk","doc":"docs/notes/python-pitfalls.md","top_k":8,"expected_paths":["worker/retry.py"],"forbidden_paths":["src/auth/refresh.rs","web/cache.ts","gateway/limit.go","bulk/unrelated.rs"]},
+    {"id":"go-decision-pair","revision":"bulk","doc":"docs/decisions/go.md","top_k":8,"expected_paths":["gateway/limit.go"],"forbidden_paths":["src/auth/refresh.rs","web/cache.ts","worker/retry.py","bulk/unrelated.rs"]},
+    {"id":"go-notes-pair","revision":"bulk","doc":"docs/notes/go-pitfalls.md","top_k":8,"expected_paths":["gateway/limit.go"],"forbidden_paths":["src/auth/refresh.rs","web/cache.ts","worker/retry.py","bulk/unrelated.rs"]},
+    {"id":"bulk-pair-is-excluded","revision":"bulk","doc":"docs/notes/bulk-only.md","top_k":8,"expected_paths":[],"forbidden_paths":["bulk/unrelated.rs","src/auth/refresh.rs","web/cache.ts","worker/retry.py","gateway/limit.go"]}
+  ]
+}

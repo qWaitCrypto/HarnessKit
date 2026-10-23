@@ -935,6 +935,7 @@ fn repository_schema_keeps_s11_dogfood_clean_with_docs_and_root_documents() {
             "ITERATION_PLAN.md",
             "docs/index.md",
             "docs/commands.md",
+            "docs/design-0.2.0-weave.md",
             "docs/migration-alpha.7.md",
             "agent-surfaces/README.md",
             "agent-surfaces/skills/harnesskit/SKILL.md",
