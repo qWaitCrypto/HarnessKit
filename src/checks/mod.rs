@@ -28,7 +28,7 @@ use self::history::add_history_checks;
 use self::manifest::build_manifest_checks;
 use self::stale::add_stale_anchor_checks;
 
-#[derive(Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct IndexCheck {
     pub(crate) rule_id: String,
     pub(crate) severity: String,
@@ -37,7 +37,7 @@ pub(crate) struct IndexCheck {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) hint: Option<String>,
     pub(crate) fixable: bool,
-    #[serde(skip_serializing)]
+    #[serde(skip_serializing, default)]
     pub(crate) evidence_json: String,
 }
 

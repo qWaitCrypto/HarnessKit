@@ -2,7 +2,9 @@ mod cards;
 mod mixed;
 
 pub(crate) use cards::{refresh_cards, BRIDGE_THRESHOLD};
-pub(crate) use mixed::{query_bundles, BundleNode, QueryBundle, QuerySide, DEFAULT_BUNDLE_LIMIT};
+pub(crate) use mixed::{
+    query_bundles, BundleNode, QueryBundle, QuerySide, RelatedNode, DEFAULT_BUNDLE_LIMIT,
+};
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -13,6 +15,8 @@ use crate::index::{cell, scalar_count};
 use crate::parse::parse_heading;
 use crate::sqlite::SqliteConnection;
 use crate::Result;
+
+const RELEVANCE_FLOOR: f64 = 0.30;
 
 pub(crate) const DEFAULT_LIMIT: usize = 8;
 
@@ -183,7 +187,7 @@ fn bm25_hits(
     let quoted = format!("{{{columns}}} : \"{}\"", phrase.replace('"', "\"\""));
     let rows = db.query(
         &format!(
-            "SELECT {}, -bm25({table}, {weights}) FROM {table} WHERE {table} MATCH ?1;",
+            "SELECT {}, CAST(-bm25({table}, {weights}) AS TEXT) FROM {table} WHERE {table} MATCH ?1;",
             index.key
         ),
         [&quoted],
@@ -200,7 +204,7 @@ fn search_term_hits(
     term: &str,
 ) -> Result<BTreeMap<String, f64>> {
     let mut hits = bm25_hits(db, index, term, false)?;
-    if term.chars().count() >= 3 {
+    if term.chars().count() >= if contains_cjk(term) { 3 } else { 4 } {
         for (key, score) in bm25_hits(db, index, term, true)? {
             // Exact unicode tokens keep their BM25 score; trigram adds substrings.
             hits.entry(key).or_insert(score);
@@ -237,6 +241,62 @@ fn search_term_hits(
         }
     }
     Ok(hits)
+}
+
+fn search_term_keys(
+    db: &SqliteConnection,
+    index: &SearchIndex,
+    term: &str,
+) -> Result<BTreeSet<String>> {
+    let columns = index
+        .fields
+        .iter()
+        .filter(|(_, weight)| *weight > 0.0)
+        .map(|(name, _)| *name)
+        .collect::<Vec<_>>();
+    let phrase = format!(
+        "{{{}}} : \"{}\"",
+        columns.join(" "),
+        term.replace('"', "\"\"")
+    );
+    let mut keys = BTreeSet::new();
+    for table in [index.fts, index.trigram] {
+        if table == index.trigram
+            && (!keys.is_empty() && !contains_cjk(term)
+                || term.chars().count() < if contains_cjk(term) { 3 } else { 4 })
+        {
+            continue;
+        }
+        for row in db
+            .query(
+                &format!("SELECT {} FROM {table} WHERE {table} MATCH ?1", index.key),
+                [&phrase],
+            )?
+            .rows
+        {
+            keys.insert(cell(&row, 0).to_string());
+        }
+    }
+    if contains_cjk(term) && term.chars().count() < 3 {
+        let conditions = columns
+            .iter()
+            .map(|column| format!("{column} LIKE ?1"))
+            .collect::<Vec<_>>()
+            .join(" OR ");
+        for row in db
+            .query(
+                &format!(
+                    "SELECT {} FROM {} WHERE {}",
+                    index.key, index.fts, conditions
+                ),
+                [format!("%{term}%")],
+            )?
+            .rows
+        {
+            keys.insert(cell(&row, 0).to_string());
+        }
+    }
+    Ok(keys)
 }
 
 fn term_hits(db: &SqliteConnection, term: &str) -> Result<BTreeMap<String, f64>> {
@@ -336,7 +396,7 @@ pub(crate) fn query_candidates(
             .then_with(|| a.path.cmp(&b.path))
     });
     if let Some((_, best_score)) = ranked.first() {
-        let floor = *best_score * 0.30;
+        let floor = *best_score * RELEVANCE_FLOOR;
         ranked.retain(|(_, score)| *score >= floor);
     }
     ranked.truncate(limit);
@@ -647,9 +707,9 @@ pub(crate) fn kwic_for_doc(
     crate::render::kwic_excerpt(&scoped, query_terms, "", 160)
 }
 
-fn matching_offset(line: &str, term: &str) -> Option<usize> {
+pub(crate) fn matching_offset(line: &str, term: &str) -> Option<usize> {
     line.match_indices(term).find_map(|(offset, _)| {
-        let substring = term.chars().count() >= 3 || contains_cjk(term);
+        let substring = term.chars().count() >= 4 || contains_cjk(term);
         let boundary = !line[..offset]
             .chars()
             .next_back()

@@ -735,7 +735,7 @@ fn change_info(root: &Path, path: &str) -> (String, String, String) {
             return (
                 commit.clone(),
                 if iso.is_empty() { timestamp } else { iso },
-                format!("git diff {} -- {}", commit, path),
+                format!("git diff {} -- {}", commit.chars().take(12).collect::<String>(), path),
             );
         }
     }
@@ -751,8 +751,8 @@ fn code_drift_check(root: &Path, entry: &LockEntry, current: &CurrentSeal) -> Re
         severity: "warning".to_string(),
         subject_path: entry.doc.clone(),
         message: format!(
-            "{} anchor `{}` drifted ({} at {}).",
-            entry.doc, entry.anchor, commit, changed_at
+            "Anchor `{}` drifted since the document was reviewed ({} at {}).",
+            entry.anchor, commit.chars().take(12).collect::<String>(), changed_at
         ),
         hint: Some(hint.clone()),
         fixable: false,

@@ -1,0 +1,6 @@
+1. symbol worker/retry.py: retry_delay — def «retry»_«delay»(attempt: int) -> int:
+   ↳ notes docs/notes/python-pitfalls.md §边界检查: `«retry»_«delay»` 需要覆盖边界值。
+   ↳ decisions docs/decisions/python.md §重试退避: `«retry»_«delay»` 在输入值上增加 60。
+2. notes docs/notes/python-pitfalls.md §旧接口; 规范化 — `worker/«retry».py#legacy_«retry»` 将被删除。
+   ↳ worker/retry.py: legacy_retry, normalize_queue: def legacy_«retry»() -> int:
+Hint: Fewer than three strict matches; partial matches are included with their missing terms.

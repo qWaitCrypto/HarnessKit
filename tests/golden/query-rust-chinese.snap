@@ -1,1 +1,5 @@
-1.
+1. symbol src/auth/refresh.rs: legacy_token, refresh_token, normalize_token — pub fn refresh_token(expires_in: u64) -> u64; pub fn legacy_token() -> u64; pub fn normalize_token(token: &str) -> String
+   ↳ notes docs/notes/rust-pitfalls.md §边界检查; 旧接口; 规范化: `refresh_token` 需要覆盖边界值。 `legacy_token` 将被删除。 `normalize_token` 保持独立，移动时保持逻辑。
+   ↳ decisions docs/decisions/rust.md §刷新策略: `refresh_token` 在输入值上增加 60。
+2. decisions docs/decisions/rust.md §令牌刷新决策 — # «令牌刷新»决策
+3. notes docs/notes/rust-pitfalls.md §令牌刷新经验 — # «令牌刷新»经验

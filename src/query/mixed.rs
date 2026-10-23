@@ -4,8 +4,8 @@ use serde::Serialize;
 use serde_json::Value;
 
 use super::{
-    bm25_hits, doc_lifecycle, query_tokens, search_term_hits, superseded_by, QueryCandidate,
-    QueryMatch, SearchIndex, CODE_INDEX, NATIVE_CODE_INDEX, SECTION_INDEX,
+    bm25_hits, doc_lifecycle, query_tokens, search_term_hits, search_term_keys, superseded_by,
+    QueryCandidate, QueryMatch, SearchIndex, CODE_INDEX, NATIVE_CODE_INDEX, SECTION_INDEX,
 };
 use crate::index::cell;
 use crate::sqlite::SqliteConnection;
@@ -15,6 +15,7 @@ pub(crate) const DEFAULT_BUNDLE_LIMIT: usize = 5;
 const RRF_K: f64 = 60.0;
 const PROPAGATION: f64 = 0.35;
 const TEST_CODE_WEIGHT: f64 = 0.3;
+const RELEVANCE_FLOOR: f64 = 0.50;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum QuerySide {
@@ -45,6 +46,8 @@ pub(crate) struct BundleNode {
     pub(crate) lang: String,
     pub(crate) signature: String,
     pub(crate) summary: String,
+    #[serde(default, skip_serializing)]
+    is_test: bool,
     #[serde(rename = "match", skip_serializing_if = "Option::is_none")]
     pub(crate) match_info: Option<QueryMatch>,
 }
@@ -61,7 +64,7 @@ impl BundleNode {
             1.0
         };
         lifecycle
-            * if self.is_code() && is_test_path(&self.path) {
+            * if self.is_test_code() {
                 TEST_CODE_WEIGHT
             } else {
                 1.0
@@ -72,8 +75,12 @@ impl BundleNode {
         if !self.is_code() {
             2
         } else {
-            u8::from(is_test_path(&self.path))
+            u8::from(self.is_test_code())
         }
+    }
+
+    fn is_test_code(&self) -> bool {
+        self.is_test
     }
 }
 
@@ -86,7 +93,9 @@ fn is_test_path(path: &str) -> bool {
         .any(|part| matches!(*part, "test" | "tests" | "__tests__" | "testing"))
         || filename.starts_with("test_")
         || filename.split('.').any(|part| {
-            matches!(part, "test" | "spec") || part.ends_with("_test") || part.ends_with("_tests")
+            matches!(part, "test" | "tests" | "spec")
+                || part.ends_with("_test")
+                || part.ends_with("_tests")
         })
 }
 
@@ -143,16 +152,39 @@ struct Graph {
 
 impl Graph {
     fn load(db: &SqliteConnection) -> Result<Self> {
-        let rows = db.query(
-            "SELECT n.id, n.kind, n.path, n.name, n.span_start, n.span_end, n.lang,
-                    n.signature, n.doc_comment, COALESCE(d.title, ''), COALESCE(d.role, ''),
-                    COALESCE(d.status, ''), COALESCE(d.summary, ''),
-                    COALESCE(s.heading, ''), COALESCE(s.summary, d.summary, ''), f.mtime_unix
-             FROM nodes n LEFT JOIN docs d ON d.path = n.path
-             LEFT JOIN doc_sections s ON s.node_id = n.id
-             LEFT JOIN file_states f ON f.path = n.path ORDER BY n.id;",
-            [],
-        )?;
+        Self::load_selected(db, None)
+    }
+
+    fn load_selected(db: &SqliteConnection, selected: Option<&str>) -> Result<Self> {
+        let rows = if let Some(id) = selected {
+            db.query(
+                "SELECT id, kind, path, name, is_test FROM nodes WHERE id = ?1",
+                [id],
+            )?
+        } else {
+            db.query(
+                "SELECT id, kind, path, name, is_test FROM nodes ORDER BY id",
+                [],
+            )?
+        };
+        let mut lifecycles = BTreeMap::new();
+        for row in if selected.is_none() {
+            db.query("SELECT path, status, summary FROM docs ORDER BY path", [])?
+                .rows
+        } else {
+            Vec::new()
+        } {
+            let path = cell(&row, 0);
+            lifecycles.insert(
+                path.to_string(),
+                doc_lifecycle(
+                    path,
+                    cell(&row, 1),
+                    cell(&row, 2),
+                    &superseded_by(db, path)?,
+                ),
+            );
+        }
         let checks = db.query(
             "SELECT rule_id, subject_path, message, evidence_json FROM checks
              WHERE rule_id IN ('code-drift', 'anchor-moved', 'anchor-broken')
@@ -165,42 +197,28 @@ impl Graph {
             let kind = cell(row, 1);
             let path = cell(row, 2);
             let doc = matches!(kind, "doc" | "section");
-            let lifecycle = if doc {
-                doc_lifecycle(
-                    path,
-                    cell(row, 11),
-                    cell(row, 12),
-                    &superseded_by(db, path)?,
-                )
-            } else {
-                "current".to_string()
-            };
+            // Ranking and propagation only need identity and lifecycle. Read
+            // signatures and prose for the selected bundles after ranking.
             let node = BundleNode {
                 id: cell(row, 0).to_string(),
                 kind: kind.to_string(),
                 path: path.to_string(),
                 name: cell(row, 3).to_string(),
-                title: if doc {
-                    cell(row, 9)
-                } else if kind == "file" {
-                    path
-                } else {
-                    cell(row, 3)
-                }
-                .to_string(),
-                heading: cell(row, 13).to_string(),
-                role: if doc { cell(row, 10) } else { kind }.to_string(),
-                status: cell(row, 11).to_string(),
-                lifecycle,
-                span_start: cell(row, 4).parse()?,
-                span_end: cell(row, 5).parse()?,
-                lang: cell(row, 6).to_string(),
-                signature: cell(row, 7).to_string(),
-                summary: if doc { cell(row, 14) } else { cell(row, 8) }
-                    .chars()
-                    .take(440)
-                    .collect(),
+                title: String::new(),
+                heading: String::new(),
+                role: String::new(),
+                status: String::new(),
+                lifecycle: lifecycles
+                    .get(path)
+                    .cloned()
+                    .unwrap_or_else(|| "current".to_string()),
+                span_start: 0,
+                span_end: 0,
+                lang: String::new(),
+                signature: String::new(),
+                summary: String::new(),
                 match_info: None,
+                is_test: !doc && (cell(row, 4) == "1" || is_test_path(path)),
             };
             let mut issues = Vec::new();
             for check in &checks.rows {
@@ -231,13 +249,17 @@ impl Graph {
                         &node.lifecycle
                     }
                     .to_string(),
-                    modified_at: cell(row, 15).parse().ok(),
+                    modified_at: None,
                     issues,
                 },
             );
             nodes.insert(node.id.clone(), node);
         }
-        let rows = db.query("SELECT src, dst, kind, confidence, weight, evidence_json FROM edges ORDER BY src, dst, kind, evidence_json;", [])?;
+        let rows = if selected.is_none() {
+            db.query("SELECT src, dst, kind, confidence, weight, evidence_json FROM edges ORDER BY src, dst, kind, evidence_json;", [])?
+        } else {
+            crate::sqlite::QueryResult::default()
+        };
         let mut edges = Vec::new();
         for row in &rows.rows {
             let (Some(source), Some(target)) = (nodes.get(cell(row, 0)), nodes.get(cell(row, 1)))
@@ -287,6 +309,57 @@ impl Graph {
         })
     }
 
+    fn bundle_node(&self, db: &SqliteConnection, id: &str) -> Result<BundleNode> {
+        let mut node = self.nodes[id].clone();
+        let rows = db.query(
+            "SELECT n.span_start, n.span_end, n.lang, n.signature, n.doc_comment,
+                    COALESCE(d.title, ''), COALESCE(d.role, n.kind), COALESCE(d.status, ''),
+                    COALESCE(s.heading, ''), COALESCE(s.summary, d.summary, '')
+             FROM nodes n LEFT JOIN docs d ON d.path = n.path
+             LEFT JOIN doc_sections s ON s.node_id = n.id WHERE n.id = ?1",
+            [id],
+        )?;
+        if let Some(row) = rows.rows.first() {
+            node.span_start = cell(row, 0).parse()?;
+            node.span_end = cell(row, 1).parse()?;
+            node.lang = cell(row, 2).to_string();
+            node.signature = cell(row, 3).to_string();
+            node.summary = if node.is_code() {
+                cell(row, 4)
+            } else {
+                cell(row, 9)
+            }
+            .chars()
+            .take(440)
+            .collect();
+            node.title = if node.kind == "file" {
+                &node.path
+            } else if node.is_code() {
+                &node.name
+            } else {
+                cell(row, 5)
+            }
+            .to_string();
+            node.role = cell(row, 6).to_string();
+            node.status = cell(row, 7).to_string();
+            node.heading = cell(row, 8).to_string();
+        }
+        Ok(node)
+    }
+
+    fn freshness_for(&self, db: &SqliteConnection, id: &str) -> Result<Freshness> {
+        let mut value = self.freshness[id].clone();
+        value.modified_at = db
+            .query(
+                "SELECT mtime_unix FROM file_states WHERE path = ?1",
+                [&self.nodes[id].path],
+            )?
+            .rows
+            .first()
+            .and_then(|row| cell(row, 0).parse().ok());
+        Ok(value)
+    }
+
     fn neighbors(
         &self,
         id: &str,
@@ -330,6 +403,8 @@ struct RecallHit {
     matched: Vec<String>,
     weight: f64,
     native: bool,
+    historical: bool,
+    retrieval_weight: f64,
 }
 
 fn recall(
@@ -348,7 +423,7 @@ fn recall(
             entry.1 += score;
         }
         if index.fts == CODE_INDEX.fts {
-            native.extend(search_term_hits(db, &NATIVE_CODE_INDEX, term)?.into_keys());
+            native.extend(search_term_keys(db, &NATIVE_CODE_INDEX, term)?);
         }
     }
     if terms.len() > 1 {
@@ -383,6 +458,8 @@ fn recall(
                 1.0
             };
             RecallHit {
+                historical: graph.nodes[&id].lifecycle == "historical",
+                retrieval_weight: graph.nodes[&id].retrieval_weight(),
                 native: native.contains(&id),
                 id,
                 score,
@@ -395,13 +472,10 @@ fn recall(
         b.matched
             .len()
             .cmp(&a.matched.len())
+            .then_with(|| a.historical.cmp(&b.historical))
             .then_with(|| {
-                (graph.nodes[&a.id].lifecycle == "historical")
-                    .cmp(&(graph.nodes[&b.id].lifecycle == "historical"))
-            })
-            .then_with(|| {
-                (b.score * b.weight * graph.nodes[&b.id].retrieval_weight())
-                    .total_cmp(&(a.score * a.weight * graph.nodes[&a.id].retrieval_weight()))
+                (b.score * b.weight * b.retrieval_weight)
+                    .total_cmp(&(a.score * a.weight * a.retrieval_weight))
             })
             .then_with(|| a.id.cmp(&b.id))
     });
@@ -464,24 +538,50 @@ pub(crate) fn query_bundles(
     limit: usize,
     legacy: Option<&[QueryCandidate]>,
 ) -> Result<Vec<QueryBundle>> {
+    // A unique, explicitly named code symbol is already a complete lexical
+    // answer. Avoid constructing an unrelated graph or filling the result with
+    // partial identifier matches. Mixed/document searches retain graph recall.
+    if side == QuerySide::Code {
+        let rows = db.query(
+            "SELECT id FROM nodes WHERE kind = 'symbol' AND name = ?1 COLLATE NOCASE LIMIT 2",
+            [query.trim()],
+        )?;
+        if rows.rows.len() == 1 {
+            let id = cell(&rows.rows[0], 0);
+            let graph = Graph::load_selected(db, Some(id))?;
+            let mut primary = graph.bundle_node(db, id)?;
+            primary.match_info = Some(QueryMatch {
+                matched_terms: query_tokens(query),
+                missing_terms: Vec::new(),
+                mode: "strict".to_string(),
+            });
+            return Ok(vec![QueryBundle {
+                primary,
+                related: Vec::new(),
+                score: format!("{:.6}", 1.0 / (RRF_K + 1.0)),
+                freshness: graph.freshness_for(db, id)?,
+            }]);
+        }
+    }
     let mut graph = Graph::load(db)?;
     if let Some(candidates) = legacy {
-        return Ok(candidates
-            .iter()
-            .take(limit)
-            .filter_map(|candidate| {
-                let id = format!("doc:{}", candidate.path);
-                let mut primary = graph.nodes.get(&id)?.clone();
-                primary.summary = candidate.summary.clone();
-                primary.match_info = candidate.match_info.clone();
-                Some(QueryBundle {
-                    primary,
-                    related: Vec::new(),
-                    score: candidate.score.clone(),
-                    freshness: graph.freshness[&id].clone(),
-                })
-            })
-            .collect());
+        let mut bundles = Vec::new();
+        for candidate in candidates.iter().take(limit) {
+            let id = format!("doc:{}", candidate.path);
+            if !graph.nodes.contains_key(&id) {
+                continue;
+            }
+            let mut primary = graph.bundle_node(db, &id)?;
+            primary.summary = candidate.summary.clone();
+            primary.match_info = candidate.match_info.clone();
+            bundles.push(QueryBundle {
+                primary,
+                related: Vec::new(),
+                score: candidate.score.clone(),
+                freshness: graph.freshness_for(db, &id)?,
+            });
+        }
+        return Ok(bundles);
     }
     let terms = query_tokens(query);
     let recall_limit = limit.saturating_mul(4).max(64);
@@ -532,9 +632,19 @@ pub(crate) fn query_bundles(
             .then_with(|| a.cmp(b))
     });
     if let Some((_, best_score)) = ranked.first() {
-        let floor = *best_score * 0.30;
+        let floor = *best_score * RELEVANCE_FLOOR;
+        let has_strong_document = ranked.iter().any(|(id, score)| {
+            **score >= floor && !graph.nodes[id.as_str()].is_code()
+        });
         ranked.retain(|(id, score)| {
-            **score >= floor || is_test_path(&graph.nodes[id.as_str()].path)
+            if **score >= floor {
+                return true;
+            }
+            let node = &graph.nodes[id.as_str()];
+            // Keep inline tests when they document the same production file;
+            // standalone test suites that merely repeat a query term are weak
+            // related results and must not fill the bundle cache.
+            node.is_test_code() && (side == QuerySide::Code || !has_strong_document)
         });
     }
     let mut covered = BTreeSet::new();
@@ -597,9 +707,9 @@ pub(crate) fn query_bundles(
             }
             covered.insert(neighbor.clone());
             let link = RelatedLink {
-                node: node.clone(),
+                node: graph.bundle_node(db, &neighbor)?,
                 edge: graph.edges[edge].clone(),
-                freshness: graph.freshness[&neighbor].clone(),
+                freshness: graph.freshness_for(db, &neighbor)?,
             };
             if let Some(slot) = slot {
                 if node.kind == "symbol" {
@@ -617,10 +727,10 @@ pub(crate) fn query_bundles(
         }
         covered.insert(id.clone());
         bundles.push(QueryBundle {
-            primary: graph.nodes[id].clone(),
+            primary: graph.bundle_node(db, id)?,
             related,
             score: format!("{score:.6}"),
-            freshness: graph.freshness[id].clone(),
+            freshness: graph.freshness_for(db, id)?,
         });
         if bundles.len() == limit {
             break;
@@ -638,13 +748,13 @@ mod tests {
         let db = SqliteConnection::open(std::path::Path::new(":memory:")).unwrap();
         // Use a real fixture-sized graph, without coupling the assertion to SQL
         // retrieval scores or accidentally letting a second hop hide a miss.
-        db.exec("CREATE TABLE nodes(id TEXT, kind TEXT, path TEXT, name TEXT, span_start INT, span_end INT, lang TEXT, signature TEXT, doc_comment TEXT);
+        db.exec("CREATE TABLE nodes(id TEXT, kind TEXT, path TEXT, name TEXT, span_start INT, span_end INT, lang TEXT, signature TEXT, doc_comment TEXT, is_test INT);
             CREATE TABLE docs(path TEXT, title TEXT, role TEXT, status TEXT, summary TEXT);
             CREATE TABLE doc_sections(node_id TEXT, heading TEXT, summary TEXT);
             CREATE TABLE file_states(path TEXT, mtime_unix INT);
             CREATE TABLE checks(rule_id TEXT, subject_path TEXT, message TEXT, evidence_json TEXT);
             CREATE TABLE edges(src TEXT, dst TEXT, kind TEXT, confidence TEXT, weight REAL, evidence_json TEXT);
-            INSERT INTO nodes VALUES ('a', 'symbol', 'a.rs', 'a', 1, 1, 'rust', '', ''), ('b', 'symbol', 'b.rs', 'b', 1, 1, 'rust', '', ''), ('c', 'symbol', 'c.rs', 'c', 1, 1, 'rust', '', '');
+            INSERT INTO nodes VALUES ('a', 'symbol', 'a.rs', 'a', 1, 1, 'rust', '', '', 0), ('b', 'symbol', 'b.rs', 'b', 1, 1, 'rust', '', '', 0), ('c', 'symbol', 'c.rs', 'c', 1, 1, 'rust', '', '', 0);
             INSERT INTO edges VALUES ('a', 'b', 'anchor', 'EXTRACTED', 0.5, '{}'), ('b', 'c', 'anchor', 'EXTRACTED', 1.0, '{}');").unwrap();
         let graph = Graph::load(&db).unwrap();
         let seed = 1.0 / (RRF_K + 1.0);

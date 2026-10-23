@@ -105,40 +105,46 @@ pub(crate) fn token_cost(text: &str) -> usize {
 }
 
 pub(crate) fn paginate_lines(
-    mut lines: Vec<RenderLine>,
+    lines: Vec<RenderLine>,
     options: &RenderOptions,
     command: &str,
 ) -> RenderedPage {
-    // Callers append sections in priority order. Stable sorting keeps a caller
-    // supplied main/related/hint order while allowing future renderers to mix
-    // section builders safely.
-    lines.sort_by_key(|line| line.priority);
+    // A related line belongs to the nearest preceding content line.  Keeping
+    // these entries together is important for both readability and paging:
+    // sorting all priority-1 lines after the content lines would detach a
+    // document's evidence from its parent (especially in context --diff).
+    let entries = group_lines(lines);
     let offset = options
         .cursor
         .as_deref()
         .and_then(decode_cursor)
-        .unwrap_or_else(|| page_offset(&lines, options.page, options.budget));
-    let offset = offset.min(lines.len());
+        .unwrap_or_else(|| page_offset(&entries, options.page, options.budget));
+    let offset = offset.min(entries.len());
     let mut selected = Vec::new();
     let mut used = 0usize;
     let mut index = offset;
-    while index < lines.len() {
-        let line = &lines[index].text;
-        let cost = token_cost(line);
+    while index < entries.len() {
+        let entry = &entries[index];
+        let cost = entry
+            .iter()
+            .map(|line| token_cost(&line.text))
+            .sum::<usize>();
         if !selected.is_empty() && used + cost > options.budget {
             break;
         }
-        let text = if selected.is_empty() && cost > options.budget {
-            truncate_to_budget(line, options.budget)
-        } else {
-            line.clone()
-        };
-        selected.push(text);
-        used += token_cost(selected.last().expect("selected line"));
+        // Do not split an entry across pages.  An individual long entry may
+        // exceed the approximate budget, but its parent and evidence remain
+        // an intelligible unit.
+        selected.extend(entry.iter().map(|line| line.text.clone()));
+        used += cost;
         index += 1;
     }
-    let omitted = lines.len().saturating_sub(index);
-    let next_cursor = (index < lines.len()).then(|| encode_cursor(index, command));
+    let omitted = entries
+        .iter()
+        .skip(index)
+        .map(Vec::len)
+        .sum::<usize>();
+    let next_cursor = (index < entries.len()).then(|| encode_cursor(index, command));
     if omitted > 0 {
         let page = options.page.saturating_add(1);
         let next = next_cursor
@@ -156,12 +162,29 @@ pub(crate) fn paginate_lines(
     }
 }
 
-fn page_offset(lines: &[RenderLine], page: usize, budget: usize) -> usize {
+fn group_lines(lines: Vec<RenderLine>) -> Vec<Vec<RenderLine>> {
+    let mut entries = Vec::<Vec<RenderLine>>::new();
+    for line in lines {
+        let continuation =
+            line.priority == 1 || line.text.starts_with(char::is_whitespace);
+        if entries.is_empty() || !continuation {
+            entries.push(vec![line]);
+        } else if let Some(entry) = entries.last_mut() {
+            entry.push(line);
+        }
+    }
+    entries
+}
+
+fn page_offset(entries: &[Vec<RenderLine>], page: usize, budget: usize) -> usize {
     let mut offset = 0usize;
     for _ in 1..page {
         let mut used = 0usize;
-        while offset < lines.len() {
-            let cost = token_cost(&lines[offset].text);
+        while offset < entries.len() {
+            let cost = entries[offset]
+                .iter()
+                .map(|line| token_cost(&line.text))
+                .sum::<usize>();
             if used > 0 && used + cost > budget {
                 break;
             }
@@ -209,15 +232,6 @@ pub(crate) fn compact(text: &str, max_chars: usize) -> String {
     }
 }
 
-pub(crate) fn truncate_to_budget(text: &str, budget: usize) -> String {
-    if token_cost(text) <= budget {
-        return text.to_string();
-    }
-    let max_chars = budget.saturating_mul(4).max(1);
-    let value = text.chars().take(max_chars).collect::<String>();
-    format!("{}…", value.trim_end())
-}
-
 pub(crate) fn is_cjk(ch: char) -> bool {
     matches!(
         ch as u32,
@@ -247,6 +261,7 @@ pub(crate) fn highlight_terms(text: &str, terms: &[String]) -> String {
         for (start, _) in lower.match_indices(&term_lower) {
             let end = start + term_lower.len();
             let boundary = is_cjk(term_lower.chars().next().unwrap_or(' '))
+                || term_lower.chars().count() >= 4
                 || (!lower[..start]
                     .chars()
                     .next_back()
@@ -272,8 +287,12 @@ pub(crate) fn highlight_terms(text: &str, terms: &[String]) -> String {
         if start < cursor {
             continue;
         }
-        let Some(prefix) = text.get(cursor..start) else { continue };
-        let Some(hit) = text.get(start..end) else { continue };
+        let Some(prefix) = text.get(cursor..start) else {
+            continue;
+        };
+        let Some(hit) = text.get(start..end) else {
+            continue;
+        };
         out.push_str(prefix);
         out.push('«');
         out.push_str(hit);
@@ -286,28 +305,132 @@ pub(crate) fn highlight_terms(text: &str, terms: &[String]) -> String {
 
 pub(crate) fn kwic_excerpt(text: &str, query: &str, fallback: &str, max_chars: usize) -> String {
     let terms = query_tokens_for_render(query);
-    let mut best = None::<(&str, usize)>;
-    for sentence in text
-        .split(|ch| matches!(ch, '\n' | '.' | '!' | '?' | '。' | '！' | '？'))
-        .map(str::trim)
-        .filter(|part| !part.is_empty())
+    let mut best = None::<(String, usize)>;
+    for sentence in sentences(text)
+        .into_iter()
+        .flat_map(fenced_candidates)
     {
         let lower = sentence.to_lowercase();
         let count = terms
             .iter()
-            .filter(|term| lower.contains(&term.to_lowercase()))
+            .filter(|term| crate::query::matching_offset(&lower, term).is_some())
             .count();
-        if count > 0 && best.map(|(_, score)| count > score).unwrap_or(true) {
+        if count > 0
+            && best
+                .as_ref()
+                .map(|(_, score)| count > *score)
+                .unwrap_or(true)
+        {
             best = Some((sentence, count));
         }
     }
     let chosen = best.map(|(sentence, _)| sentence).unwrap_or_else(|| {
         text.lines()
             .map(str::trim)
-            .find(|line| !line.is_empty())
+            .find(|line| !line.is_empty() && !line.starts_with("```"))
             .unwrap_or(fallback)
+            .to_string()
     });
-    compact(&highlight(chosen, query), max_chars)
+    let chars = chosen.chars().collect::<Vec<_>>();
+    let first = terms
+        .iter()
+        .filter_map(|term| crate::query::matching_offset(&chosen.to_lowercase(), term))
+        .min()
+        .and_then(|offset| chosen.get(..offset))
+        .map(|prefix| prefix.chars().count())
+        .unwrap_or(0);
+    let mut start = if first >= max_chars {
+        first.saturating_sub(max_chars / 3)
+    } else {
+        0
+    };
+    while start > 0 && !chars[start - 1].is_whitespace() && chars[start - 1] != '`' {
+        start -= 1;
+    }
+    let mut excerpt = compact(&chars[start..].iter().collect::<String>(), max_chars);
+    if excerpt.matches('`').count() % 2 == 1 {
+        if let Some(open) = excerpt.rfind('`') {
+            // Do not leave a path or inline identifier dangling at the budget
+            // boundary. A long inline span can still be shown with closed ticks.
+            if open > 0 {
+                excerpt.truncate(open);
+                excerpt = format!("{}…", excerpt.trim_end());
+            } else {
+                excerpt = excerpt.trim_end_matches('…').to_string() + "`…";
+            }
+        }
+    }
+    if start > 0 {
+        excerpt.insert(0, '…');
+    }
+    highlight(&excerpt, query)
+}
+
+fn fenced_candidates(sentence: &str) -> impl Iterator<Item = String> + '_ {
+    let lines = sentence.lines().map(str::trim).collect::<Vec<_>>();
+    if lines.iter().any(|line| line.starts_with("```")) {
+        let candidates = lines
+            .into_iter()
+            .filter(|line| !line.is_empty() && !line.starts_with("```"))
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        candidates.into_iter()
+    } else {
+        std::iter::once(sentence.trim().to_string())
+            .collect::<Vec<_>>()
+            .into_iter()
+    }
+}
+
+fn sentences(text: &str) -> Vec<&str> {
+    let mut start = 0;
+    let mut backticks = 0;
+    let mut chars = text.char_indices().peekable();
+    let mut sentences = Vec::new();
+    while let Some((offset, ch)) = chars.next() {
+        if ch == '`' {
+            let mut run = 1;
+            while chars.peek().map(|(_, ch)| *ch == '`').unwrap_or(false) {
+                chars.next();
+                run += 1;
+            }
+            if backticks == 0 {
+                backticks = run;
+            } else if backticks == run {
+                backticks = 0;
+            }
+            continue;
+        }
+        let newline_boundary = ch == '\n' && {
+            let before = text[..offset].rsplit('\n').next().unwrap_or("").trim();
+            let after = text[offset + 1..].lines().next().unwrap_or("").trim();
+            before.is_empty()
+                || after.is_empty()
+                || before.starts_with('#')
+                || after.starts_with('#')
+                || after.starts_with("- ")
+                || after.starts_with("* ")
+                || after.starts_with("+ ")
+                || after.starts_with("```")
+        };
+        let boundary = backticks == 0
+            && (newline_boundary
+                || matches!(ch, '。' | '！' | '？')
+                || (matches!(ch, '.' | '!' | '?')
+                    && chars
+                        .peek()
+                        .map(|(_, next)| next.is_whitespace())
+                        .unwrap_or(true)));
+        if boundary {
+            let end = offset + ch.len_utf8();
+            sentences.push(&text[start..end]);
+            start = end;
+        }
+    }
+    if start < text.len() {
+        sentences.push(&text[start..]);
+    }
+    sentences
 }
 
 pub(crate) fn edge_badge(confidence: &str) -> &'static str {
@@ -316,6 +439,29 @@ pub(crate) fn edge_badge(confidence: &str) -> &'static str {
     } else {
         ""
     }
+}
+
+/// The surrounding result already identifies this file; keep the actual
+/// symbol name in prose without repeating its full anchor path.
+pub(crate) fn local_anchor_names(text: &str, path: &str) -> String {
+    text.split('`')
+        .enumerate()
+        .map(|(index, part)| {
+            let part = if index % 2 == 1 {
+                part.split_once('#')
+                    .filter(|(anchor_path, _)| *anchor_path == path)
+                    .map(|(_, name)| name)
+                    .unwrap_or(part)
+            } else {
+                part
+            };
+            if index == 0 {
+                part.to_string()
+            } else {
+                format!("`{part}")
+            }
+        })
+        .collect()
 }
 
 pub(crate) fn freshness_badge(status: &str) -> &'static str {
@@ -349,3 +495,100 @@ pub(crate) fn merge_names(names: impl IntoIterator<Item = String>, limit: usize)
     out
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn kwic_keeps_paths_decimal_points_and_inline_code_inside_sentences() {
+        let text = "Usage log writes `scripts/x.sh` and `src/usage.rs#record` using version 1.2. It then returns.";
+        let excerpt = kwic_excerpt(text, "usage log", "", 160);
+        let plain = excerpt.replace('«', "").replace('»', "");
+        assert!(
+            plain.contains("`scripts/x.sh` and `src/usage.rs#record` using version 1.2."),
+            "{excerpt}"
+        );
+        assert!(!excerpt.contains("It then returns"));
+    }
+
+    #[test]
+    fn kwic_keeps_a_late_hit_and_closes_or_omits_truncated_inline_spans() {
+        let text = format!(
+            "{} usage log records the operation before returning.",
+            "Long preamble ".repeat(30)
+        );
+        let excerpt = kwic_excerpt(&text, "usage log", "", 160);
+        assert!(excerpt.contains("«usage» «log»"), "{excerpt}");
+        for text in [
+            format!("Read `src/{}.rs` before logging.", "long".repeat(70)),
+            format!("`src/{}.rs` records logs.", "long".repeat(70)),
+        ] {
+            let excerpt = kwic_excerpt(&text, "Read", "", 160);
+            assert_eq!(excerpt.matches('`').count() % 2, 0, "{excerpt}");
+        }
+    }
+
+    #[test]
+    fn kwic_joins_soft_wrapping_and_uses_the_same_word_boundaries_as_retrieval() {
+        let text = "Usage logic chooses a branch.\n\nThe usage log writes through\n`scripts/x.sh` before returning. Another sentence follows.";
+        let excerpt = kwic_excerpt(text, "usage log", "", 160);
+        assert!(
+            excerpt.contains("«usage» «log» writes through `scripts/x.sh` before returning."),
+            "{excerpt}"
+        );
+        assert!(
+            !excerpt.contains("logic") && !excerpt.contains("Another sentence"),
+            "{excerpt}"
+        );
+    }
+
+    #[test]
+    fn kwic_skips_fenced_markers_and_keeps_only_the_matching_code_line() {
+        let text = "## Local usage\n\n```bash\nexport HARNESSKIT_USAGE_LOG=off # Disable logging\nharnesskit doctor --usage --days 30\n```\n";
+        let excerpt = kwic_excerpt(text, "usage log", "", 160);
+        assert_eq!(
+            excerpt,
+            "export HARNESSKIT_«USAGE»_«LOG»=off # Disable logging"
+        );
+        assert!(!excerpt.contains("```"));
+        assert!(!excerpt.contains("harnesskit doctor"));
+    }
+
+    #[test]
+    fn pagination_keeps_related_lines_with_their_parent_on_every_page() {
+        let options = RenderOptions {
+            budget: 5,
+            ..RenderOptions::default()
+        };
+        let first = paginate_lines(
+            vec![
+                RenderLine::content("- first file"),
+                RenderLine::related("  → first document"),
+                RenderLine::content("- second file"),
+                RenderLine::related("  → second document"),
+            ],
+            &options,
+            "context --diff",
+        );
+        assert_eq!(first.lines[0], "- first file");
+        assert_eq!(first.lines[1], "  → first document");
+        assert!(first.lines.iter().all(|line| !line.contains("second")));
+
+        let second = paginate_lines(
+            vec![
+                RenderLine::content("- first file"),
+                RenderLine::related("  → first document"),
+                RenderLine::content("- second file"),
+                RenderLine::related("  → second document"),
+            ],
+            &RenderOptions {
+                budget: 5,
+                page: 2,
+                ..RenderOptions::default()
+            },
+            "context --diff",
+        );
+        assert_eq!(second.lines[0], "- second file");
+        assert_eq!(second.lines[1], "  → second document");
+    }
+}

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate the W0 corpus and execute the W3/W4/W5 Weave evaluations."""
+"""Run every W0 Weave case and enforce the W9a retrieval/drift/cochange gates."""
 
 import argparse
 import json
@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import shutil
+from collections import Counter
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -106,8 +107,8 @@ def evaluate(corpus):
                                  str(repo)], check=True, capture_output=True, text=True)
         manifest = json.loads(result.stdout)
         validate_fixture(corpus, repo, manifest["revisions"])
-        drift_cases = run_drift_cases(corpus, repo)
-        cochange_cases, cochange_coverage = run_cochange_cases(corpus, repo)
+        drift_cases, drift_metrics = run_drift_cases(corpus, repo)
+        cochange_cases, cochange_metrics = run_cochange_cases(corpus, repo)
         retrieval_cases, retrieval_metrics = run_retrieval_cases(corpus, repo)
     cases = []
     for kind in REQUIRED_STEPS:
@@ -118,13 +119,15 @@ def evaluate(corpus):
                 cases.append(cochange_cases[case["id"]])
             else:
                 cases.append(retrieval_cases[case["id"]])
-    executed = sum(case["status"] != "pending" for case in cases)
+    require(all(case["status"] == "passed" for case in cases), "unpassed W0 cases")
+    executed = len(cases)
     return dict(schema_version=1, fixture="weave", fixture_validated=True,
                 fixture_commits=len(manifest["revisions"]), as_of=corpus["as_of"],
                 summary=dict(total=len(cases), executed=executed,
                              pending=len(cases) - executed,
                              by_kind={kind: len(corpus[kind]) for kind in REQUIRED_STEPS}),
-                cases=cases, cochange_coverage=cochange_coverage,
+                cases=cases, cochange_coverage=cochange_metrics["top8_rate"],
+                cochange_metrics=cochange_metrics, drift_metrics=drift_metrics,
                 retrieval_metrics=retrieval_metrics)
 
 
@@ -233,23 +236,54 @@ def run_retrieval_cases(corpus, repo):
 
 def run_drift_cases(corpus, repo):
     results = {}
+    true_positives = false_positives = false_negatives = 0
+    format_cases = format_false_positives = 0
+    all_true = all_false = all_missed = 0
     for case in corpus["drift"]:
         reset_derived_state(repo)
         subprocess.run(["git", "checkout", "--quiet", "--detach", case["before"]],
                        cwd=repo, check=True)
         run_cli(repo, "index")
+        before_docs = {path.relative_to(repo).as_posix(): path.read_text(encoding="utf-8")
+                       for path in (repo / "docs").rglob("*.md")}
+        expected_anchors = {other["anchor"]: other["expected_rule"]
+                            for other in corpus["drift"]
+                            if (other["before"], other["after"]) == (case["before"], case["after"])
+                            and other["expected_rule"] is not None}
+        expected_all = Counter((rule, doc, anchor)
+                               for anchor, rule in expected_anchors.items()
+                               for doc, text in before_docs.items() if f"`{anchor}`" in text)
         subprocess.run(["git", "checkout", "--quiet", "--detach", case["after"]],
                        cwd=repo, check=True)
         report = run_cli(repo, "check", "--rules", "anchors", "--json", "--all")
         payload = json.loads(report.stdout)
+        observed_all = Counter((check["rule_id"], check["subject_path"],
+                                check["evidence_json"].get("anchor"))
+                               for check in payload["checks"]
+                               if check["rule_id"] in ("code-drift", "anchor-moved", "anchor-broken"))
+        all_true += sum((expected_all & observed_all).values())
+        all_false += sum((observed_all - expected_all).values())
+        all_missed += sum((expected_all - observed_all).values())
+        require(observed_all == expected_all,
+                f"unexpected/missing drift anywhere in fixture: {case['id']}: "
+                f"extra={observed_all - expected_all}, missing={expected_all - observed_all}")
         matches = [check for check in payload["checks"]
                    if check["subject_path"] == case["doc"]
                    and check["evidence_json"].get("anchor") == case["anchor"]]
         expected = case.get("expected_rule")
+        observed = [check["rule_id"] for check in matches
+                    if check["rule_id"] in ("code-drift", "anchor-moved", "anchor-broken")]
+        true_positives += int(expected is not None and expected in observed)
+        false_negatives += int(expected is not None and expected not in observed)
+        false_positives += sum(rule != expected for rule in observed)
+        if case["id"].endswith("-format"):
+            format_cases += 1
+            format_false_positives += sum(observed_all.values())
         if expected is None:
             require(not any(check["rule_id"] in ("code-drift", "anchor-moved", "anchor-broken")
                             for check in matches), f"unexpected drift warning: {case['id']}")
         else:
+            require(observed == [expected], f"unexpected additional drift warnings: {case['id']}: {observed}")
             require(any(check["rule_id"] == expected for check in matches),
                     f"missing {expected}: {case['id']}")
             if expected == "anchor-moved":
@@ -266,8 +300,18 @@ def run_drift_cases(corpus, repo):
                         f"move fix did not rewrite: {case['id']}")
         results[case["id"]] = dict(id=case["id"], kind="drift", status="passed",
                                     required_steps=REQUIRED_STEPS["drift"],
-                                    expected_rule=expected)
-    return results
+                                    expected_rule=expected, observed_rules=observed)
+    precision = true_positives / (true_positives + false_positives) if true_positives + false_positives else 1.0
+    metrics = dict(cases=len(results), true_positives=true_positives,
+                   false_positives=false_positives, false_negatives=false_negatives,
+                   precision=precision, format_cases=format_cases,
+                   format_false_positives=format_false_positives,
+                   all_anchors=dict(true_positives=all_true, false_positives=all_false,
+                                    false_negatives=all_missed,
+                                    precision=all_true / (all_true + all_false) if all_true + all_false else 1.0))
+    require(precision == 1.0 and false_negatives == 0 and format_false_positives == 0,
+            f"drift gate failed: {metrics}")
+    return results, metrics
 
 
 def run_cochange_cases(corpus, repo):
@@ -315,7 +359,8 @@ def run_cochange_cases(corpus, repo):
     coverage = known_matched / known_expected if known_expected else 1.0
     if coverage < 0.9:
         raise ValueError(f"W4 cochange coverage {coverage:.3f} is below 0.900")
-    return results, coverage
+    return results, dict(cases=len(results), known_pairs=known_expected,
+                         top8_hits=known_matched, top8_rate=coverage)
 
 
 def main():

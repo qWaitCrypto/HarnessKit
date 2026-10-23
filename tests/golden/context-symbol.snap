@@ -1,1 +1,3 @@
-Context --for
+Context --for refresh_token:
+- docs/decisions/rust.md §刷新策略 :: `refresh_token` 在输入值上增加 60。
+- docs/notes/rust-pitfalls.md §边界检查 :: `refresh_token` 需要覆盖边界值。

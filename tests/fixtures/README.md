@@ -45,4 +45,6 @@ check, `context --current` and query.
 [Weave W0](weave/README.md) adds a separate multilingual history generator and
 retrieval/drift/cochange expectation corpus. Its Git repository is created only
 in temporary storage at test time; no nested `.git` directory is stored here.
-The runner validates inputs and marks future behavior evaluations as pending.
+The runner validates inputs, executes all 37 retrieval/drift/cochange cases,
+and fails on pending or failed behavior. Output snapshots and release performance
+are enforced by the separate W9a runners described in `tests/golden/README.md`.

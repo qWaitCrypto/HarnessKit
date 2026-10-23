@@ -605,7 +605,7 @@ pub(crate) fn apply_analysis(
         .cloned()
         .cloned()
         .collect::<Vec<_>>();
-    let snapshot_message = if snapshot.skipped {
+    let mut snapshot_message = if snapshot.skipped {
         "History snapshot skipped because the pre-migration managed contents were unchanged."
             .to_string()
     } else {
@@ -614,6 +614,9 @@ pub(crate) fn apply_analysis(
             snapshot.snapshot.id
         )
     };
+    if changed {
+        snapshot_message.push_str(" Review the migration diff, then run `harnesskit history snapshot -m \"reviewed migration\"` to capture the updated schema and documents.");
+    }
     Ok(MigrationApplyReport {
         applied_count: applied.len(),
         applied,

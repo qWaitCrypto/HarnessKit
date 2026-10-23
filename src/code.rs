@@ -1,6 +1,6 @@
 mod extract;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 
@@ -29,6 +29,7 @@ struct CodeNode {
     lang: String,
     // Keep declarations available to explicit anchors, but not inferred mentions.
     is_definition: bool,
+    is_test: bool,
     signature: String,
     doc_comment: String,
 }
@@ -158,18 +159,34 @@ fn excluded_path(path: &Path) -> bool {
     })
 }
 
-fn regular_file(root: &Path, relative: &str) -> Result<bool> {
+fn regular_file(
+    root: &Path,
+    relative: &str,
+    directories: &mut BTreeMap<std::path::PathBuf, bool>,
+) -> Result<bool> {
     let mut current = root.to_path_buf();
+    let mut regular = false;
     for part in Path::new(relative).components() {
         current.push(part);
+        if let Some(valid) = directories.get(&current) {
+            if !valid {
+                return Ok(false);
+            }
+            continue;
+        }
         match fs::symlink_metadata(&current) {
             Ok(metadata) if metadata.file_type().is_symlink() => return Ok(false),
-            Ok(_) => {}
+            Ok(metadata) => {
+                regular = metadata.is_file();
+                if metadata.is_dir() {
+                    directories.insert(current.clone(), true);
+                }
+            }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
             Err(error) => return Err(error.into()),
         }
     }
-    Ok(current.is_file())
+    Ok(regular)
 }
 
 fn has_git_marker(root: &Path) -> bool {
@@ -188,11 +205,12 @@ fn collect_code_paths(root: &Path, schema: &Schema) -> Result<(Vec<String>, &'st
     if git_repo_check(root).0 == Some(true) {
         let candidates = tracked_doc_paths(root, &[".".to_string()])?;
         let mut paths = Vec::new();
+        let mut directories = BTreeMap::new();
         for path in candidates {
             if !excluded_path(Path::new(&path))
                 && !is_markdown(&path)
                 && !is_ignored(schema, &path)
-                && regular_file(root, &path)?
+                && regular_file(root, &path, &mut directories)?
             {
                 paths.push(path);
             }
@@ -240,6 +258,10 @@ fn collect_code_paths(root: &Path, schema: &Schema) -> Result<(Vec<String>, &'st
     }
     paths.sort();
     Ok((paths, "walk"))
+}
+
+pub(crate) fn input_paths(root: &Path, schema: &Schema) -> Result<Vec<String>> {
+    Ok(collect_code_paths(root, schema)?.0)
 }
 
 pub(crate) fn refresh_code_facts(
@@ -308,11 +330,11 @@ pub(crate) fn refresh_code_facts(
                 db.execute("DELETE FROM nodes WHERE path = ?1;", [path])?;
                 for node in nodes {
                     db.execute(
-                        "INSERT INTO nodes(id, kind, path, name, span_start, span_end, fingerprint, lang, is_definition, signature, doc_comment)
-                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11);",
+                        "INSERT INTO nodes(id, kind, path, name, span_start, span_end, fingerprint, lang, is_definition, signature, doc_comment, is_test)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12);",
                         params![node.id, node.kind, node.path, node.name, node.span_start,
                             node.span_end, node.fingerprint, node.lang, node.is_definition,
-                            node.signature, node.doc_comment],
+                            node.signature, node.doc_comment, node.is_test],
                     )?;
                 }
             }

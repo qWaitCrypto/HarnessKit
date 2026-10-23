@@ -18,9 +18,11 @@ scores sections and symbols separately within mixed bundles (including related
 nodes), and independently requires symbol recall through `--code` so graph
 propagation cannot conceal a missing vocabulary bridge. `--docs` section ranks
 are also reported. The gates require symbol top three >= 80%, all expected mixed
-sections, and >= 90% known cochange pairs in the document top eight. W9 will
-enforce the remaining design metrics. The frozen S5 corpus and its ranking gates
-remain independent and unchanged.
+sections, >= 90% known cochange pairs in the document top eight, drift precision
+of 100%, and zero formatting false positives. Reports include raw hit counts and
+no pending cases. The frozen S5 corpus and its ranking gates remain independent.
+`evaluate-output.py` enforces complete golden snapshots and output density;
+`benchmark-weave.py` enforces the release performance thresholds.
 
 `tests/anchors.rs` connects the W2 prerequisites to the existing corpus: all eight
 retrieval cases must have real section-to-symbol EXTRACTED edges, and all twenty
@@ -65,7 +67,7 @@ for future time-decay evaluation, and three case arrays with globally unique IDs
 | Array | Fields and expectation semantics |
 | --- | --- |
 | `retrieval` | `revision`, `query`, `top_k`, `expected_sections: [{path, heading}]`, `expected_symbols: ["path#symbol"]`. Score document sections and symbols separately; each target should appear within its side's top-k. Includes Chinese queries for all four languages and exact identifiers. |
-| `drift` | `before`, `after`, `doc`, `anchor: "path#symbol"`, `expected_rule`, and `expected_target` for moves. Establish a fresh seal at `before`, then update to `after`. A null rule means no drift warning for that anchor, including formatting and automatic review by a joint doc/code commit; other anchors are outside that case's assertion. |
+| `drift` | `before`, `after`, `doc`, `anchor: "path#symbol"`, `expected_rule`, and `expected_target` for moves. Establish a fresh seal at `before`, then update to `after`. A null rule means no drift warning for that anchor, including formatting and automatic review by a joint doc/code commit. Each transition also checks every fixture warning against all scripted changes and all documents referencing those anchors, so unrelated false positives cannot hide behind a targeted assertion. |
 | `cochange` | `revision`, `doc`, `top_k`, `expected_paths`, `forbidden_paths`. Known pairs should enter the document's top eight cochange edges; forbidden pairs should be absent. Empty expected paths support negative controls. Evaluate with the top-level `as_of` clock. |
 
 Paths are relative to the generated root. Revisions are the lightweight tags

@@ -1,1 +1,5 @@
-Context:
+Context: docs/commands.md
+Anchor: docs/commands.md [doc] :: Commands
+Commands below use HarnessKit 0.1.0-alpha.7. From a source checkout, replace `harnesskit` with `cargo run --`, or build once and use `target/release/harnesskit`…
+Incoming refs:
+- AGENTS.md :: Read the command reference before changing retrieval behavior; check the current project constraints and validate the resulting command output.

@@ -1,0 +1,1152 @@
+{
+  "schema_version": 1,
+  "fixture": "weave",
+  "fixture_validated": true,
+  "fixture_commits": 10,
+  "as_of": "2026-01-11T00:00:00Z",
+  "summary": {
+    "total": 37,
+    "executed": 37,
+    "pending": 0,
+    "by_kind": {
+      "retrieval": 8,
+      "drift": 20,
+      "cochange": 9
+    }
+  },
+  "cases": [
+    {
+      "id": "rust-chinese",
+      "kind": "retrieval",
+      "status": "passed",
+      "required_steps": [
+        "W1",
+        "W2",
+        "W5"
+      ],
+      "observed_sections": [
+        [
+          "docs/notes/rust-pitfalls.md",
+          "边界检查"
+        ],
+        [
+          "docs/decisions/rust.md",
+          "刷新策略"
+        ],
+        [
+          "docs/notes/rust-pitfalls.md",
+          "旧接口"
+        ],
+        [
+          "docs/notes/rust-pitfalls.md",
+          "规范化"
+        ],
+        [
+          "docs/decisions/rust.md",
+          "令牌刷新决策"
+        ],
+        [
+          "docs/notes/rust-pitfalls.md",
+          "令牌刷新经验"
+        ]
+      ],
+      "docs_only_sections": [
+        [
+          "docs/decisions/rust.md",
+          "令牌刷新决策"
+        ],
+        [
+          "docs/notes/rust-pitfalls.md",
+          "令牌刷新经验"
+        ],
+        [
+          "docs/notes/rust-pitfalls.md",
+          "旧接口"
+        ],
+        [
+          "docs/notes/rust-pitfalls.md",
+          "边界检查"
+        ],
+        [
+          "docs/decisions/rust.md",
+          "刷新策略"
+        ]
+      ],
+      "observed_symbols": [
+        "src/auth/refresh.rs#refresh_token",
+        "src/auth/refresh.rs#legacy_token",
+        "src/auth/refresh.rs#normalize_token"
+      ],
+      "mixed_sections": [
+        [
+          "docs/notes/rust-pitfalls.md",
+          "边界检查"
+        ],
+        [
+          "docs/decisions/rust.md",
+          "刷新策略"
+        ],
+        [
+          "docs/notes/rust-pitfalls.md",
+          "旧接口"
+        ],
+        [
+          "docs/notes/rust-pitfalls.md",
+          "规范化"
+        ],
+        [
+          "docs/decisions/rust.md",
+          "令牌刷新决策"
+        ],
+        [
+          "docs/notes/rust-pitfalls.md",
+          "令牌刷新经验"
+        ]
+      ],
+      "mixed_symbols": [
+        "src/auth/refresh.rs#refresh_token",
+        "src/auth/refresh.rs#legacy_token",
+        "src/auth/refresh.rs#normalize_token"
+      ],
+      "section_top3": true,
+      "symbol_top3": true,
+      "score": 1.0
+    },
+    {
+      "id": "typescript-chinese",
+      "kind": "retrieval",
+      "status": "passed",
+      "required_steps": [
+        "W1",
+        "W2",
+        "W5"
+      ],
+      "observed_sections": [
+        [
+          "docs/notes/typescript-pitfalls.md",
+          "边界检查"
+        ],
+        [
+          "docs/decisions/typescript.md",
+          "缓存有效期"
+        ],
+        [
+          "docs/notes/typescript-pitfalls.md",
+          "旧接口"
+        ],
+        [
+          "docs/notes/typescript-pitfalls.md",
+          "规范化"
+        ],
+        [
+          "docs/decisions/typescript.md",
+          "缓存续期决策"
+        ],
+        [
+          "docs/notes/typescript-pitfalls.md",
+          "缓存续期经验"
+        ]
+      ],
+      "docs_only_sections": [
+        [
+          "docs/decisions/typescript.md",
+          "缓存续期决策"
+        ],
+        [
+          "docs/notes/typescript-pitfalls.md",
+          "缓存续期经验"
+        ],
+        [
+          "docs/notes/typescript-pitfalls.md",
+          "旧接口"
+        ],
+        [
+          "docs/notes/typescript-pitfalls.md",
+          "边界检查"
+        ],
+        [
+          "docs/decisions/typescript.md",
+          "缓存有效期"
+        ]
+      ],
+      "observed_symbols": [
+        "web/cache.ts#cacheTtl",
+        "web/cache.ts#legacyCache",
+        "web/cache.ts#normalizeKey"
+      ],
+      "mixed_sections": [
+        [
+          "docs/notes/typescript-pitfalls.md",
+          "边界检查"
+        ],
+        [
+          "docs/decisions/typescript.md",
+          "缓存有效期"
+        ],
+        [
+          "docs/notes/typescript-pitfalls.md",
+          "旧接口"
+        ],
+        [
+          "docs/notes/typescript-pitfalls.md",
+          "规范化"
+        ],
+        [
+          "docs/decisions/typescript.md",
+          "缓存续期决策"
+        ],
+        [
+          "docs/notes/typescript-pitfalls.md",
+          "缓存续期经验"
+        ]
+      ],
+      "mixed_symbols": [
+        "web/cache.ts#cacheTtl",
+        "web/cache.ts#legacyCache",
+        "web/cache.ts#normalizeKey"
+      ],
+      "section_top3": true,
+      "symbol_top3": true,
+      "score": 1.0
+    },
+    {
+      "id": "python-chinese",
+      "kind": "retrieval",
+      "status": "passed",
+      "required_steps": [
+        "W1",
+        "W2",
+        "W5"
+      ],
+      "observed_sections": [
+        [
+          "docs/notes/python-pitfalls.md",
+          "边界检查"
+        ],
+        [
+          "docs/decisions/python.md",
+          "重试退避"
+        ],
+        [
+          "docs/notes/python-pitfalls.md",
+          "旧接口"
+        ],
+        [
+          "docs/notes/python-pitfalls.md",
+          "规范化"
+        ],
+        [
+          "docs/decisions/python.md",
+          "队列重试决策"
+        ],
+        [
+          "docs/notes/python-pitfalls.md",
+          "队列重试经验"
+        ]
+      ],
+      "docs_only_sections": [
+        [
+          "docs/decisions/python.md",
+          "队列重试决策"
+        ],
+        [
+          "docs/notes/python-pitfalls.md",
+          "队列重试经验"
+        ],
+        [
+          "docs/notes/python-pitfalls.md",
+          "旧接口"
+        ],
+        [
+          "docs/notes/python-pitfalls.md",
+          "边界检查"
+        ],
+        [
+          "docs/decisions/python.md",
+          "重试退避"
+        ]
+      ],
+      "observed_symbols": [
+        "worker/retry.py#retry_delay",
+        "worker/retry.py#legacy_retry",
+        "worker/retry.py#normalize_queue"
+      ],
+      "mixed_sections": [
+        [
+          "docs/notes/python-pitfalls.md",
+          "边界检查"
+        ],
+        [
+          "docs/decisions/python.md",
+          "重试退避"
+        ],
+        [
+          "docs/notes/python-pitfalls.md",
+          "旧接口"
+        ],
+        [
+          "docs/notes/python-pitfalls.md",
+          "规范化"
+        ],
+        [
+          "docs/decisions/python.md",
+          "队列重试决策"
+        ],
+        [
+          "docs/notes/python-pitfalls.md",
+          "队列重试经验"
+        ]
+      ],
+      "mixed_symbols": [
+        "worker/retry.py#retry_delay",
+        "worker/retry.py#legacy_retry",
+        "worker/retry.py#normalize_queue"
+      ],
+      "section_top3": true,
+      "symbol_top3": true,
+      "score": 1.0
+    },
+    {
+      "id": "go-chinese",
+      "kind": "retrieval",
+      "status": "passed",
+      "required_steps": [
+        "W1",
+        "W2",
+        "W5"
+      ],
+      "observed_sections": [
+        [
+          "docs/notes/go-pitfalls.md",
+          "边界检查"
+        ],
+        [
+          "docs/decisions/go.md",
+          "请求限流"
+        ],
+        [
+          "docs/notes/go-pitfalls.md",
+          "旧接口"
+        ],
+        [
+          "docs/notes/go-pitfalls.md",
+          "规范化"
+        ],
+        [
+          "docs/decisions/go.md",
+          "网关限流决策"
+        ],
+        [
+          "docs/notes/go-pitfalls.md",
+          "网关限流经验"
+        ]
+      ],
+      "docs_only_sections": [
+        [
+          "docs/decisions/go.md",
+          "网关限流决策"
+        ],
+        [
+          "docs/notes/go-pitfalls.md",
+          "网关限流经验"
+        ],
+        [
+          "docs/notes/go-pitfalls.md",
+          "旧接口"
+        ],
+        [
+          "docs/notes/go-pitfalls.md",
+          "边界检查"
+        ],
+        [
+          "docs/decisions/go.md",
+          "请求限流"
+        ]
+      ],
+      "observed_symbols": [
+        "gateway/limit.go#limitRequests",
+        "gateway/limit.go#legacyLimit",
+        "gateway/limit.go#normalizeRoute"
+      ],
+      "mixed_sections": [
+        [
+          "docs/notes/go-pitfalls.md",
+          "边界检查"
+        ],
+        [
+          "docs/decisions/go.md",
+          "请求限流"
+        ],
+        [
+          "docs/notes/go-pitfalls.md",
+          "旧接口"
+        ],
+        [
+          "docs/notes/go-pitfalls.md",
+          "规范化"
+        ],
+        [
+          "docs/decisions/go.md",
+          "网关限流决策"
+        ],
+        [
+          "docs/notes/go-pitfalls.md",
+          "网关限流经验"
+        ]
+      ],
+      "mixed_symbols": [
+        "gateway/limit.go#limitRequests",
+        "gateway/limit.go#legacyLimit",
+        "gateway/limit.go#normalizeRoute"
+      ],
+      "section_top3": true,
+      "symbol_top3": true,
+      "score": 1.0
+    },
+    {
+      "id": "rust-identifier",
+      "kind": "retrieval",
+      "status": "passed",
+      "required_steps": [
+        "W1",
+        "W2",
+        "W5"
+      ],
+      "observed_sections": [
+        [
+          "docs/decisions/rust.md",
+          "刷新策略"
+        ],
+        [
+          "docs/notes/rust-pitfalls.md",
+          "边界检查"
+        ],
+        [
+          "docs/notes/rust-pitfalls.md",
+          "旧接口"
+        ],
+        [
+          "docs/notes/rust-pitfalls.md",
+          "规范化"
+        ]
+      ],
+      "docs_only_sections": [
+        [
+          "docs/decisions/rust.md",
+          "刷新策略"
+        ],
+        [
+          "docs/notes/rust-pitfalls.md",
+          "边界检查"
+        ],
+        [
+          "docs/notes/rust-pitfalls.md",
+          "旧接口"
+        ],
+        [
+          "docs/notes/rust-pitfalls.md",
+          "规范化"
+        ]
+      ],
+      "observed_symbols": [
+        "src/auth/refresh.rs#refresh_token"
+      ],
+      "mixed_sections": [
+        [
+          "docs/decisions/rust.md",
+          "刷新策略"
+        ],
+        [
+          "docs/notes/rust-pitfalls.md",
+          "边界检查"
+        ],
+        [
+          "docs/notes/rust-pitfalls.md",
+          "旧接口"
+        ],
+        [
+          "docs/notes/rust-pitfalls.md",
+          "规范化"
+        ]
+      ],
+      "mixed_symbols": [
+        "src/auth/refresh.rs#refresh_token",
+        "src/auth/normalize.rs#normalize_token"
+      ],
+      "section_top3": true,
+      "symbol_top3": true,
+      "score": 1.0
+    },
+    {
+      "id": "typescript-identifier",
+      "kind": "retrieval",
+      "status": "passed",
+      "required_steps": [
+        "W1",
+        "W2",
+        "W5"
+      ],
+      "observed_sections": [
+        [
+          "docs/decisions/typescript.md",
+          "缓存有效期"
+        ],
+        [
+          "docs/notes/typescript-pitfalls.md",
+          "边界检查"
+        ]
+      ],
+      "docs_only_sections": [
+        [
+          "docs/decisions/typescript.md",
+          "缓存有效期"
+        ],
+        [
+          "docs/notes/typescript-pitfalls.md",
+          "边界检查"
+        ]
+      ],
+      "observed_symbols": [
+        "web/cache.ts#cacheTtl"
+      ],
+      "mixed_sections": [
+        [
+          "docs/decisions/typescript.md",
+          "缓存有效期"
+        ],
+        [
+          "docs/notes/typescript-pitfalls.md",
+          "边界检查"
+        ]
+      ],
+      "mixed_symbols": [
+        "web/cache.ts#cacheTtl"
+      ],
+      "section_top3": true,
+      "symbol_top3": true,
+      "score": 1.0
+    },
+    {
+      "id": "python-identifier",
+      "kind": "retrieval",
+      "status": "passed",
+      "required_steps": [
+        "W1",
+        "W2",
+        "W5"
+      ],
+      "observed_sections": [
+        [
+          "docs/decisions/python.md",
+          "重试退避"
+        ],
+        [
+          "docs/notes/python-pitfalls.md",
+          "边界检查"
+        ],
+        [
+          "docs/notes/python-pitfalls.md",
+          "旧接口"
+        ],
+        [
+          "docs/notes/python-pitfalls.md",
+          "规范化"
+        ]
+      ],
+      "docs_only_sections": [
+        [
+          "docs/decisions/python.md",
+          "重试退避"
+        ],
+        [
+          "docs/notes/python-pitfalls.md",
+          "边界检查"
+        ],
+        [
+          "docs/notes/python-pitfalls.md",
+          "旧接口"
+        ],
+        [
+          "docs/notes/python-pitfalls.md",
+          "规范化"
+        ]
+      ],
+      "observed_symbols": [
+        "worker/retry.py#retry_delay"
+      ],
+      "mixed_sections": [
+        [
+          "docs/decisions/python.md",
+          "重试退避"
+        ],
+        [
+          "docs/notes/python-pitfalls.md",
+          "边界检查"
+        ],
+        [
+          "docs/notes/python-pitfalls.md",
+          "旧接口"
+        ],
+        [
+          "docs/notes/python-pitfalls.md",
+          "规范化"
+        ]
+      ],
+      "mixed_symbols": [
+        "worker/retry.py#retry_delay"
+      ],
+      "section_top3": true,
+      "symbol_top3": true,
+      "score": 1.0
+    },
+    {
+      "id": "go-identifier",
+      "kind": "retrieval",
+      "status": "passed",
+      "required_steps": [
+        "W1",
+        "W2",
+        "W5"
+      ],
+      "observed_sections": [
+        [
+          "docs/decisions/go.md",
+          "请求限流"
+        ],
+        [
+          "docs/notes/go-pitfalls.md",
+          "边界检查"
+        ]
+      ],
+      "docs_only_sections": [
+        [
+          "docs/decisions/go.md",
+          "请求限流"
+        ],
+        [
+          "docs/notes/go-pitfalls.md",
+          "边界检查"
+        ]
+      ],
+      "observed_symbols": [
+        "gateway/limit.go#limitRequests"
+      ],
+      "mixed_sections": [
+        [
+          "docs/decisions/go.md",
+          "请求限流"
+        ],
+        [
+          "docs/notes/go-pitfalls.md",
+          "边界检查"
+        ]
+      ],
+      "mixed_symbols": [
+        "gateway/limit.go#limitRequests"
+      ],
+      "section_top3": true,
+      "symbol_top3": true,
+      "score": 1.0
+    },
+    {
+      "id": "rust-logic",
+      "kind": "drift",
+      "status": "passed",
+      "required_steps": [
+        "W1",
+        "W2",
+        "W3"
+      ],
+      "expected_rule": "code-drift",
+      "observed_rules": [
+        "code-drift"
+      ]
+    },
+    {
+      "id": "typescript-logic",
+      "kind": "drift",
+      "status": "passed",
+      "required_steps": [
+        "W1",
+        "W2",
+        "W3"
+      ],
+      "expected_rule": "code-drift",
+      "observed_rules": [
+        "code-drift"
+      ]
+    },
+    {
+      "id": "python-logic",
+      "kind": "drift",
+      "status": "passed",
+      "required_steps": [
+        "W1",
+        "W2",
+        "W3"
+      ],
+      "expected_rule": "code-drift",
+      "observed_rules": [
+        "code-drift"
+      ]
+    },
+    {
+      "id": "go-logic",
+      "kind": "drift",
+      "status": "passed",
+      "required_steps": [
+        "W1",
+        "W2",
+        "W3"
+      ],
+      "expected_rule": "code-drift",
+      "observed_rules": [
+        "code-drift"
+      ]
+    },
+    {
+      "id": "rust-format",
+      "kind": "drift",
+      "status": "passed",
+      "required_steps": [
+        "W1",
+        "W2",
+        "W3"
+      ],
+      "expected_rule": null,
+      "observed_rules": []
+    },
+    {
+      "id": "typescript-format",
+      "kind": "drift",
+      "status": "passed",
+      "required_steps": [
+        "W1",
+        "W2",
+        "W3"
+      ],
+      "expected_rule": null,
+      "observed_rules": []
+    },
+    {
+      "id": "python-format",
+      "kind": "drift",
+      "status": "passed",
+      "required_steps": [
+        "W1",
+        "W2",
+        "W3"
+      ],
+      "expected_rule": null,
+      "observed_rules": []
+    },
+    {
+      "id": "go-format",
+      "kind": "drift",
+      "status": "passed",
+      "required_steps": [
+        "W1",
+        "W2",
+        "W3"
+      ],
+      "expected_rule": null,
+      "observed_rules": []
+    },
+    {
+      "id": "rust-moved",
+      "kind": "drift",
+      "status": "passed",
+      "required_steps": [
+        "W1",
+        "W2",
+        "W3"
+      ],
+      "expected_rule": "anchor-moved",
+      "observed_rules": [
+        "anchor-moved"
+      ]
+    },
+    {
+      "id": "typescript-moved",
+      "kind": "drift",
+      "status": "passed",
+      "required_steps": [
+        "W1",
+        "W2",
+        "W3"
+      ],
+      "expected_rule": "anchor-moved",
+      "observed_rules": [
+        "anchor-moved"
+      ]
+    },
+    {
+      "id": "python-moved",
+      "kind": "drift",
+      "status": "passed",
+      "required_steps": [
+        "W1",
+        "W2",
+        "W3"
+      ],
+      "expected_rule": "anchor-moved",
+      "observed_rules": [
+        "anchor-moved"
+      ]
+    },
+    {
+      "id": "go-moved",
+      "kind": "drift",
+      "status": "passed",
+      "required_steps": [
+        "W1",
+        "W2",
+        "W3"
+      ],
+      "expected_rule": "anchor-moved",
+      "observed_rules": [
+        "anchor-moved"
+      ]
+    },
+    {
+      "id": "rust-deleted",
+      "kind": "drift",
+      "status": "passed",
+      "required_steps": [
+        "W1",
+        "W2",
+        "W3"
+      ],
+      "expected_rule": "anchor-broken",
+      "observed_rules": [
+        "anchor-broken"
+      ]
+    },
+    {
+      "id": "typescript-deleted",
+      "kind": "drift",
+      "status": "passed",
+      "required_steps": [
+        "W1",
+        "W2",
+        "W3"
+      ],
+      "expected_rule": "anchor-broken",
+      "observed_rules": [
+        "anchor-broken"
+      ]
+    },
+    {
+      "id": "python-deleted",
+      "kind": "drift",
+      "status": "passed",
+      "required_steps": [
+        "W1",
+        "W2",
+        "W3"
+      ],
+      "expected_rule": "anchor-broken",
+      "observed_rules": [
+        "anchor-broken"
+      ]
+    },
+    {
+      "id": "go-deleted",
+      "kind": "drift",
+      "status": "passed",
+      "required_steps": [
+        "W1",
+        "W2",
+        "W3"
+      ],
+      "expected_rule": "anchor-broken",
+      "observed_rules": [
+        "anchor-broken"
+      ]
+    },
+    {
+      "id": "rust-reviewed",
+      "kind": "drift",
+      "status": "passed",
+      "required_steps": [
+        "W1",
+        "W2",
+        "W3"
+      ],
+      "expected_rule": null,
+      "observed_rules": []
+    },
+    {
+      "id": "typescript-reviewed",
+      "kind": "drift",
+      "status": "passed",
+      "required_steps": [
+        "W1",
+        "W2",
+        "W3"
+      ],
+      "expected_rule": null,
+      "observed_rules": []
+    },
+    {
+      "id": "python-reviewed",
+      "kind": "drift",
+      "status": "passed",
+      "required_steps": [
+        "W1",
+        "W2",
+        "W3"
+      ],
+      "expected_rule": null,
+      "observed_rules": []
+    },
+    {
+      "id": "go-reviewed",
+      "kind": "drift",
+      "status": "passed",
+      "required_steps": [
+        "W1",
+        "W2",
+        "W3"
+      ],
+      "expected_rule": null,
+      "observed_rules": []
+    },
+    {
+      "id": "rust-decision-pair",
+      "kind": "cochange",
+      "status": "passed",
+      "required_steps": [
+        "W4"
+      ],
+      "expected_paths": [
+        "src/auth/refresh.rs"
+      ],
+      "forbidden_paths": [
+        "web/cache.ts",
+        "worker/retry.py",
+        "gateway/limit.go",
+        "bulk/unrelated.rs"
+      ],
+      "observed_paths": [
+        "src/auth/refresh.rs"
+      ],
+      "matched": 1,
+      "expected": 1,
+      "score": 1.0
+    },
+    {
+      "id": "rust-notes-pair",
+      "kind": "cochange",
+      "status": "passed",
+      "required_steps": [
+        "W4"
+      ],
+      "expected_paths": [
+        "src/auth/refresh.rs"
+      ],
+      "forbidden_paths": [
+        "web/cache.ts",
+        "worker/retry.py",
+        "gateway/limit.go",
+        "bulk/unrelated.rs"
+      ],
+      "observed_paths": [
+        "src/auth/refresh.rs"
+      ],
+      "matched": 1,
+      "expected": 1,
+      "score": 1.0
+    },
+    {
+      "id": "typescript-decision-pair",
+      "kind": "cochange",
+      "status": "passed",
+      "required_steps": [
+        "W4"
+      ],
+      "expected_paths": [
+        "web/cache.ts"
+      ],
+      "forbidden_paths": [
+        "src/auth/refresh.rs",
+        "worker/retry.py",
+        "gateway/limit.go",
+        "bulk/unrelated.rs"
+      ],
+      "observed_paths": [
+        "web/cache.ts"
+      ],
+      "matched": 1,
+      "expected": 1,
+      "score": 1.0
+    },
+    {
+      "id": "typescript-notes-pair",
+      "kind": "cochange",
+      "status": "passed",
+      "required_steps": [
+        "W4"
+      ],
+      "expected_paths": [
+        "web/cache.ts"
+      ],
+      "forbidden_paths": [
+        "src/auth/refresh.rs",
+        "worker/retry.py",
+        "gateway/limit.go",
+        "bulk/unrelated.rs"
+      ],
+      "observed_paths": [
+        "web/cache.ts"
+      ],
+      "matched": 1,
+      "expected": 1,
+      "score": 1.0
+    },
+    {
+      "id": "python-decision-pair",
+      "kind": "cochange",
+      "status": "passed",
+      "required_steps": [
+        "W4"
+      ],
+      "expected_paths": [
+        "worker/retry.py"
+      ],
+      "forbidden_paths": [
+        "src/auth/refresh.rs",
+        "web/cache.ts",
+        "gateway/limit.go",
+        "bulk/unrelated.rs"
+      ],
+      "observed_paths": [
+        "worker/retry.py"
+      ],
+      "matched": 1,
+      "expected": 1,
+      "score": 1.0
+    },
+    {
+      "id": "python-notes-pair",
+      "kind": "cochange",
+      "status": "passed",
+      "required_steps": [
+        "W4"
+      ],
+      "expected_paths": [
+        "worker/retry.py"
+      ],
+      "forbidden_paths": [
+        "src/auth/refresh.rs",
+        "web/cache.ts",
+        "gateway/limit.go",
+        "bulk/unrelated.rs"
+      ],
+      "observed_paths": [
+        "worker/retry.py"
+      ],
+      "matched": 1,
+      "expected": 1,
+      "score": 1.0
+    },
+    {
+      "id": "go-decision-pair",
+      "kind": "cochange",
+      "status": "passed",
+      "required_steps": [
+        "W4"
+      ],
+      "expected_paths": [
+        "gateway/limit.go"
+      ],
+      "forbidden_paths": [
+        "src/auth/refresh.rs",
+        "web/cache.ts",
+        "worker/retry.py",
+        "bulk/unrelated.rs"
+      ],
+      "observed_paths": [
+        "gateway/limit.go"
+      ],
+      "matched": 1,
+      "expected": 1,
+      "score": 1.0
+    },
+    {
+      "id": "go-notes-pair",
+      "kind": "cochange",
+      "status": "passed",
+      "required_steps": [
+        "W4"
+      ],
+      "expected_paths": [
+        "gateway/limit.go"
+      ],
+      "forbidden_paths": [
+        "src/auth/refresh.rs",
+        "web/cache.ts",
+        "worker/retry.py",
+        "bulk/unrelated.rs"
+      ],
+      "observed_paths": [
+        "gateway/limit.go"
+      ],
+      "matched": 1,
+      "expected": 1,
+      "score": 1.0
+    },
+    {
+      "id": "bulk-pair-is-excluded",
+      "kind": "cochange",
+      "status": "passed",
+      "required_steps": [
+        "W4"
+      ],
+      "expected_paths": [],
+      "forbidden_paths": [
+        "bulk/unrelated.rs",
+        "src/auth/refresh.rs",
+        "web/cache.ts",
+        "worker/retry.py",
+        "gateway/limit.go"
+      ],
+      "observed_paths": [],
+      "matched": 0,
+      "expected": 0,
+      "score": 1.0
+    }
+  ],
+  "cochange_coverage": 1.0,
+  "cochange_metrics": {
+    "cases": 9,
+    "known_pairs": 8,
+    "top8_hits": 8,
+    "top8_rate": 1.0
+  },
+  "drift_metrics": {
+    "cases": 20,
+    "true_positives": 12,
+    "false_positives": 0,
+    "false_negatives": 0,
+    "precision": 1.0,
+    "format_cases": 4,
+    "format_false_positives": 0,
+    "all_anchors": {
+      "true_positives": 64,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "precision": 1.0
+    }
+  },
+  "retrieval_metrics": {
+    "queries": 8,
+    "section_top3_hits": 8,
+    "section_top3_rate": 1.0,
+    "symbol_top3_hits": 8,
+    "symbol_top3_rate": 1.0,
+    "chinese_queries": 4,
+    "chinese_symbol_top3_hits": 4,
+    "chinese_symbol_top3_rate": 1.0
+  }
+}

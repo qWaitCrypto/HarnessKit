@@ -549,6 +549,10 @@ fn test_file_symbols_are_downweighted_in_both_query_modes_but_stay_searchable() 
             "/// Rankingneedle\nfn testonlyneedle() {}\n",
         ),
         (
+            "src/tests.rs",
+            "/// Rankingneedle\nfn testonlyneedle() {}\n",
+        ),
+        (
             "src/test_engine.py",
             "def testonlyneedle():\n    \"\"\"Rankingneedle\"\"\"\n    pass\n",
         ),
@@ -678,4 +682,19 @@ fn directory_edges_do_not_borrow_symbol_matches_bridged_from_another_chapter() {
     assert_eq!(related[0]["edge"]["evidence"]["anchor"], "tests/");
     assert_eq!(related[0]["edge"]["evidence"]["section"], "Localchapter");
     assert!(related[0]["additional_symbols"].is_null());
+}
+
+#[test]
+fn merged_chapters_keep_all_signatures_when_related_files_share_the_first_symbol() {
+    let repo = TestRepo::new(None);
+    write(
+        &repo,
+        "tests/symbols.rs",
+        "pub fn alpha() {}\npub fn beta() {}\npub fn gamma() {}\n",
+    );
+    write(&repo, "docs/chaptermerge.md", "# Chaptermerge\n\nOverview of the contract.\n\n## First\n\nChaptermerge covers `tests/symbols.rs#alpha` and `tests/symbols.rs#beta`.\n\n## Second\n\nChaptermerge also covers `tests/symbols.rs#alpha` and `tests/symbols.rs#gamma`.\n");
+    let output = repo.run(&["query", "chaptermerge", "--expand", "1"]);
+    for signature in ["pub fn alpha()", "pub fn beta()", "pub fn gamma()"] {
+        assert!(output.contains(signature), "{signature}: {output}");
+    }
 }

@@ -1,1 +1,5 @@
-Context --for
+Context --for src/auth/refresh.rs:
+- docs/decisions/rust.md §刷新策略 :: `refresh_token` 在输入值上增加 60。
+- docs/notes/rust-pitfalls.md §旧接口 :: `legacy_token` 将被删除。
+-  §规范化 :: `normalize_token` 保持独立，移动时保持逻辑。
+-  §边界检查 :: `refresh_token` 需要覆盖边界值。

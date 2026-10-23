@@ -1,1 +1,3 @@
 Current context:
+Entrypoints: - AGENTS.md :: Agent context — Read the command reference before changing retrieval behavior; check the current project constraints and validate the resulting command output.
+Project map: - docs/project.md :: Project context — Context retrieval connects documentation to implementation, preserves established document ranking, and presents actionable evidence within a bounded output budget.

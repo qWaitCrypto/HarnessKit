@@ -14,7 +14,64 @@ use crate::Result;
 
 pub(crate) const BRIDGE_THRESHOLD: f64 = 0.2;
 
+#[derive(serde::Serialize, serde::Deserialize)]
+struct CardInputs {
+    sources: BTreeMap<String, (String, String)>,
+    bridges: String,
+}
+
 pub(crate) fn refresh_cards(db: &SqliteConnection, root: &Path) -> Result<()> {
+    let sources = db
+        .query(
+            "SELECT path, kind, content_hash FROM file_states ORDER BY path",
+            [],
+        )?
+        .rows
+        .iter()
+        .map(|row| {
+            (
+                cell(row, 0).to_string(),
+                (cell(row, 1).to_string(), cell(row, 2).to_string()),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let bridge_rows = db.query("SELECT e.src, e.dst FROM edges e JOIN nodes s ON s.id = e.src JOIN nodes t ON t.id = e.dst
+        WHERE s.kind IN ('doc', 'section') AND t.kind IN ('file', 'symbol')
+        AND (e.confidence = 'EXTRACTED' OR (e.kind = 'cochange' AND e.weight >= ?1)) ORDER BY e.src, e.dst", [BRIDGE_THRESHOLD])?;
+    let inputs = CardInputs {
+        sources,
+        bridges: blake3::hash(&serde_json::to_vec(&bridge_rows.rows)?)
+            .to_hex()
+            .to_string(),
+    };
+    let previous = crate::index::meta_value(db, "card_inputs")?
+        .and_then(|text| serde_json::from_str::<CardInputs>(&text).ok());
+    if let Some(previous) = previous.filter(|previous| {
+        previous.bridges == inputs.bridges
+            && previous
+                .sources
+                .iter()
+                .filter(|(_, (kind, _))| kind == "doc")
+                .eq(inputs.sources.iter().filter(|(_, (kind, _))| kind == "doc"))
+    }) {
+        let changed = previous
+            .sources
+            .keys()
+            .chain(inputs.sources.keys())
+            .filter(|path| previous.sources.get(*path) != inputs.sources.get(*path))
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        db.transaction(|db| {
+            for path in changed {
+                refresh_native_file(db, &path)?;
+            }
+            db.execute(
+                "INSERT OR REPLACE INTO meta(key, value) VALUES ('card_inputs', ?1)",
+                [serde_json::to_string(&inputs)?],
+            )
+        })?;
+        return Ok(());
+    }
     let code = db.query(
         "SELECT id, kind, path, name, signature, doc_comment FROM nodes
          WHERE kind IN ('file', 'symbol') ORDER BY id;",
@@ -96,9 +153,28 @@ pub(crate) fn refresh_cards(db: &SqliteConnection, root: &Path) -> Result<()> {
         );
     }
     db.transaction(|db| {
-        sync_cards(db, "doc_sections", &SECTION_INDEX, &sections)?;
-        sync_cards(db, "code_cards", &CODE_INDEX, &cards)
+        sync_cards(db, "doc_sections", &SECTION_INDEX, &sections, None)?;
+        sync_cards(db, "code_cards", &CODE_INDEX, &cards, None)?;
+        db.execute(
+            "INSERT OR REPLACE INTO meta(key, value) VALUES ('card_inputs', ?1)",
+            [serde_json::to_string(&inputs)?],
+        )
     })
+}
+
+fn refresh_native_file(db: &SqliteConnection, path: &str) -> Result<()> {
+    let prefix = format!("symbol:{path}#");
+    let previous = db.query("SELECT node_id, bridged FROM code_cards WHERE node_id = ?1 OR (node_id >= ?2 AND node_id < ?3)",
+        params![format!("file:{path}"), prefix, format!("{prefix}\u{10ffff}")])?.rows.iter()
+        .map(|row| (cell(row, 0).to_string(), cell(row, 1).to_string())).collect::<BTreeMap<_, _>>();
+    let mut cards = BTreeMap::new();
+    for row in db.query("SELECT id, kind, name, signature, doc_comment FROM nodes WHERE path = ?1 AND kind IN ('file', 'symbol') ORDER BY id", [path])?.rows {
+        let id = cell(&row, 0);
+        let name = if cell(&row, 1) == "file" { Path::new(path).file_name().and_then(|name| name.to_str()).unwrap_or(path) } else { cell(&row, 2) };
+        let bridged = previous.get(id).or_else(|| previous.get(&format!("file:{path}"))).cloned().unwrap_or_default();
+        cards.insert(id.to_string(), vec![id.to_string(), name.to_string(), split_identifier(name), format!("{} {}", path, split_identifier(path)), cell(&row, 3).to_string(), cell(&row, 4).to_string(), bridged]);
+    }
+    sync_cards(db, "code_cards", &CODE_INDEX, &cards, Some(path))
 }
 
 fn bridge_text(card: &[String]) -> String {
@@ -188,6 +264,7 @@ fn sync_cards(
     table: &str,
     index: &SearchIndex,
     next: &BTreeMap<String, Vec<String>>,
+    path: Option<&str>,
 ) -> Result<()> {
     let columns = index
         .fields
@@ -195,11 +272,17 @@ fn sync_cards(
         .map(|(name, _)| *name)
         .collect::<Vec<_>>()
         .join(", ");
-    let previous = db
-        .query(
-            &format!("SELECT {columns} FROM {table} ORDER BY node_id;"),
+    let rows = if let Some(path) = path {
+        let prefix = format!("symbol:{path}#");
+        db.query(&format!("SELECT {columns} FROM {table} WHERE node_id = ?1 OR (node_id >= ?2 AND node_id < ?3) ORDER BY node_id"),
+            params![format!("file:{path}"), prefix, format!("{prefix}\u{10ffff}")])?
+    } else {
+        db.query(
+            &format!("SELECT {columns} FROM {table} ORDER BY node_id"),
             [],
         )?
+    };
+    let previous = rows
         .rows
         .into_iter()
         .map(|row| {

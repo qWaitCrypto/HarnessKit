@@ -80,8 +80,8 @@ pub(crate) fn run_hook_post_edit(path_arg: Option<&str>) -> Result<()> {
     for entry in lock.iter().filter(|entry| entry_affects_path(entry, &context.path)) {
         if anchor_drifted(entry, &regions) {
             messages.push(limit_hook_line(&format!(
-                "Anchor drift: {} `{}`; update the document or run `harnesskit check --ack {}`.",
-                entry.doc, entry.anchor, entry.doc
+                "Anchor drift: code changed since review; update the document or confirm unchanged requirements with `harnesskit check --ack {}`.",
+                entry.doc
             )));
             break;
         }
@@ -94,7 +94,7 @@ fn hook_constraints(db: &SqliteConnection, path: &str) -> Result<Vec<String>> {
     let rows = db.query(
         "SELECT e.src, e.kind, e.weight, e.evidence_json, n.path, n.name,
                 COALESCE(d.role, ''), COALESCE(d.status, ''),
-                COALESCE(d.summary, ''), COALESCE(section.body, '')
+                COALESCE(d.summary, ''), COALESCE(section.body, ''), n.signature
          FROM edges e JOIN nodes n ON n.id = e.dst
          LEFT JOIN docs d ON d.path = json_extract(e.evidence_json, '$.doc')
          LEFT JOIN doc_sections section ON section.node_id = e.src
@@ -121,7 +121,8 @@ fn hook_constraints(db: &SqliteConnection, path: &str) -> Result<Vec<String>> {
             3
         };
         let section = evidence["section"].as_str().unwrap_or_default();
-        let snippet = hook_kwic(cell(row, 9), cell(row, 8));
+        let snippet = crate::render::local_anchor_names(&hook_kwic(cell(row, 9), cell(row, 8)), path);
+        let snippet = if cell(row, 10).is_empty() { snippet } else { format!("{}; {}", snippet, cell(row, 10)) };
         let prefix = if constraint { "Constraint:" } else { "Related ~:" };
         let line = if section.is_empty() {
             format!("{prefix} {doc}: {snippet}")

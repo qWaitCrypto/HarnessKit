@@ -679,6 +679,16 @@ fn refresh_mentions(db: &SqliteConnection) -> Result<()> {
             ))
         })
         .collect::<BTreeSet<_>>();
+    if spans.rows.iter().all(|row| {
+        !is_identifier(cell(row, 5).trim())
+            || anchor_spans.contains(&(
+                cell(row, 0).to_string(),
+                cell(row, 3).parse().unwrap_or(0),
+                cell(row, 4).parse().unwrap_or(0),
+            ))
+    }) {
+        return db.exec("DELETE FROM edges WHERE kind = 'mention' AND confidence = 'INFERRED'");
+    }
     let symbols = db.query(
         "SELECT id, path, name FROM nodes WHERE kind = 'symbol' AND is_definition = 1
          ORDER BY path, name, id;",

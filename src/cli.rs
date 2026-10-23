@@ -1038,7 +1038,7 @@ fn run_context(args: &ContextArgs) -> Result<()> {
                 revision,
                 &locks_before_index,
             )?;
-            hints.push("Drift prediction uses the knowledge.lock captured before the refresh; co-edited docs are resealed by W3.".to_string());
+            hints.push("Drift prediction uses the saved anchor fingerprints; editing the document alongside its code automatically confirms the updated anchor.".to_string());
             if target.options.json {
                 let next_cursor = (!packet.truncated.is_empty())
                     .then(|| crate::render::cursor_for_offset(1, "context"));

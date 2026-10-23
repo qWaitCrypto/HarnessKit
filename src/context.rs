@@ -11,7 +11,7 @@ pub(crate) use lifecycle::{
     build_current_context, build_handoff_context, ContextDoc, CurrentContext, HandoffContext,
 };
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use crate::index::{cell, DocRelation};
@@ -26,6 +26,7 @@ pub(crate) struct ContextPacket {
     pub(crate) collection_siblings: Vec<String>,
     pub(crate) same_scope_docs: Vec<String>,
     pub(crate) recommended_reading_order: Vec<String>,
+    pub(crate) related_text: BTreeMap<String, String>,
 }
 
 pub(crate) fn doc_exists(db: &SqliteConnection, doc_path: &str) -> Result<bool> {
@@ -79,6 +80,26 @@ pub(crate) fn context_packet_for_doc(
         &same_scope_docs,
     );
 
+    let mut related_text = BTreeMap::new();
+    for relation in incoming.iter().chain(&outgoing) {
+        for path in [&relation.src_path, &relation.dst_path] {
+            if related_text.contains_key(path) {
+                continue;
+            }
+            let rows = db.query("SELECT title, summary FROM docs WHERE path = ?1", [path])?;
+            if let Some(row) = rows.rows.first() {
+                related_text.insert(
+                    path.clone(),
+                    if cell(row, 1).is_empty() {
+                        cell(row, 0)
+                    } else {
+                        cell(row, 1)
+                    }
+                    .to_string(),
+                );
+            }
+        }
+    }
     Ok(ContextPacket {
         anchor,
         incoming,
@@ -86,6 +107,7 @@ pub(crate) fn context_packet_for_doc(
         collection_siblings,
         same_scope_docs,
         recommended_reading_order,
+        related_text,
     })
 }
 

@@ -1,1 +1,2 @@
-Context --diff
+Context --diff HEAD + working tree: Changed code: 0 files, 0 regions (covered 0, uncovered 0)
+Hint: Drift prediction uses the saved anchor fingerprints; editing the document alongside its code automatically confirms the updated anchor.

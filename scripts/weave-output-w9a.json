@@ -1,0 +1,228 @@
+{
+  "cases": [
+    {
+      "name": "query-rust-chinese",
+      "kind": "query",
+      "snapshot": "query-rust-chinese.snap",
+      "lines": 5,
+      "signal_lines": 5,
+      "signal_density": 1.0,
+      "metadata_chars": 120,
+      "total_chars": 513,
+      "metadata_share": 0.23391812865497075
+    },
+    {
+      "name": "query-rust-symbol",
+      "kind": "query",
+      "snapshot": "query-rust-symbol.snap",
+      "lines": 3,
+      "signal_lines": 3,
+      "signal_density": 1.0,
+      "metadata_chars": 71,
+      "total_chars": 351,
+      "metadata_share": 0.2022792022792023
+    },
+    {
+      "name": "query-typescript-chinese",
+      "kind": "query",
+      "snapshot": "query-typescript-chinese.snap",
+      "lines": 5,
+      "signal_lines": 5,
+      "signal_density": 1.0,
+      "metadata_chars": 137,
+      "total_chars": 501,
+      "metadata_share": 0.27345309381237526
+    },
+    {
+      "name": "query-python-chinese",
+      "kind": "query",
+      "snapshot": "query-python-chinese.snap",
+      "lines": 5,
+      "signal_lines": 5,
+      "signal_density": 1.0,
+      "metadata_chars": 124,
+      "total_chars": 496,
+      "metadata_share": 0.25
+    },
+    {
+      "name": "context-file",
+      "kind": "context",
+      "snapshot": "context-file.snap",
+      "lines": 5,
+      "signal_lines": 4,
+      "signal_density": 0.8,
+      "metadata_chars": 69,
+      "total_chars": 231,
+      "metadata_share": 0.2987012987012987
+    },
+    {
+      "name": "context-symbol",
+      "kind": "context",
+      "snapshot": "context-symbol.snap",
+      "lines": 3,
+      "signal_lines": 3,
+      "signal_density": 1.0,
+      "metadata_chars": 49,
+      "total_chars": 152,
+      "metadata_share": 0.3223684210526316
+    },
+    {
+      "name": "context-diff",
+      "kind": "context",
+      "snapshot": "context-diff.snap",
+      "lines": 2,
+      "signal_lines": 2,
+      "signal_density": 1.0,
+      "metadata_chars": 0,
+      "total_chars": 234,
+      "metadata_share": 0.0
+    },
+    {
+      "name": "context-current",
+      "kind": "context",
+      "snapshot": "context-current.snap",
+      "lines": 3,
+      "signal_lines": 3,
+      "signal_density": 1.0,
+      "metadata_chars": 24,
+      "total_chars": 419,
+      "metadata_share": 0.057279236276849645
+    },
+    {
+      "name": "context-document",
+      "kind": "context",
+      "snapshot": "context-document.snap",
+      "lines": 5,
+      "signal_lines": 4,
+      "signal_density": 0.8,
+      "metadata_chars": 71,
+      "total_chars": 400,
+      "metadata_share": 0.1775
+    },
+    {
+      "name": "check-anchors",
+      "kind": "check",
+      "snapshot": "check-anchors.snap",
+      "lines": 3,
+      "signal_lines": 3,
+      "signal_density": 1.0,
+      "metadata_chars": 3,
+      "total_chars": 301,
+      "metadata_share": 0.009966777408637873
+    },
+    {
+      "name": "query-go-chinese",
+      "kind": "query",
+      "snapshot": "query-go-chinese.snap",
+      "lines": 5,
+      "signal_lines": 5,
+      "signal_density": 1.0,
+      "metadata_chars": 109,
+      "total_chars": 476,
+      "metadata_share": 0.22899159663865545
+    },
+    {
+      "name": "query-go-symbol",
+      "kind": "query",
+      "snapshot": "query-go-symbol.snap",
+      "lines": 3,
+      "signal_lines": 3,
+      "signal_density": 1.0,
+      "metadata_chars": 64,
+      "total_chars": 215,
+      "metadata_share": 0.29767441860465116
+    },
+    {
+      "name": "query-typescript-symbol",
+      "kind": "query",
+      "snapshot": "query-typescript-symbol.snap",
+      "lines": 3,
+      "signal_lines": 3,
+      "signal_density": 1.0,
+      "metadata_chars": 76,
+      "total_chars": 218,
+      "metadata_share": 0.3486238532110092
+    },
+    {
+      "name": "query-python-symbol",
+      "kind": "query",
+      "snapshot": "query-python-symbol.snap",
+      "lines": 6,
+      "signal_lines": 6,
+      "signal_density": 1.0,
+      "metadata_chars": 145,
+      "total_chars": 479,
+      "metadata_share": 0.302713987473904
+    },
+    {
+      "name": "query-rust-english",
+      "kind": "query",
+      "snapshot": "query-rust-english.snap",
+      "lines": 5,
+      "signal_lines": 5,
+      "signal_density": 1.0,
+      "metadata_chars": 151,
+      "total_chars": 468,
+      "metadata_share": 0.32264957264957267
+    },
+    {
+      "name": "query-rust-chinese-code",
+      "kind": "query",
+      "snapshot": "query-rust-chinese-code.snap",
+      "lines": 1,
+      "signal_lines": 1,
+      "signal_density": 1.0,
+      "metadata_chars": 20,
+      "total_chars": 199,
+      "metadata_share": 0.10050251256281408
+    },
+    {
+      "name": "hook-pre-edit",
+      "kind": "hook",
+      "snapshot": "hook-pre-edit.snap",
+      "lines": 2,
+      "signal_lines": 2,
+      "signal_density": 1.0,
+      "metadata_chars": 49,
+      "total_chars": 209,
+      "metadata_share": 0.23444976076555024
+    },
+    {
+      "name": "context-diff-changed",
+      "kind": "context",
+      "snapshot": "context-diff-changed.snap",
+      "lines": 7,
+      "signal_lines": 6,
+      "signal_density": 0.8571428571428571,
+      "metadata_chars": 148,
+      "total_chars": 667,
+      "metadata_share": 0.22188905547226387
+    },
+    {
+      "name": "check-drift",
+      "kind": "check",
+      "snapshot": "check-drift.snap",
+      "lines": 5,
+      "signal_lines": 5,
+      "signal_density": 1.0,
+      "metadata_chars": 179,
+      "total_chars": 672,
+      "metadata_share": 0.2663690476190476
+    },
+    {
+      "name": "hook-post-edit",
+      "kind": "hook",
+      "snapshot": "hook-post-edit.snap",
+      "lines": 1,
+      "signal_lines": 1,
+      "signal_density": 1.0,
+      "metadata_chars": 22,
+      "total_chars": 148,
+      "metadata_share": 0.14864864864864866
+    }
+  ],
+  "snapshots": 20,
+  "query_snapshots": 10,
+  "min_signal_density": 0.8,
+  "max_metadata_share": 0.3486238532110092
+}

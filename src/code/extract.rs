@@ -56,6 +56,7 @@ impl Extractor {
             fingerprint: blake3::hash(text.as_bytes()).to_hex()[..12].to_string(),
             lang: lang.clone(),
             is_definition: false,
+            is_test: false,
             signature: String::new(),
             doc_comment: String::new(),
         };
@@ -118,9 +119,44 @@ impl Extractor {
                 },
                 signature: signature(definition, text),
                 doc_comment: doc_comment(definition, text, &lang),
+                is_test: lang == "rust" && rust_test_definition(definition, text),
             });
         }
         Ok(nodes)
+    }
+}
+
+fn rust_test_definition(mut node: Node<'_>, text: &str) -> bool {
+    loop {
+        if node.kind() == "mod_item"
+            && node
+                .child_by_field_name("name")
+                .map(|name| matches!(&text[name.byte_range()], "tests" | "test"))
+                .unwrap_or(false)
+        {
+            return true;
+        }
+        let mut previous = node.prev_named_sibling();
+        while let Some(attribute) = previous {
+            if attribute.kind().contains("comment") {
+                previous = attribute.prev_named_sibling();
+                continue;
+            }
+            if attribute.kind() != "attribute_item" {
+                break;
+            }
+            let value = text[attribute.byte_range()]
+                .split_whitespace()
+                .collect::<String>();
+            if value == "#[test]" || value == "#[cfg(test)]" || value.ends_with("::test]") {
+                return true;
+            }
+            previous = attribute.prev_named_sibling();
+        }
+        let Some(parent) = node.parent() else {
+            return false;
+        };
+        node = parent;
     }
 }
 

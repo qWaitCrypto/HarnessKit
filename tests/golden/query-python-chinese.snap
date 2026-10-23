@@ -1,1 +1,5 @@
-1.
+1. symbol worker/retry.py: legacy_retry, retry_delay, normalize_queue — def retry_delay(attempt: int) -> int:; def legacy_retry() -> int:; def normalize_queue(queue: str) -> str:
+   ↳ notes docs/notes/python-pitfalls.md §边界检查; 旧接口; 规范化: `retry_delay` 需要覆盖边界值。 `legacy_retry` 将被删除。 `normalize_queue` 保持独立，移动时保持逻辑。
+   ↳ decisions docs/decisions/python.md §重试退避: `retry_delay` 在输入值上增加 60。
+2. decisions docs/decisions/python.md §队列重试决策 — # «队列重试»决策
+3. notes docs/notes/python-pitfalls.md §队列重试经验 — # «队列重试»经验

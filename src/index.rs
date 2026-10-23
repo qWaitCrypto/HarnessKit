@@ -1,3 +1,5 @@
+mod inputs;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -301,6 +303,13 @@ fn refresh_fact_store_with_knowledge(context: &EngineContext, persist: bool) -> 
         {
             drop(db);
             rebuild_fact_store_full(context)?;
+        } else if persist
+            && meta_value(&db, "refresh_inputs")?
+                .filter(|value| !value.is_empty())
+                .as_deref()
+                == Some(&inputs::fingerprint(context, &db)?)
+        {
+            return Ok(());
         }
     }
     refresh_doc_facts(context)?;
@@ -419,6 +428,12 @@ fn refresh_fact_store_with_knowledge(context: &EngineContext, persist: bool) -> 
         "INSERT OR REPLACE INTO meta(key, value) VALUES ('schema_fingerprint', ?1);",
         [&schema_fingerprint],
     )?;
+    if persist {
+        db.execute(
+            "INSERT OR REPLACE INTO meta(key, value) VALUES ('refresh_inputs', ?1)",
+            [inputs::fingerprint(context, &db)?],
+        )?;
+    }
     Ok(())
 }
 
@@ -445,8 +460,8 @@ fn refresh_doc_facts(context: &EngineContext) -> Result<()> {
         && delta.changed_paths.is_empty()
         && delta.removed_paths.is_empty()
     {
-        if history_or_host_git_state_changed(context, &db)? {
-            refresh_fact_store_metadata(context, &db, "metadata")?;
+        if let Some((history, git)) = history_or_host_git_state_changed(context, &db)? {
+            refresh_fact_store_metadata(context, &db, "metadata", &history, &git)?;
         }
         return Ok(());
     }
@@ -458,7 +473,7 @@ fn refresh_doc_facts(context: &EngineContext) -> Result<()> {
 fn history_or_host_git_state_changed(
     context: &EngineContext,
     db: &SqliteConnection,
-) -> Result<bool> {
+) -> Result<Option<(HistoryStatus, HostGitInfo)>> {
     let history_status =
         compute_history_status(&context.target_dir, &context.schema).unwrap_or_default();
     let host_git = host_git_info(&context.target_dir, HostGitMode::Full);
@@ -480,8 +495,11 @@ fn history_or_host_git_state_changed(
             "history_tracked_files_count",
             history_status.tracked_files_count.to_string(),
         ),
-        ("host_git_head", host_git.head.unwrap_or_default()),
-        ("host_git_branch", host_git.branch.unwrap_or_default()),
+        ("host_git_head", host_git.head.clone().unwrap_or_default()),
+        (
+            "host_git_branch",
+            host_git.branch.clone().unwrap_or_default(),
+        ),
         (
             "host_git_dirty",
             git_dirty_label(host_git.dirty).to_string(),
@@ -489,24 +507,24 @@ fn history_or_host_git_state_changed(
     ];
     for (key, value) in current {
         if meta_value(db, key)?.unwrap_or_default() != value {
-            return Ok(true);
+            return Ok(Some((history_status, host_git)));
         }
     }
-    Ok(false)
+    Ok(None)
 }
 
 fn refresh_fact_store_metadata(
     context: &EngineContext,
     db: &SqliteConnection,
     mode: &str,
+    history_status: &HistoryStatus,
+    host_git: &HostGitInfo,
 ) -> Result<()> {
     let artifact = read_index_artifact_from_fact_store(db)?;
     let repo_root = context
         .target_dir
         .canonicalize()
         .unwrap_or_else(|_| context.target_dir.clone());
-    let history_status = compute_history_status(&repo_root, &context.schema).unwrap_or_default();
-    let host_git = host_git_info(&repo_root, HostGitMode::Full);
     let checks = build_index_checks(
         &context.schema,
         &repo_root,
@@ -520,8 +538,8 @@ fn refresh_fact_store_metadata(
         now_unix(),
         mode,
         &FactStoreDelta::default(),
-        &history_status,
-        &host_git,
+        history_status,
+        host_git,
         &checks,
     )
 }
@@ -534,6 +552,16 @@ fn rebuild_fact_store_full(context: &EngineContext) -> Result<()> {
 }
 
 fn fact_store_is_compatible(db: &SqliteConnection) -> Result<bool> {
+    // Derived stores from before test-symbol classification are rebuilt;
+    // repository schemas and durable history formats remain unchanged.
+    if !db
+        .query("PRAGMA table_info(nodes);", [])?
+        .rows
+        .iter()
+        .any(|row| cell(row, 1) == "is_test")
+    {
+        return Ok(false);
+    }
     let required_tables = [
         "meta",
         "docs",
@@ -873,6 +901,7 @@ fn initialize_fact_store(db: &SqliteConnection) -> Result<()> {
             fingerprint TEXT NOT NULL,
             lang TEXT NOT NULL,
             is_definition INTEGER NOT NULL DEFAULT 0,
+            is_test INTEGER NOT NULL DEFAULT 0,
             signature TEXT NOT NULL DEFAULT '',
             doc_comment TEXT NOT NULL DEFAULT ''
          ) WITHOUT ROWID;
@@ -1300,6 +1329,9 @@ fn replace_checks_and_meta(
         "cochange_scan_mode",
         "cochange_scope",
         "cochange_accepted_commits",
+        "card_inputs",
+        "anchor_inputs",
+        "anchor_checks",
     ] {
         if let Some(value) = meta_value(db, key)? {
             preserved_weave_meta.push((key, value));

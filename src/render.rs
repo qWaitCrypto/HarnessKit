@@ -1,21 +1,21 @@
-mod code_context;
 pub(crate) mod cache;
+mod code_context;
 mod contract;
 mod json;
 
 pub(crate) use code_context::{print_code_context_with_options, print_diff_context_with_options};
 pub(crate) use contract::{
     compact, cursor_for_offset, cursor_offset, edge_badge, freshness_badge, highlight,
-    kwic_excerpt, merge_names, paginate_lines, short_hint, RenderLine, RenderOptions,
-    RenderedPage, token_cost,
+    kwic_excerpt, local_anchor_names, merge_names, paginate_lines, short_hint, token_cost,
+    RenderLine, RenderOptions, RenderedPage,
 };
 
 #[allow(unused_imports)]
 pub(crate) use json::{
     render_check_json, render_check_json_page, render_context_packet_json,
-    render_context_packet_json_page, render_covered_json, render_covered_json_page, render_doctor_json,
-    render_history_snapshot_json, render_index_json, render_query_json, render_query_json_page,
-    serialize_evidence, serialize_inline,
+    render_context_packet_json_page, render_covered_json, render_covered_json_page,
+    render_doctor_json, render_history_snapshot_json, render_index_json, render_query_json,
+    render_query_json_page, serialize_evidence, serialize_inline,
 };
 
 use std::collections::BTreeMap;
@@ -640,10 +640,7 @@ pub(crate) fn print_query_bundles_with_options(
             .next()
             .unwrap_or("");
         let badge = if badge.is_empty() {
-            primary_issue
-                .is_empty()
-                .then_some("")
-                .unwrap_or("")
+            primary_issue.is_empty().then_some("").unwrap_or("")
         } else {
             badge
         };
@@ -655,38 +652,47 @@ pub(crate) fn print_query_bundles_with_options(
             format!(" {badge} {primary_issue}")
         };
         let label = bundle_node_label(node);
-        lines.push(RenderLine::content(if suffix.is_empty() {
-            format!("{}. {}", index + 1, label)
-        } else {
-            format!("{}. {} [{}]", index + 1, label, suffix.trim())
-        }));
         let detail = if node.kind == "section" || node.kind == "doc" {
             kwic_for_doc(
                 target_dir,
                 &node.path,
                 query,
-                (!node.heading.is_empty())
-                    .then(|| node.heading.split("; ").next().unwrap_or(node.heading.as_str())),
+                (!node.heading.is_empty()).then(|| {
+                    node.heading
+                        .split("; ")
+                        .next()
+                        .unwrap_or(node.heading.as_str())
+                }),
             )
         } else if !node.signature.is_empty() {
-            highlight(&node.signature, query)
+            kwic_excerpt(&node.signature, query, &node.name, 160)
         } else {
             kwic_excerpt(&node.summary, query, &node.name, 160)
         };
-        if !detail.is_empty() {
-            lines.push(RenderLine::content(format!("   {}", compact(&detail, 160))));
+        let suffix = if suffix.is_empty() {
+            suffix
         } else {
-            lines.push(RenderLine::content(format!(
-                "   {}",
-                kwic_excerpt(&node.summary, query, &node.name, 160)
-            )));
-        }
+            format!(" [{}]", suffix.trim())
+        };
+        lines.push(RenderLine::content(format!(
+            "{}. {}{} — {}",
+            index + 1,
+            label,
+            suffix,
+            detail
+        )));
         if options.expand == Some(index + 1) {
             if !node.summary.is_empty() {
-                lines.push(RenderLine::content(format!("   {}", compact(&node.summary, 600))));
+                lines.push(RenderLine::content(format!(
+                    "   {}",
+                    compact(&node.summary, 600)
+                )));
             }
             if !node.signature.is_empty() {
-                lines.push(RenderLine::content(format!("   {}", compact(&node.signature, 600))));
+                lines.push(RenderLine::content(format!(
+                    "   {}",
+                    compact(&node.signature, 600)
+                )));
             }
         }
         for related in &bundle.related {
@@ -703,7 +709,11 @@ pub(crate) fn print_query_bundles_with_options(
                     .filter(|link| link.node.kind == "symbol")
                     .map(|link| link.node.name.as_str())
                     .collect::<Vec<_>>();
-                format!("{}: {}", link.node.path, merge_names(names.into_iter().map(str::to_string), 3))
+                format!(
+                    "{}: {}",
+                    link.node.path,
+                    merge_names(names.into_iter().map(str::to_string), 3)
+                )
             };
             let mut badges = Vec::new();
             let edge_badge = edge_badge(&link.edge.confidence);
@@ -735,7 +745,7 @@ pub(crate) fn print_query_bundles_with_options(
                     if !item.node.signature.is_empty() {
                         item.node.signature.clone()
                     } else {
-                        item.node.summary.clone()
+                        local_anchor_names(&item.node.summary, &node.path)
                     }
                 })
                 .find(|text| !text.is_empty())
@@ -743,8 +753,11 @@ pub(crate) fn print_query_bundles_with_options(
             if evidence.is_none() && !options.full && options.expand != Some(index + 1) {
                 continue;
             }
-            let evidence = evidence.unwrap_or_else(|| label.clone());
-            lines.push(RenderLine::related(format!("   ↳ {}{}: {}", label, suffix, evidence)));
+            let detail = evidence.map(|text| format!(": {text}")).unwrap_or_default();
+            lines.push(RenderLine::related(format!(
+                "   ↳ {}{}{}",
+                label, suffix, detail
+            )));
             if options.expand == Some(index + 1) {
                 for related_link in links {
                     if !related_link.node.signature.is_empty() {
@@ -774,12 +787,30 @@ pub(crate) fn print_query_bundles_with_options(
 fn merge_document_bundles(bundles: &[QueryBundle]) -> Vec<QueryBundle> {
     let mut merged = Vec::new();
     for bundle in bundles {
-        let mergeable = matches!(bundle.primary.kind.as_str(), "doc" | "section");
-        if mergeable {
+        {
             if let Some(existing) = merged.iter_mut().find(|candidate: &&mut QueryBundle| {
                 matches!(candidate.primary.kind.as_str(), "doc" | "section")
+                    == matches!(bundle.primary.kind.as_str(), "doc" | "section")
                     && candidate.primary.path == bundle.primary.path
             }) {
+                if bundle.primary.kind == "symbol" {
+                    existing.primary.name = merge_names(
+                        [existing.primary.name.clone(), bundle.primary.name.clone()],
+                        usize::MAX,
+                    );
+                    if !bundle.primary.signature.is_empty()
+                        && !existing
+                            .primary
+                            .signature
+                            .contains(&bundle.primary.signature)
+                    {
+                        existing.primary.signature.push_str("; ");
+                        existing
+                            .primary
+                            .signature
+                            .push_str(&bundle.primary.signature);
+                    }
+                }
                 if !bundle.primary.heading.is_empty()
                     && !existing.primary.heading.contains(&bundle.primary.heading)
                 {
@@ -800,17 +831,52 @@ fn merge_document_bundles(bundles: &[QueryBundle]) -> Vec<QueryBundle> {
         }
         merged.push(bundle.clone());
     }
+    for bundle in &mut merged {
+        let mut related = Vec::<crate::query::RelatedNode>::new();
+        for mut item in std::mem::take(&mut bundle.related) {
+            if let Some(existing) = related
+                .iter_mut()
+                .find(|existing| existing.link.node.path == item.link.node.path)
+            {
+                if existing.link.node.id == item.link.node.id {
+                    existing
+                        .additional_symbols
+                        .append(&mut item.additional_symbols);
+                    continue;
+                }
+                if matches!(item.link.node.kind.as_str(), "doc" | "section") {
+                    existing
+                        .link
+                        .node
+                        .heading
+                        .push_str(&format!("; {}", item.link.node.heading));
+                    existing
+                        .link
+                        .node
+                        .summary
+                        .push_str(&format!(" {}", item.link.node.summary));
+                } else {
+                    existing.additional_symbols.push(item.link);
+                    existing
+                        .additional_symbols
+                        .append(&mut item.additional_symbols);
+                }
+            } else {
+                related.push(item);
+            }
+        }
+        for item in &mut related {
+            let mut seen = std::collections::BTreeSet::from([item.link.node.id.clone()]);
+            item.additional_symbols
+                .retain(|link| seen.insert(link.node.id.clone()));
+        }
+        bundle.related = related;
+    }
     merged
 }
 
 pub(crate) fn print_context_packet(label: &str, input: &str, packet: &ContextPacket) {
-    let _ = print_context_packet_with_options(
-        label,
-        input,
-        packet,
-        &RenderOptions::default(),
-        &[],
-    );
+    let _ = print_context_packet_with_options(label, input, packet, &RenderOptions::default(), &[]);
 }
 
 pub(crate) fn print_context_packet_with_options(
@@ -825,7 +891,9 @@ pub(crate) fn print_context_packet_with_options(
         "Anchor: {} [{}] :: {}",
         packet.anchor.path, packet.anchor.role, packet.anchor.title
     )));
-    let excerpt = if !packet.anchor.snippet.is_empty() {
+    let excerpt = if input == packet.anchor.path && !packet.anchor.summary.is_empty() {
+        kwic_excerpt(&packet.anchor.summary, "", &packet.anchor.title, 160)
+    } else if !packet.anchor.snippet.is_empty() {
         highlight(&packet.anchor.snippet, input)
     } else {
         kwic_excerpt(&packet.anchor.summary, input, &packet.anchor.title, 160)
@@ -835,11 +903,15 @@ pub(crate) fn print_context_packet_with_options(
     }
     if !packet.incoming.is_empty() {
         lines.push(RenderLine::related("Incoming refs:"));
-        lines.extend(relation_lines(&packet.incoming, true));
+        lines.extend(relation_lines(&packet.incoming, true, &packet.related_text));
     }
     if !packet.outgoing.is_empty() {
         lines.push(RenderLine::related("Outgoing refs:"));
-        lines.extend(relation_lines(&packet.outgoing, false));
+        lines.extend(relation_lines(
+            &packet.outgoing,
+            false,
+            &packet.related_text,
+        ));
     }
     if !packet.collection_siblings.is_empty() {
         lines.push(RenderLine::related(format!(
@@ -853,7 +925,7 @@ pub(crate) fn print_context_packet_with_options(
             packet.same_scope_docs.join(", ")
         )));
     }
-    if !packet.recommended_reading_order.is_empty() {
+    if (options.verbose || options.full) && !packet.recommended_reading_order.is_empty() {
         lines.push(RenderLine::related(format!(
             "Reading order: {}",
             packet.recommended_reading_order.join(" -> ")
@@ -888,24 +960,22 @@ pub(crate) fn print_current_context_with_options(
 ) -> RenderedPage {
     let mut lines = vec![RenderLine::content("Current context:")];
     if !packet.entrypoints.is_empty() {
-        lines.push(RenderLine::content("Entrypoints:"));
-        lines.extend(packet.entrypoints.iter().map(|doc| {
-            RenderLine::content(context_pointer_line(doc))
-        }));
+        lines.extend(
+            packet.entrypoints.iter().map(|doc| {
+                RenderLine::content(format!("Entrypoints: {}", context_pointer_line(doc)))
+            }),
+        );
     }
     if let Some(doc) = &packet.project_map {
-        lines.push(RenderLine::content("Project map:"));
-        lines.push(RenderLine::content(context_pointer_line(doc)));
+        lines.push(RenderLine::content(format!(
+            "Project map: {}",
+            context_pointer_line(doc)
+        )));
     }
     if !packet.active_plans.is_empty() {
-        lines.push(RenderLine::content("Active plans:"));
-        lines.extend(
-            packet
-                .active_plans
-                .iter()
-                .take(8)
-                .map(|doc| RenderLine::content(context_pointer_line(doc))),
-        );
+        lines.extend(packet.active_plans.iter().take(8).map(|doc| {
+            RenderLine::content(format!("Active plans: {}", context_pointer_line(doc)))
+        }));
         if packet.active_plans.len() > 8 {
             lines.push(RenderLine::related(format!(
                 "- {} more active plans; use --json",
@@ -914,25 +984,27 @@ pub(crate) fn print_current_context_with_options(
         }
     }
     if !packet.recent_decisions.is_empty() {
-        lines.push(RenderLine::content("Current decisions:"));
-        lines.extend(
-            packet
-                .recent_decisions
-                .iter()
-                .take(3)
-                .map(|doc| RenderLine::content(context_pointer_line(doc))),
-        );
+        lines.extend(packet.recent_decisions.iter().take(3).map(|doc| {
+            RenderLine::content(format!("Current decisions: {}", context_pointer_line(doc)))
+        }));
     }
     if let Some(snapshot) = &packet.latest_snapshot {
-        lines.push(RenderLine::content(format!("Latest snapshot: {}", snapshot.id)));
+        lines.push(RenderLine::content(format!(
+            "Latest snapshot: {}",
+            snapshot.id
+        )));
     }
     if let Some(changes) = &packet.changes_since_snapshot {
         lines.push(RenderLine::content(format!(
             "Since snapshot: {} added, {} modified, {} removed documents",
-            changes.added.len(), changes.modified.len(), changes.removed.len()
+            changes.added.len(),
+            changes.modified.len(),
+            changes.removed.len()
         )));
     }
-    lines.extend(code_context::code_changes_lines(&packet.code_changes_since_snapshot));
+    lines.extend(code_context::code_changes_lines(
+        &packet.code_changes_since_snapshot,
+    ));
     if packet.unverified_items > 0 {
         lines.push(RenderLine::content(format!(
             "Unverified: {} unchecked items in {} current documents",
@@ -960,9 +1032,20 @@ pub(crate) fn print_current_context_with_options(
 fn context_pointer_line(doc: &ContextDoc) -> String {
     let badge = freshness_badge(&doc.lifecycle);
     if badge.is_empty() {
-        format!("- {} :: {}", doc.path, short_line(&doc.title, 96))
+        format!(
+            "- {} :: {} — {}",
+            doc.path,
+            short_line(&doc.title, 96),
+            short_line(&doc.summary, 180)
+        )
     } else {
-        format!("- {} {} :: {}", doc.path, badge, short_line(&doc.title, 96))
+        format!(
+            "- {} {} :: {} — {}",
+            doc.path,
+            badge,
+            short_line(&doc.title, 96),
+            short_line(&doc.summary, 180)
+        )
     }
 }
 
@@ -974,7 +1057,12 @@ pub(crate) fn print_handoff_context(packet: &HandoffContext, coverage: &Coverage
         }
         println!("{}:", label);
         for doc in docs {
-            println!("- {} :: {} | {}", doc.path, short_line(&doc.title, 96), short_line(&doc.summary, 180));
+            println!(
+                "- {} :: {} | {}",
+                doc.path,
+                short_line(&doc.title, 96),
+                short_line(&doc.summary, 180)
+            );
         }
     }
     if !packet.removed.is_empty() {
@@ -989,7 +1077,11 @@ pub(crate) fn print_handoff_context(packet: &HandoffContext, coverage: &Coverage
     }
 }
 
-fn relation_lines(relations: &[DocRelation], incoming: bool) -> Vec<RenderLine> {
+fn relation_lines(
+    relations: &[DocRelation],
+    incoming: bool,
+    text: &BTreeMap<String, String>,
+) -> Vec<RenderLine> {
     relations
         .iter()
         .map(|relation| {
@@ -1000,8 +1092,15 @@ fn relation_lines(relations: &[DocRelation], incoming: bool) -> Vec<RenderLine> 
             };
             let badge = if relation.explicit { "" } else { " ~" };
             RenderLine::related(format!(
-                "- {} via {}{}",
-                path, relation.relation_type, badge
+                "- {}{} :: {}",
+                path,
+                badge,
+                compact(
+                    text.get(path)
+                        .map(String::as_str)
+                        .unwrap_or(&relation.reason),
+                    160
+                )
             ))
         })
         .collect()
@@ -1063,26 +1162,37 @@ pub(crate) fn print_check_output(
         active_count
     ))];
 
-    lines.push(RenderLine::content(format!(
-        "Severity summary: error {}, warning {}, info {}, suppressed {}",
-        summary.error, summary.warning, summary.info, summary.suppressed
-    )));
-    if baseline.available {
+    if full {
         lines.push(RenderLine::content(format!(
-            "Baseline: {}new {}, resolved {}{}",
-            if baseline.created { "created; " } else { "" },
+            "Severity summary: error {}, warning {}, info {}, suppressed {}",
+            summary.error, summary.warning, summary.info, summary.suppressed
+        )));
+        if baseline.available {
+            lines.push(RenderLine::content(format!(
+                "Baseline: {}new {}, resolved {}{}",
+                if baseline.created { "created; " } else { "" },
+                baseline.new_count,
+                baseline.resolved_count,
+                if baseline.updated { "; updated" } else { "" }
+            )));
+        } else {
+            lines.push(RenderLine::content("Baseline: not evaluated"));
+        }
+        for rule in &summary.by_rule {
+            lines.push(RenderLine::content(format!(
+                "- {}: error {}, warning {}, info {}, suppressed {}",
+                rule.rule_id, rule.error, rule.warning, rule.info, rule.suppressed
+            )));
+        }
+    } else if let Some(summary_line) = lines.first_mut() {
+        summary_line.text.push_str(&format!(
+            "; error {}, warning {}, info {}; new {}, resolved {}",
+            summary.error,
+            summary.warning,
+            summary.info,
             baseline.new_count,
-            baseline.resolved_count,
-            if baseline.updated { "; updated" } else { "" }
-        )));
-    } else {
-        lines.push(RenderLine::content("Baseline: not evaluated"));
-    }
-    for rule in &summary.by_rule {
-        lines.push(RenderLine::content(format!(
-            "- {}: error {}, warning {}, info {}, suppressed {}",
-            rule.rule_id, rule.error, rule.warning, rule.info, rule.suppressed
-        )));
+            baseline.resolved_count
+        ));
     }
     for (label, changes) in [("new", &baseline.new), ("resolved", &baseline.resolved)] {
         for finding in changes.iter().take(if full { usize::MAX } else { 3 }) {
@@ -1102,8 +1212,19 @@ pub(crate) fn print_check_output(
     let examples = checks
         .iter()
         .filter(|check| full || !check.suppressed)
+        .filter(|check| {
+            !baseline
+                .new
+                .iter()
+                .take(if full { usize::MAX } else { 3 })
+                .any(|finding| {
+                    finding.rule_id == check.rule_id
+                        && finding.subject_path == check.subject_path
+                        && finding.message == check.message
+                })
+        })
         .take(if full { usize::MAX } else { 3 });
-    let mut first_hint = None::<String>;
+    let mut first_hint = baseline.new.iter().find_map(|finding| finding.hint.clone());
     for check in examples {
         if check.suppressed {
             lines.push(RenderLine::related(format!(
@@ -1129,18 +1250,26 @@ pub(crate) fn print_check_output(
             first_hint = check.hint.clone();
         }
         if full && !check.evidence_json.is_empty() && check.evidence_json != "{}" {
-            lines.push(RenderLine::related(format!("  evidence: {}", check.evidence_json)));
+            lines.push(RenderLine::related(format!(
+                "  evidence: {}",
+                check.evidence_json
+            )));
         }
     }
-    if let Some(hint) = fallback_hint
-        .map(str::to_string)
-        .or(first_hint)
-    {
+    if let Some(hint) = fallback_hint.map(str::to_string).or(first_hint) {
         lines.push(RenderLine::hint(format!("Hint: {}", short_hint(&hint))));
     } else if !full {
         lines.push(RenderLine::hint("Hint: Use check --all for all findings; --update-baseline accepts the current findings as the baseline."));
     }
-    let page = paginate_lines(lines, options, "check");
+    let mut page_options = options.clone();
+    if full {
+        // `check --all` promises every finding.  Keep each finding's evidence
+        // attached while lifting the compact text budget for this explicit
+        // full view.
+        page_options.budget = usize::MAX;
+        page_options.full = true;
+    }
+    let page = paginate_lines(lines, &page_options, "check");
     for line in page.lines {
         println!("{}", line);
     }

@@ -19,6 +19,7 @@ fn python(script: &str) -> Command {
             .join(script),
     );
     command.env("PYTHONDONTWRITEBYTECODE", "1");
+    command.env("HARNESSKIT_BIN", env!("CARGO_BIN_EXE_harnesskit"));
     command
 }
 
@@ -285,6 +286,16 @@ fn runner_executes_all_w0_cases_including_chinese_code_retrieval() {
             "by_kind": {"retrieval": 8, "drift": 20, "cochange": 9}})
     );
     assert!(report["cochange_coverage"].as_f64().unwrap() >= 0.9);
+    assert_eq!(report["drift_metrics"]["precision"], 1.0);
+    assert_eq!(report["drift_metrics"]["false_positives"], 0);
+    assert_eq!(report["drift_metrics"]["format_false_positives"], 0);
+    assert_eq!(report["drift_metrics"]["format_cases"], 4);
+    assert_eq!(report["drift_metrics"]["all_anchors"]["precision"], 1.0);
+    assert_eq!(report["drift_metrics"]["all_anchors"]["false_positives"], 0);
+    eprintln!(
+        "Weave gates: retrieval={}, drift={}, cochange={}",
+        report["retrieval_metrics"], report["drift_metrics"], report["cochange_metrics"]
+    );
     assert!(
         report["retrieval_metrics"]["symbol_top3_rate"]
             .as_f64()

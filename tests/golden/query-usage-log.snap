@@ -1,0 +1,6 @@
+1. doc docs/commands.md §Local usage — export HARNESSKIT_«USAGE»_«LOG»=off # Disable future writes
+2. symbol src/usage.rs: log_path — fn «log»_path() -> Option<PathBuf>
+3. notes docs/migration-alpha.7.md §Update scripts for changed behavior — Set `export HARNESSKIT_«USAGE»_«LOG»=off` to disable writes; this does not delete old records.
+4. notes docs/design-0.2.0-weave.md §5.1 输出契约：信号优先，结构服务于内容 — **去重合并**：同一文件的多个符号合并为一行（`src/«usage».rs: «log»_path, record, …`）。
+… 27 more (harnesskit query --page 2)
+Hint: Fewer than three strict matches; partial matches are included with their missing terms.

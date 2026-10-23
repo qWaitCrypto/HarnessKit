@@ -8,5 +8,16 @@
   {"name":"context-diff","fixture":"w0","kind":"context","args":["context","--diff"],"terms":["changed","code"],"snapshot":"context-diff.snap"},
   {"name":"context-current","fixture":"repo","kind":"context","args":["context","--current"],"terms":["context","entrypoints"],"snapshot":"context-current.snap"},
   {"name":"context-document","fixture":"repo","kind":"context","args":["context","docs/commands.md"],"terms":["context","command"],"snapshot":"context-document.snap"},
-  {"name":"check-anchors","fixture":"repo","kind":"check","args":["check","--rules","anchors"],"terms":["checks","coverage"],"snapshot":"check-anchors.snap"}
+  {"name":"check-anchors","fixture":"repo","kind":"check","args":["check","--rules","anchors"],"terms":["checks","coverage"],"snapshot":"check-anchors.snap"},
+  {"name":"query-go-chinese","fixture":"w0","kind":"query","args":["query","网关限流"],"terms":["网关","限流"],"snapshot":"query-go-chinese.snap"},
+  {"name":"query-go-symbol","fixture":"w0","kind":"query","args":["query","limitRequests"],"terms":["limitRequests"],"snapshot":"query-go-symbol.snap"},
+  {"name":"query-typescript-symbol","fixture":"w0","kind":"query","args":["query","cacheTtl"],"terms":["cacheTtl"],"snapshot":"query-typescript-symbol.snap"},
+  {"name":"query-python-symbol","fixture":"w0","kind":"query","args":["query","retry_delay"],"terms":["retry","delay"],"snapshot":"query-python-symbol.snap"},
+  {"name":"query-rust-english","fixture":"w0","kind":"query","args":["query","token"],"terms":["token"],"snapshot":"query-rust-english.snap"},
+  {"name":"query-rust-chinese-code","fixture":"w0","kind":"query","args":["query","刷新","--code"],"terms":["刷新"],"snapshot":"query-rust-chinese-code.snap"},
+  {"name":"hook-pre-edit","fixture":"w0","kind":"hook","args":["hook","pre-edit","src/auth/refresh.rs"],"terms":["Constraint"],"snapshot":"hook-pre-edit.snap"},
+  {"name":"context-diff-changed","fixture":"changed","kind":"context","args":["context","--diff"],"terms":["changed","code","refresh"],"snapshot":"context-diff-changed.snap"},
+  {"name":"check-drift","fixture":"changed","kind":"check","args":["check","--rules","code-drift"],"terms":["checks","drift","reviewed"],"snapshot":"check-drift.snap"},
+  {"name":"hook-post-edit","fixture":"changed","kind":"hook","args":["hook","post-edit","src/auth/refresh.rs"],"terms":["drift","review"],"snapshot":"hook-post-edit.snap"},
+  {"name":"query-usage-log","fixture":"usage","kind":"query","args":["query","usage log"],"terms":["usage","log"],"snapshot":"query-usage-log.snap"}
 ]

@@ -123,6 +123,32 @@ pub(crate) fn refresh_anchor_facts(
         .collect::<BTreeSet<_>>();
     db.transaction(|db| {
         refresh_sources(db, root, docs)?;
+        // Resolution depends on names, paths and spans, not function bodies.
+        // Knowledge seals below still compare the current structural hashes.
+        let inputs = db.query(
+            "SELECT group_concat(value, char(10)) FROM (
+            SELECT id || char(0) || span_start || ':' || span_end || ':' ||
+                CASE WHEN kind = 'doc' THEN fingerprint ELSE '' END AS value
+            FROM nodes WHERE kind IN ('doc', 'file', 'symbol') ORDER BY id)",
+            [],
+        )?;
+        let fingerprint = blake3::hash(cell(&inputs.rows[0], 0).as_bytes())
+            .to_hex()
+            .to_string();
+        if crate::index::meta_value(db, "anchor_inputs")?.as_deref() == Some(&fingerprint) {
+            if let Some(cached) = crate::index::meta_value(db, "anchor_checks")?
+                .and_then(|text| serde_json::from_str::<Vec<(IndexCheck, String)>>(&text).ok())
+            {
+                checks = cached
+                    .into_iter()
+                    .map(|(mut check, evidence)| {
+                        check.evidence_json = evidence;
+                        check
+                    })
+                    .collect();
+                return Ok(());
+            }
+        }
         let targets = Targets::load(db)?;
         let spans = db.query(
             "SELECT doc_path, src, section, line, column_number, text FROM inline_code_spans
@@ -171,6 +197,19 @@ pub(crate) fn refresh_anchor_facts(
                 )?;
             }
         }
+        db.execute(
+            "INSERT OR REPLACE INTO meta(key, value) VALUES ('anchor_inputs', ?1)",
+            [&fingerprint],
+        )?;
+        db.execute(
+            "INSERT OR REPLACE INTO meta(key, value) VALUES ('anchor_checks', ?1)",
+            [serde_json::to_string(
+                &checks
+                    .iter()
+                    .map(|check| (check, &check.evidence_json))
+                    .collect::<Vec<_>>(),
+            )?],
+        )?;
         Ok(())
     })?;
     Ok(checks)
@@ -344,12 +383,7 @@ fn resolve(
             let candidates = {
                 let global = targets.matching_symbols(fragment.unwrap(), None);
                 if global.is_empty() {
-                    targets
-                        .symbols
-                        .get(path)
-                        .into_iter()
-                        .flatten()
-                        .collect()
+                    targets.symbols.get(path).into_iter().flatten().collect()
                 } else {
                     global
                 }
@@ -391,7 +425,9 @@ fn suppress_diagnostics_for_doc(path: &str) -> bool {
             _ => None,
         })
         .collect::<Vec<_>>();
-    components.iter().any(|name| *name == "examples" || *name == "templates")
+    components
+        .iter()
+        .any(|name| *name == "examples" || *name == "templates")
         || components
             .windows(2)
             .any(|parts| parts[0] == "tests" && parts[1] == "fixtures")

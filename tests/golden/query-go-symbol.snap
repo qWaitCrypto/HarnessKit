@@ -1,0 +1,3 @@
+1. symbol gateway/limit.go: limitRequests — func «limitRequests»(count int) int
+   ↳ notes docs/notes/go-pitfalls.md §边界检查: `«limitRequests»` 需要覆盖边界值。
+   ↳ decisions docs/decisions/go.md §请求限流: `«limitRequests»` 在输入值上增加 60。

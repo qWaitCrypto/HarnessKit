@@ -1,0 +1,46 @@
+{
+  "corpus_files": 10000,
+  "languages": [
+    "Rust",
+    "TypeScript",
+    "Python",
+    "Go"
+  ],
+  "build": "release",
+  "query_kind": "distinct exact code symbols; result cache misses",
+  "cold": "derived state removed; OS cache retained",
+  "nodes": {
+    "doc": 400,
+    "file": 9601,
+    "section": 800,
+    "symbol": 12000
+  },
+  "samples_seconds": {
+    "cold_index": [
+      4.347406005996163,
+      4.260939946005237,
+      3.4187000969977817
+    ],
+    "incremental_index": [
+      0.6783377020037733,
+      0.6107984170084819,
+      0.6243923229922075
+    ],
+    "query": [
+      0.12221205899550114,
+      0.12004301600973122,
+      0.12165914601064287
+    ]
+  },
+  "max_seconds": {
+    "cold_index": 4.347406005996163,
+    "incremental_index": 0.6783377020037733,
+    "query": 0.12221205899550114
+  },
+  "limits_seconds": {
+    "cold_index": 10.0,
+    "incremental_index": 1.0,
+    "query": 0.2
+  },
+  "passed": true
+}

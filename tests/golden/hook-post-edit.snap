@@ -1,0 +1,1 @@
+Anchor drift: code changed since review; update the document or confirm unchanged requirements with `harnesskit check --ack docs/decisions/rust.md`.

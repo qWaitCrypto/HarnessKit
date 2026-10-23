@@ -1,0 +1,7 @@
+Context --diff HEAD + working tree: Changed code: 1 files, 1 regions (covered 1, uncovered 0)
+- src/auth/refresh.rs [modified; covered]: refresh_token
+  → docs/decisions/rust.md §刷新策略 :: `refresh_token` 在输入值上增加 60。, docs/notes/rust-pitfalls.md §边界检查 :: `refresh_token` 需要覆盖边界值。
+Predicted anchor issues: 2
+- docs/decisions/rust.md `refresh_token` ⚠drift — code changed since review; confirm the document constraints.
+- docs/notes/rust-pitfalls.md `refresh_token` ⚠drift — code changed since review; confirm the document constraints.
+Hint: Drift prediction uses the saved anchor fingerprints; editing the document alongside its code automatically confirms the updated anchor.
