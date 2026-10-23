@@ -32,10 +32,10 @@ pub(crate) fn print_stderr(args: fmt::Arguments<'_>) {
 pub(crate) fn finish_write(result: io::Result<()>) {
     if let Err(error) = result {
         if error.kind() == io::ErrorKind::BrokenPipe {
-            std::process::exit(0);
+            crate::usage::exit(0);
         }
         // Reporting an output failure must not itself panic if stderr is closed.
         let _ = writeln!(io::stderr().lock(), "Error: {}", error);
-        std::process::exit(2);
+        crate::usage::exit(2);
     }
 }

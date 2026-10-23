@@ -37,7 +37,7 @@ pub(super) enum Command {
         command: Option<HistoryCommand>,
     },
     /// Diagnose the local environment.
-    Doctor(TargetArgs),
+    Doctor(DoctorArgs),
     /// Update from a release archive.
     Update(CommonArgs),
     #[command(external_subcommand)]
@@ -91,6 +91,21 @@ pub(crate) struct TargetArgs {
     pub(crate) target_dir: Option<String>,
     #[command(flatten)]
     pub(crate) options: CommonArgs,
+}
+
+#[derive(Args)]
+pub(super) struct DoctorArgs {
+    #[command(flatten)]
+    pub(super) target: TargetArgs,
+    /// Summarize local usage across projects (all time unless --days is given).
+    #[arg(
+        long,
+        long_help = "Summarize local usage across projects. Logs default to ~/.harnesskit/usage.jsonl; HARNESSKIT_HOME overrides the directory. HARNESSKIT_USAGE_LOG=off disables writes, full includes query text; the default records only metrics and a project-root hash. Zero-hit and relaxed-hit rates use completed queries as the denominator. A query is relaxed when any displayed result is a partial match."
+    )]
+    pub(super) usage: bool,
+    /// Limit usage to the last N days.
+    #[arg(long, value_name = "N", requires = "usage", value_parser = clap::value_parser!(u32).range(1..))]
+    pub(super) days: Option<u32>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, ValueEnum)]

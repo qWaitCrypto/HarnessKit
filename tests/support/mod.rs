@@ -38,7 +38,10 @@ impl TestRepo {
 
     pub fn command(&self, args: &[&str]) -> Command {
         let mut command = Command::new(env!("CARGO_BIN_EXE_harnesskit"));
-        command.args(args).current_dir(&self.root);
+        command
+            .args(args)
+            .current_dir(&self.root)
+            .env("HARNESSKIT_USAGE_LOG", "off");
         command
     }
 

@@ -41,6 +41,8 @@ pub(crate) struct DoctorReport {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) schema_preview: Option<String>,
     pub(crate) schema_written: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) usage: Option<crate::usage::UsageReport>,
 }
 
 pub(crate) fn build_doctor_report(target_dir: &Path) -> DoctorReport {
@@ -109,6 +111,7 @@ pub(crate) fn build_doctor_report(target_dir: &Path) -> DoctorReport {
         coverage: Default::default(),
         schema_preview: None,
         schema_written: false,
+        usage: None,
     }
 }
 

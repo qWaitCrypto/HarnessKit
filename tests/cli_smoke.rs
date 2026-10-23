@@ -23,7 +23,11 @@ fn temp_dir(name: &str) -> PathBuf {
 }
 
 fn run(args: &[&str]) -> String {
-    let output = Command::new(bin()).args(args).output().unwrap();
+    let output = Command::new(bin())
+        .args(args)
+        .env("HARNESSKIT_USAGE_LOG", "off")
+        .output()
+        .unwrap();
     assert!(
         output.status.success(),
         "command failed: harnesskit {}\nstdout:\n{}\nstderr:\n{}",

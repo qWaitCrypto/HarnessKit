@@ -17,21 +17,25 @@ mod schema;
 mod sqlite;
 mod templates;
 mod update;
+mod usage;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 fn main() {
+    usage::start();
     if let Err(error) = cli::run() {
         if error
             .downcast_ref::<std::io::Error>()
             .map(|error| error.kind() == std::io::ErrorKind::BrokenPipe)
             .unwrap_or(false)
         {
+            usage::finish(0);
             return;
         }
         output::eprintln!("Error: {}", error);
-        std::process::exit(2);
+        usage::exit(2);
     }
+    usage::finish(0);
 }
 
 #[cfg(test)]

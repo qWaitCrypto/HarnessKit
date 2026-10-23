@@ -1,8 +1,8 @@
 mod args;
 
 use args::{
-    option_value, CheckArgs, CheckFormat, Cli, Command, ContextArgs, DiffArgs, HistoryCommand,
-    InputArgs, QueryArgs, ShowArgs, SnapshotArgs,
+    option_value, CheckArgs, CheckFormat, Cli, Command, ContextArgs, DiffArgs, DoctorArgs,
+    HistoryCommand, InputArgs, QueryArgs, ShowArgs, SnapshotArgs,
 };
 pub(crate) use args::{CommonArgs, TargetArgs};
 use clap::{CommandFactory, Parser};
@@ -44,6 +44,7 @@ use crate::schema::{
 };
 use crate::templates::{materialize_from_schema, validate_init_templates};
 use crate::update::{detect_release_target, update_from_release};
+use crate::usage;
 use crate::Result;
 
 #[derive(Default)]
@@ -61,6 +62,7 @@ pub(crate) enum InitMode {
 
 fn run_init(args: &TargetArgs) -> Result<()> {
     let target_dir = PathBuf::from(args.target_dir.as_deref().unwrap_or("."));
+    usage::target(&target_dir);
     validate_target_dir(&target_dir, true)?;
     let docs_root_override = option_value(&args.options.docs_root, "--docs-root");
     let schema_arg = option_value(&args.options.schema, "--schema")
@@ -117,6 +119,8 @@ fn run_index(args: &TargetArgs) -> Result<()> {
     let relation_count = scalar_count(&db, "SELECT COUNT(*) FROM relations;")?;
 
     let artifact = crate::index::read_index_artifact_from_fact_store(&db)?;
+    usage::results(doc_count);
+    usage::coverage(artifact.coverage.ratio);
     if args.options.json {
         println!("{}", crate::render::render_index_json(&artifact));
     } else {
@@ -180,7 +184,8 @@ fn run_check(args: &CheckArgs) -> Result<()> {
                     );
                     println!("Hint: {}", hints[0]);
                 }
-                std::process::exit(1);
+                usage::results(1);
+                usage::exit(1);
             }
             return Err(error);
         }
@@ -206,6 +211,9 @@ fn run_check(args: &CheckArgs) -> Result<()> {
     let all_checks =
         filter_and_suppress_checks(&check_rows, &context.schema, &CommandOptions::default());
     let baseline = check_baseline(target_dir, &all_checks, &options, args.update_baseline)?;
+    usage::results(checks.iter().filter(|check| !check.suppressed).count());
+    usage::coverage(coverage.ratio);
+    usage::check_new_findings(baseline.new_count);
     let warning_count = checks
         .iter()
         .filter(|check| !check.suppressed && check.severity == "warning")
@@ -229,7 +237,7 @@ fn run_check(args: &CheckArgs) -> Result<()> {
             )
         );
         if error_count > 0 || (options.strict && warning_count > 0) {
-            std::process::exit(1);
+            usage::exit(1);
         }
         return Ok(());
     }
@@ -259,19 +267,26 @@ fn run_check(args: &CheckArgs) -> Result<()> {
     }
 
     if error_count > 0 || (options.strict && warning_count > 0) {
-        std::process::exit(1);
+        usage::exit(1);
     }
 
     Ok(())
 }
 
-fn run_doctor(args: &TargetArgs) -> Result<()> {
+fn run_doctor(doctor_args: &DoctorArgs) -> Result<()> {
+    let args = &doctor_args.target;
     let context = load_engine_context(args)?;
     let json = args.options.json;
     let mut report = build_doctor_report(&context.target_dir);
     report.hints = orphan_state_hints(&context.target_dir, &context.schema)?;
     report.coverage = discover_docs(&context.target_dir, &context.schema)?;
+    usage::coverage(report.coverage.ratio);
     report.hints.extend(project_hints(&context)?);
+    if doctor_args.usage {
+        let usage = usage::summarize(doctor_args.days);
+        report.hints.extend(usage.hints.iter().cloned());
+        report.usage = Some(usage);
+    }
     if args.options.write_schema {
         let mut schema = context.schema.clone();
         for mapping in &report.coverage.mappings {
@@ -302,6 +317,9 @@ fn run_doctor(args: &TargetArgs) -> Result<()> {
     } else {
         print_doctor_report(&report);
         println!("{}", report.coverage.summary());
+        if let Some(usage) = &report.usage {
+            usage::print_report(usage);
+        }
         if args.options.layout || args.options.write_schema {
             for mapping in &report.coverage.mappings {
                 println!(
@@ -400,6 +418,8 @@ fn run_list_docs(args: &TargetArgs) -> Result<()> {
          ORDER BY path ASC;", [])?;
 
     let artifact = crate::index::read_index_artifact_from_fact_store(&db)?;
+    usage::results(result.rows.len());
+    usage::coverage(artifact.coverage.ratio);
     if args.options.json {
         println!(
             "{}",
@@ -477,6 +497,7 @@ fn run_refs(args: &InputArgs) -> Result<()> {
 fn run_query(query_args: &QueryArgs) -> Result<()> {
     let args = &query_args.input;
     let query_terms = args.input.clone().ok_or("query requires <terms>")?;
+    usage::query_text(&query_terms);
     let context = load_engine_context(&args.target)?;
     let options = command_options(&args.target.options, Some(&context.schema));
     refresh_fact_store(&context)?;
@@ -489,6 +510,17 @@ fn run_query(query_args: &QueryArgs) -> Result<()> {
         query_args.limit as usize,
     )?;
     let coverage = discover_docs(&context.target_dir, &context.schema)?;
+    usage::coverage(coverage.ratio);
+    usage::query_results(
+        candidates.len(),
+        candidates.iter().any(|candidate| {
+            candidate
+                .match_info
+                .as_ref()
+                .map(|info| info.mode == "relaxed")
+                .unwrap_or(false)
+        }),
+    );
     let diagnostics = if candidates.is_empty() {
         Some(diagnose_query(
             &db,
@@ -587,6 +619,7 @@ fn run_context(args: &ContextArgs) -> Result<()> {
         refresh_fact_store(&context)?;
         let db = open_fact_store(&context.target_dir)?;
         let coverage = discover_docs(&context.target_dir, &context.schema)?;
+        usage::coverage(coverage.ratio);
         let mut hints = indexed_hints(&context, &db)?;
         if let Some(since) = &args.since {
             let packet = build_handoff_context(&db, &context.target_dir, &context.schema, since)?;
@@ -715,6 +748,7 @@ fn run_history_snapshot(args: &SnapshotArgs) -> Result<()> {
 fn run_history_list(args: &TargetArgs) -> Result<()> {
     let context = load_engine_context(args)?;
     let snapshots = list_history_snapshots(&context.target_dir)?;
+    usage::results(snapshots.len());
     if args.options.json {
         print_history_json(&context, &serde_json::json!({"snapshots": snapshots}), &[])?;
     } else {
@@ -880,6 +914,7 @@ fn print_history_json<T: serde::Serialize>(
     extra_hints: &[String],
 ) -> Result<()> {
     let coverage = discover_docs(&context.target_dir, &context.schema)?;
+    usage::coverage(coverage.ratio);
     let mut hints = project_hints(context)?;
     hints.extend_from_slice(extra_hints);
     println!(
@@ -909,6 +944,7 @@ pub(crate) fn command_options(args: &CommonArgs, schema: Option<&Schema>) -> Com
 
 pub(crate) fn load_engine_context(args: &TargetArgs) -> Result<EngineContext> {
     let target_dir = PathBuf::from(args.target_dir.as_deref().unwrap_or("."));
+    usage::target(&target_dir);
     validate_target_dir(&target_dir, false)?;
     let docs_root_override = option_value(&args.options.docs_root, "--docs-root");
     let schema_arg = option_value(&args.options.schema, "--schema")
@@ -966,6 +1002,7 @@ fn indexed_hints(
 }
 
 fn print_coverage(coverage: &crate::discover::Coverage, hints: &[String]) {
+    usage::coverage(coverage.ratio);
     println!("{}", coverage.summary());
     for hint in hints {
         println!("Hint: {}", hint);
@@ -977,7 +1014,7 @@ pub(crate) fn run() -> Result<()> {
         Ok(cli) => cli,
         Err(error) => {
             finish_write(error.print());
-            std::process::exit(error.exit_code());
+            usage::exit(error.exit_code());
         }
     };
     match cli.command {
@@ -997,7 +1034,7 @@ pub(crate) fn run() -> Result<()> {
         Some(Command::Unknown(_)) | None => {
             Cli::command().write_help(&mut std::io::stderr())?;
             eprintln!();
-            std::process::exit(2);
+            usage::exit(2);
         }
     }
 }
