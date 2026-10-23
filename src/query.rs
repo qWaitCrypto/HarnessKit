@@ -1,7 +1,7 @@
 mod cards;
 mod mixed;
 
-pub(crate) use cards::refresh_cards;
+pub(crate) use cards::{refresh_cards, BRIDGE_THRESHOLD};
 pub(crate) use mixed::{query_bundles, BundleNode, QueryBundle, QuerySide, DEFAULT_BUNDLE_LIMIT};
 
 use std::collections::{BTreeMap, BTreeSet};

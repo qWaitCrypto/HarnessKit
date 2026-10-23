@@ -38,6 +38,8 @@ pub(super) enum Command {
     },
     /// Diagnose the local environment.
     Doctor(DoctorArgs),
+    /// Plan or apply structured documentation migrations.
+    Migrate(MigrateArgs),
     /// Update from a release archive.
     Update(CommonArgs),
     /// Suggest document-to-code anchors from inferred relationships.
@@ -170,6 +172,21 @@ pub(super) struct DoctorArgs {
     /// Limit usage to the last N days.
     #[arg(long, value_name = "N", requires = "usage", value_parser = clap::value_parser!(u32).range(1..))]
     pub(super) days: Option<u32>,
+}
+
+#[derive(Args)]
+pub(super) struct MigrateArgs {
+    #[command(flatten)]
+    pub(super) target: TargetArgs,
+    /// Print the migration plan (the default when neither flag is supplied).
+    #[arg(long, conflicts_with = "apply")]
+    pub(super) plan: bool,
+    /// Apply safe structured migrations after taking a history snapshot.
+    #[arg(long, conflicts_with = "plan")]
+    pub(super) apply: bool,
+    /// Restrict planning or application to one migration category.
+    #[arg(long, value_name = "CATEGORY")]
+    pub(super) only: Option<String>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, ValueEnum)]

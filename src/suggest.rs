@@ -16,6 +16,7 @@ use crate::fs_utils::{normalize_path, read_text_lossy};
 use crate::index::cell;
 use crate::knowledge::read_anchor_lock;
 use crate::output::println;
+use crate::query::BRIDGE_THRESHOLD;
 use crate::render::{compact, cursor_for_offset, cursor_offset, paginate_lines, RenderLine, RenderOptions};
 use crate::schema::Schema;
 use crate::sqlite::SqliteConnection;
@@ -180,6 +181,11 @@ pub(crate) fn suggest_anchors(
         [],
     )?;
     for row in &cochange_rows.rows {
+        // Use the same confidence floor as vocabulary bridging. Weak history
+        // can help retrieval, but should not ask an agent to write an anchor.
+        if cell(row, 2).parse::<f64>().unwrap_or(0.0) < BRIDGE_THRESHOLD {
+            continue;
+        }
         let doc = cell(row, 0);
         let Some(paths) = doc_paths.get(doc) else { continue };
         let path = cell(row, 1).to_string();

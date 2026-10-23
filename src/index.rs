@@ -276,6 +276,15 @@ pub(crate) fn scalar_count(db: &SqliteConnection, sql: &str) -> Result<usize> {
 }
 
 pub(crate) fn refresh_fact_store(context: &EngineContext) -> Result<()> {
+    refresh_fact_store_with_knowledge(context, true)
+}
+
+/// Migrate snapshots before writing any durable knowledge.lock changes.
+pub(crate) fn refresh_fact_store_for_migration(context: &EngineContext) -> Result<()> {
+    refresh_fact_store_with_knowledge(context, false)
+}
+
+fn refresh_fact_store_with_knowledge(context: &EngineContext, persist: bool) -> Result<()> {
     let schema_fingerprint = simple_content_hash(&format!(
         "{}{:?}{}:checks-s7",
         crate::schema::render_schema_copy(&context.schema),
@@ -300,7 +309,11 @@ pub(crate) fn refresh_fact_store(context: &EngineContext) -> Result<()> {
     let mut artifact = read_index_artifact_from_fact_store(&db)?;
     let mut anchor_checks =
         crate::anchors::refresh_anchor_facts(&db, &context.target_dir, &artifact.docs)?;
-    let knowledge = crate::knowledge::refresh(&context.target_dir, &db)?;
+    let knowledge = if persist {
+        crate::knowledge::refresh(&context.target_dir, &db)?
+    } else {
+        crate::knowledge::preview(&context.target_dir, &db)?
+    };
     anchor_checks.retain(|check| {
         if check.rule_id != "anchor-unresolved" {
             return true;

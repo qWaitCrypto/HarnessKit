@@ -12,7 +12,7 @@ use crate::parse::{parse_doc_text, split_frontmatter};
 use crate::sqlite::SqliteConnection;
 use crate::Result;
 
-pub(super) const BRIDGE_THRESHOLD: f64 = 0.2;
+pub(crate) const BRIDGE_THRESHOLD: f64 = 0.2;
 
 pub(crate) fn refresh_cards(db: &SqliteConnection, root: &Path) -> Result<()> {
     let code = db.query(

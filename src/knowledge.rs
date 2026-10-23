@@ -147,6 +147,23 @@ pub(crate) fn refresh(
     root: &Path,
     db: &SqliteConnection,
 ) -> Result<KnowledgeResult> {
+    refresh_knowledge(root, db, true)
+}
+
+/// Migration analysis refreshes derived facts without changing durable seals.
+pub(crate) fn preview(root: &Path, db: &SqliteConnection) -> Result<KnowledgeResult> {
+    refresh_knowledge(root, db, false)
+}
+
+pub(crate) fn has_resolved_anchors(db: &SqliteConnection) -> Result<bool> {
+    Ok(!current_seals(db)?.is_empty())
+}
+
+fn refresh_knowledge(
+    root: &Path,
+    db: &SqliteConnection,
+    persist: bool,
+) -> Result<KnowledgeResult> {
     let lock_path = root.join(".harnesskit/knowledge.lock");
     let (entries, had_valid_entry) = read_lock(&lock_path)?;
     let existing_entries = entries.clone();
@@ -228,7 +245,9 @@ pub(crate) fn refresh(
     }
 
     let next_entries = next.into_values().collect::<Vec<_>>();
-    write_lock(&lock_path, &next_entries, had_valid_entry)?;
+    if persist {
+        write_lock(&lock_path, &next_entries, had_valid_entry)?;
+    }
 
     for check in &mut checks {
         complete_check(check);

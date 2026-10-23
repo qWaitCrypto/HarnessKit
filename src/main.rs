@@ -12,6 +12,7 @@ mod history;
 mod index;
 mod knowledge;
 mod lifecycle;
+mod migration;
 mod output;
 mod parse;
 mod query;

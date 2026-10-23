@@ -605,7 +605,7 @@ fn unquoted_delimiter(line: &str, delimiter: char) -> Option<usize> {
     None
 }
 
-fn strip_schema_comment(line: &str) -> &str {
+pub(crate) fn strip_schema_comment(line: &str) -> &str {
     unquoted_delimiter(line, '#')
         .map(|index| &line[..index])
         .unwrap_or(line)
@@ -746,9 +746,9 @@ fn validate_schema(schema: &Schema) -> Result<()> {
     if schema.managed_root.trim().is_empty() {
         return Err("invalid schema: managed_root is empty".into());
     }
-    if schema.schema_version != 0 {
+    if schema.schema_version > 1 {
         return Err(format!(
-            "invalid schema: unsupported schema_version `{}`; this harnesskit binary supports schema_version 0, please upgrade harnesskit for newer schemas",
+            "invalid schema: unsupported schema_version `{}`; this harnesskit binary supports schema_version 0 and 1, please upgrade harnesskit for newer schemas",
             schema.schema_version
         )
         .into());

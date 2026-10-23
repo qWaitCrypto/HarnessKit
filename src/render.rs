@@ -943,7 +943,11 @@ pub(crate) fn print_current_context_with_options(
     if options.verbose {
         lines.push(RenderLine::related(coverage.summary()));
     }
-    if !hint.is_empty() && (options.verbose || packet.entrypoints.is_empty()) {
+    if !hint.is_empty()
+        && (options.verbose
+            || packet.entrypoints.is_empty()
+            || hint == "Run harnesskit migrate --plan")
+    {
         lines.push(RenderLine::hint(format!("Hint: {}", short_hint(hint))));
     }
     let page = paginate_lines(lines, options, "context");

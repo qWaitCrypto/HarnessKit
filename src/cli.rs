@@ -2,7 +2,7 @@ mod args;
 
 use args::{
     option_value, CheckArgs, CheckFormat, Cli, Command, ContextArgs, DiffArgs, DoctorArgs,
-    HistoryCommand, HookCommand, InputArgs, InstallArgs, QueryArgs,
+    HistoryCommand, HookCommand, InputArgs, InstallArgs, MigrateArgs, QueryArgs,
     RestoreArgs, ShowArgs, SnapshotArgs, SuggestAnchorsArgs,
 };
 pub(crate) use args::{CommonArgs, TargetArgs};
@@ -28,6 +28,7 @@ use crate::history::{
     list_history_snapshots, resolve_snapshot_arg, restore_plan,
 };
 use crate::index::{open_fact_store, refresh_fact_store, scalar_count, EngineContext};
+use crate::migration;
 use crate::output::{eprintln, finish_write, println};
 use crate::query::{
     diagnose_query, diagnostic_hints, query_bundles, query_candidates, title_suggestions,
@@ -345,6 +346,17 @@ fn run_doctor(doctor_args: &DoctorArgs) -> Result<()> {
     report.coverage = discover_docs(&context.target_dir, &context.schema)?;
     usage::coverage(report.coverage.ratio);
     report.hints.extend(project_hints(&context, &args.options)?);
+    let schema_arg = option_value(&args.options.schema, "--schema")
+        .unwrap_or_else(|| default_context_schema_arg(&context.target_dir));
+    if let Ok(schema_load) = load_schema(&context.target_dir, &schema_arg) {
+        if migration::has_pending_migrations(
+            &context,
+            &schema_load.text,
+            context.target_dir.join(".harnesskit/schema.yaml").is_file(),
+        ) {
+            report.hints.push("Run harnesskit migrate --plan".to_string());
+        }
+    }
     if doctor_args.code {
         let code = crate::code::code_report(&open_fact_store(&context.target_dir)?)?;
         if code.scan_mode == "git-unavailable" {
@@ -410,6 +422,82 @@ fn run_doctor(doctor_args: &DoctorArgs) -> Result<()> {
             .state_error
             .unwrap_or_else(|| "HarnessKit state is not writable".to_string())
             .into());
+    }
+    Ok(())
+}
+
+fn run_migrate(args: &MigrateArgs) -> Result<()> {
+    let target = &args.target;
+    let context = load_engine_context(target)?;
+    let schema_path_arg = option_value(&target.options.schema, "--schema")
+        .unwrap_or_else(|| default_context_schema_arg(&context.target_dir));
+    let schema_load = load_schema(&context.target_dir, &schema_path_arg)?;
+    let schema_exists = context.target_dir.join(".harnesskit/schema.yaml").is_file();
+    let lock_was_missing = !context
+        .target_dir
+        .join(".harnesskit/knowledge.lock")
+        .is_file();
+    // Anchor suggestions are derived from the already-supported W7 command.
+    // Refreshing the SQLite state is safe and keeps migrate --plan useful in a
+    // fresh checkout; no document prose is written by this step.
+    crate::index::refresh_fact_store_for_migration(&context)?;
+    let db = open_fact_store(&context.target_dir)?;
+    let suggestions = suggest::suggest_anchors(&db, &context.target_dir, &context.schema, None)?;
+    let analysis = migration::build_analysis(
+        &context,
+        &schema_load.text,
+        schema_exists,
+        &suggestions,
+        lock_was_missing,
+        crate::knowledge::has_resolved_anchors(&db)?,
+    )?;
+    let only = args.only.as_deref().map(migration::normalize_category).transpose()?;
+    let mut visible = analysis.clone();
+    if let Some(category) = &only {
+        visible.items.retain(|item| item.category == *category);
+    }
+    let options = render_options(&target.options);
+    let coverage = discover_docs(&context.target_dir, &context.schema)?;
+    let mut hints = project_hints(&context, &target.options)?;
+
+    if args.apply {
+        let report = migration::apply_analysis(&context, &analysis, only.as_deref())?;
+        usage::results(report.applied_count + report.remaining.len());
+        if target.options.json {
+            println!(
+                "{}",
+                migration::render_json(
+                    &context.target_dir,
+                    &coverage,
+                    &hints,
+                    &analysis,
+                    &options,
+                    Some(&report),
+                )
+            );
+        } else {
+            migration::render_text(&context.target_dir, &analysis, &options, Some(&report));
+        }
+    } else {
+        if analysis.items.is_empty() {
+            hints.push("No migration items found.".to_string());
+        }
+        usage::results(visible.items.len());
+        if target.options.json {
+            println!(
+                "{}",
+                migration::render_json(
+                    &context.target_dir,
+                    &coverage,
+                    &hints,
+                    &visible,
+                    &options,
+                    None,
+                )
+            );
+        } else {
+            migration::render_text(&context.target_dir, &visible, &options, None);
+        }
     }
     Ok(())
 }
@@ -993,6 +1081,8 @@ fn run_context(args: &ContextArgs) -> Result<()> {
         usage::coverage(coverage.ratio);
         let render_options = render_options(&target.options);
         let mut hints = indexed_hints(&context, &db, &target.options)?;
+        // Unlike hooks, context has no session id. Keep migration nudges in
+        // doctor so repeated context packets stay quiet and avoid analysis.
         if let Some(since) = &args.since {
             let packet = build_handoff_context(&db, &context.target_dir, &context.schema, since)?;
             if packet.cutoff_unix.is_some() {
@@ -1580,6 +1670,7 @@ pub(crate) fn run() -> Result<()> {
         Some(Command::Context(args)) => run_context(&args),
         Some(Command::History { command }) => run_history(command),
         Some(Command::Doctor(args)) => run_doctor(&args),
+        Some(Command::Migrate(args)) => run_migrate(&args),
         Some(Command::Update(args)) => run_update(&args),
         Some(Command::SuggestAnchors(args)) => run_suggest_anchors(&args),
         Some(Command::Hook { command }) => run_hook(command),
