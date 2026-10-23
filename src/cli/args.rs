@@ -25,7 +25,7 @@ pub(super) enum Command {
     Inspect(InputArgs),
     /// List incoming document references.
     Refs(InputArgs),
-    /// Search managed documents.
+    /// Search documentation and code, returning connected knowledge bundles.
     Query(QueryArgs),
     /// Show a document's relation graph.
     Graph(InputArgs),
@@ -151,14 +151,19 @@ pub(super) struct InputArgs {
 pub(super) struct QueryArgs {
     #[command(flatten)]
     pub(super) input: InputArgs,
-    /// Maximum number of candidates (default: 8).
+    /// Maximum bundles (default: 5; document-only repositories retain 8 candidates).
     #[arg(
         long,
         value_name = "N",
-        default_value_t = crate::query::DEFAULT_LIMIT as u32,
         value_parser = clap::value_parser!(u32).range(1..)
     )]
-    pub(super) limit: u32,
+    pub(super) limit: Option<u32>,
+    /// Search only documentation; omit code from bundles.
+    #[arg(long, conflicts_with = "code")]
+    pub(super) docs: bool,
+    /// Search only code cards; omit documentation from bundles.
+    #[arg(long, conflicts_with = "docs")]
+    pub(super) code: bool,
 }
 
 #[derive(Args)]

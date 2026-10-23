@@ -18,7 +18,7 @@ use crate::git::{find_host_git_dir, git_dirty_label};
 use crate::history::{is_history_dirty, HistoryDiff, HistorySnapshot, HistoryStatus, RestorePlan};
 use crate::index::{cell, DocRelation, IndexArtifact};
 use crate::output::println;
-use crate::query::QueryCandidate;
+use crate::query::{BundleNode, QueryBundle, QueryCandidate};
 use crate::schema::Schema;
 use crate::sqlite::QueryResult;
 use crate::templates::{init_plan_paths, InitStats};
@@ -556,6 +556,114 @@ pub(crate) fn print_query_candidates(query_terms: &str, candidates: &[QueryCandi
         if !candidate.neighbors.is_empty() {
             println!("  neighbors: {}", candidate.neighbors.join(" | "));
         }
+    }
+}
+
+fn compact_line(text: &str, max_chars: usize) -> String {
+    text.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(max_chars)
+        .collect()
+}
+
+fn bundle_node_label(node: &BundleNode) -> String {
+    let location = match node.kind.as_str() {
+        "symbol" => format!("{}#{}", node.path, node.name),
+        "section" => format!("{} §{} (L{})", node.path, node.heading, node.span_start),
+        _ => node.path.clone(),
+    };
+    compact_line(&format!("{} {}", node.role, location), 240)
+}
+
+pub(crate) fn print_query_bundles(query: &str, bundles: &[QueryBundle], extra_lines: &[String]) {
+    let mut lines = vec![format!("Query: {}", compact_line(query, 180))];
+    if bundles.is_empty() {
+        lines.push("No matching knowledge bundles found.".to_string());
+    }
+    for (index, bundle) in bundles.iter().enumerate() {
+        let node = &bundle.primary;
+        let status = [&node.status, &bundle.freshness.status]
+            .into_iter()
+            .filter(|status| !status.trim().is_empty())
+            .map(|status| compact_line(status, 30))
+            .collect::<Vec<_>>()
+            .join("; ");
+        lines.push(format!(
+            "{}. {} [{}]",
+            index + 1,
+            bundle_node_label(node),
+            status
+        ));
+        let detail = if node.signature.is_empty() {
+            &node.summary
+        } else {
+            &node.signature
+        };
+        if !detail.is_empty() {
+            lines.push(format!("   {}", compact_line(detail, 220)));
+        }
+        for related in &bundle.related {
+            let link = &related.link;
+            let links = std::iter::once(link).chain(related.additional_symbols.iter());
+            let drift = links
+                .clone()
+                .flat_map(|link| &link.freshness.issues)
+                .next()
+                .map(|issue| {
+                    let evidence = &issue["evidence"];
+                    format!(
+                        " · {} {} {}",
+                        issue["kind"].as_str().unwrap_or("drift"),
+                        evidence["changed_at"].as_str().unwrap_or_default(),
+                        evidence["commit"].as_str().unwrap_or_default()
+                    )
+                })
+                .unwrap_or_default();
+            let label = if related.additional_symbols.is_empty() {
+                bundle_node_label(&link.node)
+            } else {
+                let names = links
+                    .clone()
+                    .filter(|link| link.node.kind == "symbol")
+                    .map(|link| link.node.name.as_str())
+                    .collect::<Vec<_>>();
+                let shown = names
+                    .iter()
+                    .take(3)
+                    .map(|name| compact_line(name, 50))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let more = if names.len() > 3 {
+                    format!(" (+{} symbols)", names.len() - 3)
+                } else {
+                    String::new()
+                };
+                compact_line(
+                    &format!("{} {}#{}{}", link.node.role, link.node.path, shown, more),
+                    240,
+                )
+            };
+            let freshness = if links.clone().any(|link| link.freshness.status == "drifted") {
+                "drifted"
+            } else {
+                &link.freshness.status
+            };
+            lines.push(format!(
+                "   ↳ {} · {} {} · {}{}",
+                label,
+                link.edge.kind,
+                link.edge.confidence,
+                freshness,
+                compact_line(&drift, 180)
+            ));
+        }
+    }
+    lines.extend(extra_lines.iter().map(|line| compact_line(line, 300)));
+    // Includes verbose coverage, diagnostics and hints in the same line budget.
+    for line in lines.iter().take(40) {
+        println!("{}", line);
     }
 }
 

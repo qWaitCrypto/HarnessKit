@@ -11,7 +11,7 @@ Compare S5 (also enforced by cargo test):
 Top-k means any expected path occurs in the first k candidates. CJK includes
 the corpus's cjk and mixed categories. Sizes are fresh, checkpointed SQLite
 files, without VACUUM; all fixture inputs and their hashes are kept unchanged.
-The S5 storage gate excludes actual pages belonging to the W1/W2 graph tables
+The S5 storage gate excludes actual pages belonging to the Weave graph/card tables
 and their indexes. Total database size is still reported separately.
 """
 
@@ -75,7 +75,11 @@ def evaluate(binary, label):
                 total_bytes = database.stat().st_size
                 weave_bytes = db.execute(
                     "SELECT COALESCE(SUM(pgsize), 0) FROM dbstat WHERE name IN "
-                    "('nodes', 'idx_nodes_path', 'edges', 'idx_edges_dst', 'inline_code_spans')"
+                    "('nodes', 'idx_nodes_path', 'edges', 'idx_edges_dst', 'inline_code_spans', "
+                    "'cochange_stats', 'idx_cochange_stats_doc', 'cochange_files', 'doc_sections', "
+                    "'sqlite_autoindex_doc_sections_1', 'sqlite_autoindex_code_cards_1') "
+                    "OR name = 'code_cards' OR name LIKE 'code_fts_%' OR name LIKE 'code_trigram_%' "
+                    "OR name LIKE 'sections_fts_%' OR name LIKE 'sections_trigram_%'"
                 ).fetchone()[0]
                 sizes[fixture] = dict(bytes=total_bytes,
                                      doc_index_bytes=total_bytes - weave_bytes,

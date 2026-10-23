@@ -214,7 +214,7 @@ Refreshes the SQLite fact store from current docs. Incremental — only processe
 #### Search & Context
 
 ```bash
-harnesskit query "<terms>" [target_dir] [--limit N] [--json]
+harnesskit query "<terms>" [target_dir] [--docs|--code] [--limit N] [--json]
 harnesskit context --current [target_dir] [--json]
 harnesskit context --since <snapshot|latest|YYYY-MM-DD> [target_dir] [--json]
 harnesskit context "<terms-or-path>" [target_dir] [--json]
@@ -222,7 +222,15 @@ harnesskit graph <doc_path> [target_dir] [--json]
 ```
 
 Put query terms before the optional target: `harnesskit query "auth session" /path/to/repo --json`.
-Use 1–3 distinctive keywords; `--limit` defaults to 8. Search combines Unicode
+Use 1–3 distinctive keywords. With code present, query returns up to five bundles
+of a primary node and at most three related nodes, within forty text lines.
+`--docs` / `--code` restrict output to one side; `--limit N` changes the count.
+JSON adds `bundles` with edge evidence/confidence and freshness/drift status,
+preserving document `candidates` and its `results` alias. Code cards bridge
+chapter titles/summaries only through EXTRACTED or cochange edges of weight >= 0.2;
+split names, signatures and doc comments support direct symbol lookup.
+Document-only repositories retain the existing ranking, text and eight-candidate
+default. Search combines Unicode
 full-text and trigram indexes, with a substring fallback for short CJK terms.
 Fewer than three strict matches adds partial matches; each candidate reports
 `match.matched_terms`, `missing_terms` and `mode`. Title and path matches rank
@@ -437,7 +445,7 @@ Only `init` may create a missing target directory; `init --preview` never writes
 
 For `history diff <a> <b> [target_dir]`, an explicit third argument is always the target. With two arguments, an existing directory is the target; `latest` or an existing local snapshot ID selects a second snapshot; other values are validated as targets. Use a third argument of `.` to unambiguously request a comparison with an unknown snapshot ID.
 
-JSON reports from `index`, `check`, `list-docs`, `history`, `doctor`, `query`, `graph`, and `context` include structured `coverage` and `hints`. Query, graph and context still use only managed documents. Diagnostics on stderr do not invalidate JSON on stdout. New history snapshots add coverage metadata without requiring it in older snapshots; coverage on `history snapshot --json` describes the current invocation, including when creation is skipped.
+JSON reports from `index`, `check`, `list-docs`, `history`, `doctor`, `query`, `graph`, and `context` include structured `coverage` and `hints`. Query combines managed documents and indexed code; graph and context remain document-oriented. Diagnostics on stderr do not invalidate JSON on stdout. New history snapshots add coverage metadata without requiring it in older snapshots; coverage on `history snapshot --json` describes the current invocation, including when creation is skipped.
 
 ## Local Usage Metrics
 

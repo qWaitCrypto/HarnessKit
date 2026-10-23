@@ -23,7 +23,7 @@ use crate::schema::{core_file_rel_path, DocCollectionSpec, Schema};
 use crate::sqlite::{QueryResult, SqliteConnection};
 use crate::Result;
 
-pub(crate) const FACT_SCHEMA_VERSION: &str = "10";
+pub(crate) const FACT_SCHEMA_VERSION: &str = "12";
 
 #[derive(Clone, Default, Serialize)]
 pub(crate) struct IndexedDoc {
@@ -316,6 +316,7 @@ pub(crate) fn refresh_fact_store(context: &EngineContext) -> Result<()> {
             .unwrap_or(true)
     });
     crate::weave::refresh(&db, &context.target_dir, &context.schema)?;
+    crate::query::refresh_cards(&db, &context.target_dir)?;
     let coverage = discover_docs(&context.target_dir, &context.schema)?;
     let (external_refs, external_checks) = crate::external_refs::refresh_external_refs(
         &db,
@@ -540,6 +541,12 @@ fn fact_store_is_compatible(db: &SqliteConnection) -> Result<bool> {
         "external_refs",
         "docs_fts",
         "docs_trigram",
+        "code_cards",
+        "code_fts",
+        "code_trigram",
+        "doc_sections",
+        "sections_fts",
+        "sections_trigram",
     ];
     for table in required_tables {
         let exists = db.query(
@@ -851,7 +858,9 @@ fn initialize_fact_store(db: &SqliteConnection) -> Result<()> {
             span_end INTEGER NOT NULL,
             fingerprint TEXT NOT NULL,
             lang TEXT NOT NULL,
-            is_definition INTEGER NOT NULL DEFAULT 0
+            is_definition INTEGER NOT NULL DEFAULT 0,
+            signature TEXT NOT NULL DEFAULT '',
+            doc_comment TEXT NOT NULL DEFAULT ''
          ) WITHOUT ROWID;
          CREATE TABLE IF NOT EXISTS edges (
             src TEXT NOT NULL,
@@ -970,6 +979,39 @@ fn initialize_fact_store(db: &SqliteConnection) -> Result<()> {
             tokenize = 'trigram',
             content = 'docs',
             content_rowid = 'rowid'
+         );
+         CREATE TABLE IF NOT EXISTS code_cards (
+            node_id TEXT NOT NULL UNIQUE,
+            name TEXT NOT NULL,
+            split_name TEXT NOT NULL,
+            path TEXT NOT NULL,
+            signature TEXT NOT NULL,
+            doc_comment TEXT NOT NULL,
+            bridged TEXT NOT NULL
+         );
+         CREATE VIRTUAL TABLE IF NOT EXISTS code_fts USING fts5(
+            node_id UNINDEXED, name, split_name, path, signature, doc_comment, bridged,
+            tokenize = 'unicode61', content = 'code_cards', content_rowid = 'rowid'
+         );
+         CREATE VIRTUAL TABLE IF NOT EXISTS code_trigram USING fts5(
+            node_id UNINDEXED, name, split_name, path, signature, doc_comment, bridged,
+            tokenize = 'trigram', content = 'code_cards', content_rowid = 'rowid'
+         );
+         CREATE TABLE IF NOT EXISTS doc_sections (
+            node_id TEXT NOT NULL UNIQUE,
+            path TEXT NOT NULL,
+            title TEXT NOT NULL,
+            heading TEXT NOT NULL,
+            summary TEXT NOT NULL,
+            body TEXT NOT NULL
+         );
+         CREATE VIRTUAL TABLE IF NOT EXISTS sections_fts USING fts5(
+            node_id UNINDEXED, path, title, heading, summary, body,
+            tokenize = 'unicode61', content = 'doc_sections', content_rowid = 'rowid'
+         );
+         CREATE VIRTUAL TABLE IF NOT EXISTS sections_trigram USING fts5(
+            node_id UNINDEXED, path, title, heading, summary, body,
+            tokenize = 'trigram', content = 'doc_sections', content_rowid = 'rowid'
          );",
     )?;
     Ok(())
@@ -1392,6 +1434,12 @@ fn replace_fact_store_contents(db: &SqliteConnection, artifact: &IndexArtifact) 
         db.exec(
             "INSERT INTO docs_fts(docs_fts) VALUES ('delete-all');
              INSERT INTO docs_trigram(docs_trigram) VALUES ('delete-all');
+             INSERT INTO code_fts(code_fts) VALUES ('delete-all');
+             INSERT INTO code_trigram(code_trigram) VALUES ('delete-all');
+             INSERT INTO sections_fts(sections_fts) VALUES ('delete-all');
+             INSERT INTO sections_trigram(sections_trigram) VALUES ('delete-all');
+             DELETE FROM code_cards;
+             DELETE FROM doc_sections;
              DELETE FROM meta;
              DELETE FROM docs;
              DELETE FROM file_states;

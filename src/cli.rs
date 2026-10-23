@@ -28,15 +28,16 @@ use crate::history::{
 use crate::index::{open_fact_store, refresh_fact_store, scalar_count, EngineContext};
 use crate::output::{eprintln, finish_write, println};
 use crate::query::{
-    diagnose_query, diagnostic_hints, query_candidates, title_suggestions, DEFAULT_LIMIT,
+    diagnose_query, diagnostic_hints, query_bundles, query_candidates, title_suggestions,
+    QuerySide, DEFAULT_BUNDLE_LIMIT, DEFAULT_LIMIT,
 };
 use crate::render::{
     print_check_output, print_context_packet, print_current_context, print_doctor_report,
     print_handoff_context, print_history_diff, print_history_list, print_history_snapshot_result,
     print_history_status, print_index_result, print_init_preview, print_init_result,
-    print_init_summary, print_inspect_output, print_list_docs_rows, print_query_candidates,
-    print_rank_rows, print_refs_output, print_restore_plan, render_check_json,
-    render_context_packet_json, render_doctor_json, render_query_json,
+    print_init_summary, print_inspect_output, print_list_docs_rows, print_query_bundles,
+    print_query_candidates, print_rank_rows, print_refs_output, print_restore_plan,
+    render_check_json, render_context_packet_json, render_doctor_json, render_query_json,
 };
 use crate::schema::{
     default_context_schema_arg, load_schema, parse_schema, render_schema_copy,
@@ -205,11 +206,7 @@ fn run_check(args: &CheckArgs) -> Result<()> {
     }
     if !args.ack.is_empty() {
         let db = open_fact_store(&context.target_dir)?;
-        maintenance_changed |= crate::knowledge::acknowledge(
-            &context.target_dir,
-            &db,
-            &args.ack,
-        )?;
+        maintenance_changed |= crate::knowledge::acknowledge(&context.target_dir, &db, &args.ack)?;
     }
     if maintenance_changed {
         refresh_fact_store(&context)?;
@@ -546,35 +543,89 @@ fn run_query(query_args: &QueryArgs) -> Result<()> {
     refresh_fact_store(&context)?;
     let db = open_fact_store(&context.target_dir)?;
 
-    let candidates = query_candidates(
+    let has_code = scalar_count(
         &db,
-        &context.target_dir,
+        "SELECT COUNT(*) FROM nodes WHERE kind IN ('file', 'symbol');",
+    )? > 0;
+    let side = if query_args.docs {
+        QuerySide::Docs
+    } else if query_args.code {
+        QuerySide::Code
+    } else {
+        QuerySide::Mixed
+    };
+    let legacy = !has_code && side != QuerySide::Code;
+    let limit = query_args
+        .limit
+        .map(|limit| limit as usize)
+        .unwrap_or(if legacy {
+            DEFAULT_LIMIT
+        } else {
+            DEFAULT_BUNDLE_LIMIT
+        });
+    // Preserve the established document schema/ranking for existing clients;
+    // bundles contain the mixed ranking and code-only results.
+    let candidates = if side == QuerySide::Code {
+        Vec::new()
+    } else {
+        query_candidates(&db, &context.target_dir, &query_terms, limit)?
+    };
+    let bundle_limit = query_args
+        .limit
+        .map(|limit| limit as usize)
+        .unwrap_or(DEFAULT_BUNDLE_LIMIT);
+    let bundles = query_bundles(
+        &db,
         &query_terms,
-        query_args.limit as usize,
+        side,
+        bundle_limit,
+        legacy.then_some(candidates.as_slice()),
     )?;
-    let coverage = discover_docs(&context.target_dir, &context.schema)?;
-    usage::coverage(coverage.ratio);
-    usage::query_results(
-        candidates.len(),
+    let relaxed = if legacy {
         candidates.iter().any(|candidate| {
             candidate
                 .match_info
                 .as_ref()
                 .map(|info| info.mode == "relaxed")
                 .unwrap_or(false)
-        }),
+        })
+    } else {
+        bundles.iter().any(|bundle| {
+            bundle
+                .primary
+                .match_info
+                .as_ref()
+                .map(|info| info.mode == "relaxed")
+                .unwrap_or(false)
+        })
+    };
+    let empty = if legacy {
+        candidates.is_empty()
+    } else {
+        bundles.is_empty()
+    };
+    let coverage = discover_docs(&context.target_dir, &context.schema)?;
+    usage::coverage(coverage.ratio);
+    usage::query_results(
+        if legacy {
+            candidates.len()
+        } else {
+            bundles.len()
+        },
+        relaxed,
     );
-    let diagnostics = if candidates.is_empty() {
+    let diagnostics = if empty {
         Some(diagnose_query(
             &db,
             &context.target_dir,
             &query_terms,
             &coverage,
+            if legacy { QuerySide::Docs } else { side },
         )?)
     } else {
         None
     };
-    let suggestions = if candidates.is_empty() {
+    let suggestions = if empty && side != QuerySide::Code {
         title_suggestions(&db, &query_terms)?
     } else {
         Vec::new()
@@ -583,13 +634,7 @@ fn run_query(query_args: &QueryArgs) -> Result<()> {
         .as_ref()
         .map(diagnostic_hints)
         .unwrap_or_default();
-    if candidates.iter().any(|candidate| {
-        candidate
-            .match_info
-            .as_ref()
-            .map(|info| info.mode == "relaxed")
-            .unwrap_or(false)
-    }) {
+    if relaxed {
         query_hints.push("Fewer than three strict matches; partial matches are included with their missing terms.".to_string());
     }
     for suggestion in &suggestions {
@@ -606,13 +651,14 @@ fn run_query(query_args: &QueryArgs) -> Result<()> {
             render_query_json(
                 &query_terms,
                 &candidates,
+                &bundles,
                 &coverage,
                 &hints,
                 diagnostics.as_ref(),
                 &suggestions,
             )
         );
-    } else {
+    } else if legacy {
         print_query_candidates(&query_terms, &candidates);
         if args.target.options.verbose {
             print_coverage(
@@ -623,6 +669,23 @@ fn run_query(query_args: &QueryArgs) -> Result<()> {
         for hint in &query_hints {
             println!("Hint: {}", hint);
         }
+    } else {
+        let mut extra_lines = Vec::new();
+        if args.target.options.verbose {
+            extra_lines.push(format!(
+                "Coverage: {}/{} managed Markdown documents ({:.1}%).",
+                coverage.managed,
+                coverage.markdown_total,
+                coverage.ratio * 100.0
+            ));
+            extra_lines.extend(
+                indexed_hints(&context, &db, &args.target.options)?
+                    .iter()
+                    .map(|hint| format!("Hint: {hint}")),
+            );
+        }
+        extra_lines.extend(query_hints.iter().map(|hint| format!("Hint: {hint}")));
+        print_query_bundles(&query_terms, &bundles, &extra_lines);
     }
     Ok(())
 }

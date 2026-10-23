@@ -106,7 +106,10 @@ fn history_is_deterministic_despite_caller_git_configuration_and_identity() {
         .env("TZ", "Pacific/Honolulu")
         .output()
         .unwrap();
-    assert_success(&output, &["generate-weave-fixture.py", "hostile environment"]);
+    assert_success(
+        &output,
+        &["generate-weave-fixture.py", "hostile environment"],
+    );
     assert_eq!(
         serde_json::from_slice::<Value>(&output.stdout).unwrap(),
         expected
@@ -252,17 +255,25 @@ fn cochange_expectations_have_small_commit_evidence_and_bulk_only_negative_contr
             .collect::<Vec<_>>();
         for expected in case["expected_paths"].as_array().unwrap() {
             let path = expected.as_str().unwrap();
-            assert!(small.iter().any(|paths| paths.contains(path)), "{}", case["id"]);
+            assert!(
+                small.iter().any(|paths| paths.contains(path)),
+                "{}",
+                case["id"]
+            );
         }
         for forbidden in case["forbidden_paths"].as_array().unwrap() {
             let path = forbidden.as_str().unwrap();
-            assert!(small.iter().all(|paths| !paths.contains(path)), "{}", case["id"]);
+            assert!(
+                small.iter().all(|paths| !paths.contains(path)),
+                "{}",
+                case["id"]
+            );
         }
     }
 }
 
 #[test]
-fn runner_validates_all_three_corpora_and_executes_w3_and_w4_cases() {
+fn runner_executes_all_w0_cases_including_chinese_code_retrieval() {
     let output = python("evaluate-weave.py").output().unwrap();
     assert_success(&output, &["evaluate-weave.py"]);
     let report: Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -270,10 +281,18 @@ fn runner_validates_all_three_corpora_and_executes_w3_and_w4_cases() {
     assert_eq!(report["fixture_commits"], 10);
     assert_eq!(
         report["summary"],
-        json!({"total": 37, "executed": 29, "pending": 8,
+        json!({"total": 37, "executed": 37, "pending": 0,
             "by_kind": {"retrieval": 8, "drift": 20, "cochange": 9}})
     );
     assert!(report["cochange_coverage"].as_f64().unwrap() >= 0.9);
+    assert!(
+        report["retrieval_metrics"]["symbol_top3_rate"]
+            .as_f64()
+            .unwrap()
+            >= 0.8
+    );
+    assert_eq!(report["retrieval_metrics"]["chinese_queries"], 4);
+    assert_eq!(report["retrieval_metrics"]["section_top3_hits"], 8);
     let cases = report["cases"].as_array().unwrap();
     let ids = cases
         .iter()
@@ -281,13 +300,9 @@ fn runner_validates_all_three_corpora_and_executes_w3_and_w4_cases() {
         .collect::<BTreeSet<_>>();
     assert_eq!(ids.len(), 37);
     for case in cases {
-        if case["kind"] == "drift" || case["kind"] == "cochange" {
-            assert_eq!(case["status"], "passed");
-        } else {
-            assert_eq!(case["status"], "pending");
-        }
+        assert_eq!(case["status"], "passed", "{}", case);
         assert!(!case["required_steps"].as_array().unwrap().is_empty());
-        if case["kind"] == "cochange" {
+        if case["kind"] == "cochange" || case["kind"] == "retrieval" {
             assert!(case["score"].as_f64().unwrap() >= 0.9);
         } else {
             assert!(case.get("score").is_none());
@@ -326,8 +341,7 @@ fn generated_documents_are_managed_and_searchable_by_the_existing_cli() {
     for case in corpus()["cochange"].as_array().unwrap() {
         assert!(listed.contains(case["doc"].as_str().unwrap()));
     }
-    let query: Value =
-        serde_json::from_str(&repo.run(&["query", "令牌刷新", "--json"])).unwrap();
+    let query: Value = serde_json::from_str(&repo.run(&["query", "令牌刷新", "--json"])).unwrap();
     assert!(query["candidates"]
         .as_array()
         .unwrap()

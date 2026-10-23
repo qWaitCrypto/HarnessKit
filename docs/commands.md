@@ -10,7 +10,7 @@ Project commands default to the current directory and accept `--schema <path>`
 and `--docs-root <path>`. Input precedes the optional target directory:
 
 ```text
-harnesskit query <terms> [target_dir] [--limit N] [--json]
+harnesskit query <terms> [target_dir] [--docs|--code] [--limit N] [--json]
 harnesskit context <terms-or-path> [target_dir] [--json]
 harnesskit context --current [target_dir] [--json]
 harnesskit context --since <snapshot|latest|YYYY-MM-DD> [target_dir] [--json]
@@ -49,8 +49,38 @@ harnesskit query "auth session" examples/web-app-with-auth --json
 harnesskit context --current examples/web-app-with-auth --json
 ```
 
-Search uses strict and relaxed matches, defaults to eight candidates, and marks
-historical evidence. Read `coverage`, `hints` and candidate `match` fields. Zero
+Search uses strict and relaxed matches and marks historical evidence.
+Repositories with code return up to five knowledge bundles by default, with at
+most three related nodes each and forty text lines including hints. `--docs` and
+`--code` restrict both primary and related nodes to one side; `--limit N` changes
+the bundle count. Document-only repositories retain their existing text output,
+ranking and default of eight document candidates.
+
+JSON adds `bundles`: each has `primary`, `related`, `score` and `freshness`.
+Each related entry has a `node`, an `edge` (kind, confidence, weight and evidence)
+and freshness, including existing knowledge-lock drift checks and their commit/
+diff evidence. File-level associations projected onto contained symbols include
+`via_file`. Code from one file occupies one related slot; its other symbols are
+listed under `additional_symbols`, each with its own node, edge and freshness.
+Related slots prefer production code, then test code, then documents, using the
+chapter's own outgoing evidence. A file/directory anchor narrows to a symbol
+only when native code fields match; vocabulary from another chapter cannot
+create that local symbol association. Chapter summaries use their own first
+paragraph or list line and skip HTML tags and badge lines.
+The existing document `candidates` array remains unchanged in shape;
+`results` is its compatibility alias. These document arrays are empty under
+`--code`; code answers are in `bundles`.
+
+Code cards index original and split identifiers, path segments, declaration
+signatures, doc comments and bridged chapter titles/summaries. Bridging accepts
+EXTRACTED edges and cochange weights **>= 0.2**, never inferred mentions. Both
+sides use Unicode/trigram matching and the short-CJK fallback. Independent BM25
+recalls are fused with RRF (`k = 60`), then receive one weighted graph hop
+(`0.35`, normalized per source); ambiguous mentions affect scores but are omitted
+from related nodes. Incoming propagation is capped to prevent directory/link
+hubs dominating direct matches. Test files and code matched only through
+cochange vocabulary rank lower; explicit-anchor bridges retain full strength.
+Read `coverage`, `hints` and candidate `match` fields. Zero
 results exit 0 with diagnostics and title suggestions; change keywords before
 falling back to a source search. Explicit `index` is useful for inspecting index
 statistics; it is unnecessary before query, context or check.
@@ -150,8 +180,8 @@ not supply anchors. The derived `edges` table stores successful `anchor` edges
 with `EXTRACTED` confidence, weight 1 and document/section/line/column evidence;
 document and section endpoints live in `nodes`. Changed documents update these
 source facts, and code changes re-resolve them. Incompatible derived state rebuilds
-automatically, preserving schema and history. Knowledge locks and drift checks
-are reserved for W3; query bundles are reserved for W5.
+automatically, preserving schema and history. Query bundles reuse these graph
+facts and the existing knowledge-lock drift checks.
 The existing S5 storage gate retains its 35% budget for the document index,
 subtracting actual SQLite pages for Weave tables/indexes and reporting total size
 separately. Retrieval thresholds and frozen fixture inputs are unchanged.

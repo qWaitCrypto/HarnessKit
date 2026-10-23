@@ -12,7 +12,7 @@ use crate::doctor::DoctorReport;
 use crate::fs_utils::absolute_display_path;
 use crate::history::HistorySnapshot;
 use crate::index::{DocRelation, IndexArtifact};
-use crate::query::{QueryCandidate, QueryDiagnostics, TitleSuggestion};
+use crate::query::{QueryBundle, QueryCandidate, QueryDiagnostics, TitleSuggestion};
 
 // Only whitespace and numeric presentation differ from serde_json's formatters.
 // Keep alpha.6's multiline empty arrays, inline lists and two-decimal confidence.
@@ -330,6 +330,7 @@ fn limit_check_lists(value: &mut serde_json::Value, limit: usize) {
 pub(crate) fn render_query_json(
     query_terms: &str,
     candidates: &[QueryCandidate],
+    bundles: &[QueryBundle],
     coverage: &Coverage,
     hints: &[String],
     diagnostics: Option<&QueryDiagnostics>,
@@ -339,6 +340,8 @@ pub(crate) fn render_query_json(
     struct Report<'a> {
         query: &'a str,
         candidates: &'a [QueryCandidate],
+        results: &'a [QueryCandidate],
+        bundles: &'a [QueryBundle],
         coverage: &'a Coverage,
         hints: &'a [String],
         diagnostics: Option<&'a QueryDiagnostics>,
@@ -348,6 +351,8 @@ pub(crate) fn render_query_json(
         &Report {
             query: query_terms,
             candidates,
+            results: candidates,
+            bundles,
             coverage,
             hints,
             diagnostics,

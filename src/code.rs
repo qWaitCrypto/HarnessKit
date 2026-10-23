@@ -29,6 +29,8 @@ struct CodeNode {
     lang: String,
     // Keep declarations available to explicit anchors, but not inferred mentions.
     is_definition: bool,
+    signature: String,
+    doc_comment: String,
 }
 
 #[derive(Serialize)]
@@ -226,10 +228,11 @@ pub(crate) fn refresh_code_facts(
                 db.execute("DELETE FROM nodes WHERE path = ?1;", [path])?;
                 for node in nodes {
                     db.execute(
-                        "INSERT INTO nodes(id, kind, path, name, span_start, span_end, fingerprint, lang, is_definition)
-                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9);",
+                        "INSERT INTO nodes(id, kind, path, name, span_start, span_end, fingerprint, lang, is_definition, signature, doc_comment)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11);",
                         params![node.id, node.kind, node.path, node.name, node.span_start,
-                            node.span_end, node.fingerprint, node.lang, node.is_definition],
+                            node.span_end, node.fingerprint, node.lang, node.is_definition,
+                            node.signature, node.doc_comment],
                     )?;
                 }
             }

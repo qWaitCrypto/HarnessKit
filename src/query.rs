@@ -1,3 +1,9 @@
+mod cards;
+mod mixed;
+
+pub(crate) use cards::refresh_cards;
+pub(crate) use mixed::{query_bundles, BundleNode, QueryBundle, QuerySide, DEFAULT_BUNDLE_LIMIT};
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
@@ -46,6 +52,8 @@ pub(crate) struct QueryDiagnostics {
     pub(crate) indexed_docs: usize,
     pub(crate) index_empty: bool,
     pub(crate) query_empty: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) indexed_code_nodes: Option<usize>,
 }
 
 #[derive(serde::Serialize)]
@@ -54,6 +62,8 @@ pub(crate) struct TermDiagnostic {
     pub(crate) managed_hits: usize,
     pub(crate) unmanaged_hits: usize,
     pub(crate) unmanaged_paths: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) code_hits: Option<usize>,
 }
 
 #[derive(serde::Serialize)]
@@ -82,40 +92,137 @@ fn contains_cjk(term: &str) -> bool {
 
 // One posting list per term lets AND, OR, match explanations and zero-result
 // diagnostics use exactly the same matching rules (including short CJK terms).
-fn term_hits(db: &SqliteConnection, term: &str) -> Result<BTreeMap<String, f64>> {
-    let mut hits = BTreeMap::new();
-    let quoted = format!("\"{}\"", term.replace('"', "\"\""));
+struct SearchIndex {
+    fts: &'static str,
+    trigram: &'static str,
+    key: &'static str,
+    fields: &'static [(&'static str, f64)],
+}
+
+const DOC_INDEX: SearchIndex = SearchIndex {
+    fts: "docs_fts",
+    trigram: "docs_trigram",
+    key: "path",
+    fields: &[
+        ("path", 8.0),
+        ("title", 12.0),
+        ("headings_text", 5.0),
+        ("summary", 3.0),
+        ("body_tokens", 1.0),
+    ],
+};
+
+const SECTION_INDEX: SearchIndex = SearchIndex {
+    fts: "sections_fts",
+    trigram: "sections_trigram",
+    key: "node_id",
+    fields: &[
+        ("node_id", 0.0),
+        ("path", 8.0),
+        ("title", 12.0),
+        ("heading", 5.0),
+        ("summary", 3.0),
+        ("body", 1.0),
+    ],
+};
+
+const CODE_INDEX: SearchIndex = SearchIndex {
+    fts: "code_fts",
+    trigram: "code_trigram",
+    key: "node_id",
+    fields: &[
+        ("node_id", 0.0),
+        ("name", 12.0),
+        ("split_name", 10.0),
+        ("path", 8.0),
+        ("signature", 4.0),
+        ("doc_comment", 3.0),
+        ("bridged", 2.0),
+    ],
+};
+
+const NATIVE_CODE_INDEX: SearchIndex = SearchIndex {
+    fields: &[
+        ("node_id", 0.0),
+        ("name", 12.0),
+        ("split_name", 10.0),
+        ("path", 8.0),
+        ("signature", 4.0),
+        ("doc_comment", 3.0),
+        ("bridged", 0.0),
+    ],
+    ..CODE_INDEX
+};
+
+fn bm25_hits(
+    db: &SqliteConnection,
+    index: &SearchIndex,
+    phrase: &str,
+    trigram: bool,
+) -> Result<BTreeMap<String, f64>> {
+    let table = if trigram { index.trigram } else { index.fts };
+    let weights = index
+        .fields
+        .iter()
+        .map(|(_, weight)| weight.to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let columns = index
+        .fields
+        .iter()
+        .filter(|(_, weight)| *weight > 0.0)
+        .map(|(name, _)| *name)
+        .collect::<Vec<_>>()
+        .join(" ");
+    let quoted = format!("{{{columns}}} : \"{}\"", phrase.replace('"', "\"\""));
     let rows = db.query(
-        "SELECT path, -bm25(docs_fts, 8.0, 12.0, 5.0, 3.0, 1.0)
-         FROM docs_fts WHERE docs_fts MATCH ?1;",
+        &format!(
+            "SELECT {}, -bm25({table}, {weights}) FROM {table} WHERE {table} MATCH ?1;",
+            index.key
+        ),
         [&quoted],
     )?;
-    for row in rows.rows {
-        hits.insert(cell(&row, 0).to_string(), cell(&row, 1).parse()?);
-    }
+    rows.rows
+        .iter()
+        .map(|row| Ok((cell(row, 0).to_string(), cell(row, 1).parse()?)))
+        .collect()
+}
+
+fn search_term_hits(
+    db: &SqliteConnection,
+    index: &SearchIndex,
+    term: &str,
+) -> Result<BTreeMap<String, f64>> {
+    let mut hits = bm25_hits(db, index, term, false)?;
     if term.chars().count() >= 3 {
-        let rows = db.query(
-            "SELECT path, -bm25(docs_trigram, 8.0, 12.0, 5.0, 3.0, 1.0)
-             FROM docs_trigram WHERE docs_trigram MATCH ?1;",
-            [&quoted],
-        )?;
-        for row in rows.rows {
+        for (key, score) in bm25_hits(db, index, term, true)? {
             // Exact unicode tokens keep their BM25 score; trigram adds substrings.
-            hits.entry(cell(&row, 0).to_string())
-                .or_insert(cell(&row, 1).parse()?);
+            hits.entry(key).or_insert(score);
         }
     } else if contains_cjk(term) {
         // SQLite's trigram tokenizer cannot index one- or two-character terms.
         // query_tokens removes LIKE metacharacters before this bound pattern.
+        let mut fields = index
+            .fields
+            .iter()
+            .filter(|(_, weight)| *weight > 0.0)
+            .collect::<Vec<_>>();
+        fields.sort_by(|a, b| b.1.total_cmp(&a.1));
+        let cases = fields
+            .iter()
+            .map(|(field, weight)| format!("WHEN {field} LIKE ?1 THEN {weight}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let conditions = fields
+            .iter()
+            .map(|(field, _)| format!("{field} LIKE ?1"))
+            .collect::<Vec<_>>()
+            .join(" OR ");
         let rows = db.query(
-            "SELECT path,
-                    CASE WHEN title LIKE ?1 THEN 12.0
-                         WHEN path LIKE ?1 THEN 8.0
-                         WHEN headings_text LIKE ?1 THEN 5.0
-                         WHEN summary LIKE ?1 THEN 3.0 ELSE 1.0 END
-             FROM docs_fts
-             WHERE title LIKE ?1 OR path LIKE ?1 OR headings_text LIKE ?1
-                OR summary LIKE ?1 OR body_tokens LIKE ?1;",
+            &format!(
+                "SELECT {}, CASE {cases} ELSE 1.0 END FROM {} WHERE {conditions};",
+                index.key, index.fts
+            ),
             [format!("%{}%", term)],
         )?;
         for row in rows.rows {
@@ -124,6 +231,10 @@ fn term_hits(db: &SqliteConnection, term: &str) -> Result<BTreeMap<String, f64>>
         }
     }
     Ok(hits)
+}
+
+fn term_hits(db: &SqliteConnection, term: &str) -> Result<BTreeMap<String, f64>> {
+    search_term_hits(db, &DOC_INDEX, term)
 }
 
 pub(crate) fn query_candidates(
@@ -280,6 +391,7 @@ pub(crate) fn diagnose_query(
     target_dir: &Path,
     query_terms: &str,
     coverage: &Coverage,
+    side: QuerySide,
 ) -> Result<QueryDiagnostics> {
     let mut terms = Vec::new();
     for term in query_tokens(query_terms) {
@@ -302,13 +414,23 @@ pub(crate) fn diagnose_query(
             }
         }
         terms.push(TermDiagnostic {
-            managed_hits: term_hits(db, &term)?.len(),
+            managed_hits: if side == QuerySide::Code {
+                0
+            } else {
+                term_hits(db, &term)?.len()
+            },
+            code_hits: if side == QuerySide::Docs {
+                None
+            } else {
+                Some(search_term_hits(db, &CODE_INDEX, &term)?.len())
+            },
             term,
             unmanaged_hits,
             unmanaged_paths,
         });
     }
     let indexed_docs = scalar_count(db, "SELECT COUNT(*) FROM docs;")?;
+    let indexed_code_nodes = scalar_count(db, "SELECT COUNT(*) FROM code_cards;")?;
     let target_dir_empty = fs::read_dir(target_dir)?.all(|entry| {
         entry
             .map(|entry| matches!(entry.file_name().to_str(), Some(".harnesskit" | ".git")))
@@ -320,7 +442,12 @@ pub(crate) fn diagnose_query(
         target_dir: target_dir.canonicalize()?.display().to_string(),
         target_dir_empty,
         indexed_docs,
-        index_empty: indexed_docs == 0,
+        index_empty: match side {
+            QuerySide::Docs => indexed_docs == 0,
+            QuerySide::Code => indexed_code_nodes == 0,
+            QuerySide::Mixed => indexed_docs + indexed_code_nodes == 0,
+        },
+        indexed_code_nodes: (side != QuerySide::Docs).then_some(indexed_code_nodes),
     })
 }
 
@@ -328,9 +455,10 @@ pub(crate) fn diagnostic_hints(diagnostics: &QueryDiagnostics) -> Vec<String> {
     let mut hints = Vec::new();
     let mut terms = diagnostics.terms.iter().collect::<Vec<_>>();
     terms.sort_by_key(|term| {
+        let hits = term.managed_hits + term.code_hits.unwrap_or(0);
         (
-            term.managed_hits == 0,
-            term.managed_hits,
+            hits == 0,
+            hits,
             term.unmanaged_hits == 0,
             term.unmanaged_hits,
             std::cmp::Reverse(term.term.chars().count()),
@@ -352,7 +480,11 @@ pub(crate) fn diagnostic_hints(diagnostics: &QueryDiagnostics) -> Vec<String> {
         ));
     }
     if diagnostics.index_empty {
-        hints.push(format!("The index has no managed documents at {}. Review target_dir and `harnesskit doctor --layout`.", diagnostics.target_dir));
+        if diagnostics.indexed_code_nodes.is_some() {
+            hints.push(format!("No searchable code cards at {}. Review tracked files, ignore rules and `harnesskit doctor --code`.", diagnostics.target_dir));
+        } else {
+            hints.push(format!("The index has no managed documents at {}. Review target_dir and `harnesskit doctor --layout`.", diagnostics.target_dir));
+        }
     }
     for term in terms.iter().filter(|term| term.unmanaged_hits > 0) {
         hints.push(format!("`{}` occurs in {} unmanaged file(s): {}. Review coverage and add a schema include mapping.", term.term, term.unmanaged_hits, term.unmanaged_paths.join(", ")));

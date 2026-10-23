@@ -5,26 +5,29 @@ documents and commits are synthetic. Git and Python 3 are test prerequisites;
 Rust/TypeScript/Python/Go toolchains are not needed to generate the source files.
 No dependencies or production CLI behavior are added by W0.
 
-Run the evaluation skeleton from the HarnessKit root:
+Run the evaluation from the HarnessKit root:
 
 ```bash
 python3 scripts/evaluate-weave.py
 ```
 
 The runner generates history inside `TemporaryDirectory`, validates the corpus
-against its tagged revisions, executes the W3 drift and W4 cochange cases,
-removes the repository, and emits JSON. The eight W5 retrieval cases remain
-`pending`; the current fixture report has 29 executed cases and enforces at
-least 90% known cochange pairs in the document top eight. W9 will enforce the
-remaining design metrics. The existing S5 corpus and regression gates remain
-independent and unchanged.
+against its tagged revisions, executes W3 drift, W4 cochange and W5 retrieval,
+removes the repository, and emits JSON. All 37 cases now execute. Retrieval
+scores sections and symbols separately within mixed bundles (including related
+nodes), and independently requires symbol recall through `--code` so graph
+propagation cannot conceal a missing vocabulary bridge. `--docs` section ranks
+are also reported. The gates require symbol top three >= 80%, all expected mixed
+sections, and >= 90% known cochange pairs in the document top eight. W9 will
+enforce the remaining design metrics. The frozen S5 corpus and its ranking gates
+remain independent and unchanged.
 
 `tests/anchors.rs` connects the W2 prerequisites to the existing corpus: all eight
 retrieval cases must have real section-to-symbol EXTRACTED edges, and all twenty
 drift cases must resolve their anchors before each change. At the after revision,
 logic/format/review changes keep the edge; moves/deletions produce W2 info
-diagnostics. These assertions do not claim retrieval ranking; W3 drift and W4
-cochange behavior are evaluated by the runner described above.
+diagnostics. The runner additionally measures W5 retrieval ranking and W3/W4
+behavior as described above.
 
 For manual inspection, generate only in a disposable directory:
 
@@ -69,6 +72,6 @@ Paths are relative to the generated root. Revisions are the lightweight tags
 above. The runner checks IDs, revision/file/heading/symbol target presence and
 conflicting cochange expectations. `tests/weave_fixture.rs` additionally checks
 history reproducibility under hostile Git settings, nonempty destination safety,
-the scripted changes, bulk exclusion controls, pending reporting, invalid inputs,
+the scripted changes, bulk exclusion controls, evaluation reporting, invalid inputs,
 and document indexing/search through the existing CLI. These are fixture tests,
 not implementations of symbol extraction, structural hashing or mixed retrieval.

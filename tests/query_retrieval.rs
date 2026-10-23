@@ -110,14 +110,17 @@ fn frozen_query_metrics_improve_on_s4_without_per_query_regressions() {
         db.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
             .unwrap();
         let bytes = fs::metadata(database).unwrap().len();
-        // The S5 budget bounds document/trigram storage. W1/W2 add a separate
+        // The S5 budget bounds document/trigram storage. Weave adds a separate
         // graph; count its actual SQLite pages without relaxing the old gate.
         let weave_bytes: u64 = db
             .query_row(
                 "SELECT COALESCE(SUM(pgsize), 0) FROM dbstat
              WHERE name IN ('nodes', 'idx_nodes_path', 'edges', 'idx_edges_dst',
                             'cochange_stats', 'idx_cochange_stats_doc', 'cochange_files',
-                            'inline_code_spans');",
+                            'inline_code_spans', 'doc_sections',
+                            'sqlite_autoindex_doc_sections_1', 'sqlite_autoindex_code_cards_1')
+                OR name LIKE 'code_cards' OR name LIKE 'code_fts_%' OR name LIKE 'code_trigram_%'
+                OR name LIKE 'sections_fts_%' OR name LIKE 'sections_trigram_%';",
                 [],
                 |row| row.get(0),
             )

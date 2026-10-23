@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""Validate the W0 corpus and execute the W3/W4 Weave evaluations.
-
-Retrieval cases remain pending until W5 supplies the mixed document/code
-ranking evaluator.  Drift and cochange cases are run against the derived index.
-"""
+"""Validate the W0 corpus and execute the W3/W4/W5 Weave evaluations."""
 
 import argparse
 import json
@@ -112,6 +108,7 @@ def evaluate(corpus):
         validate_fixture(corpus, repo, manifest["revisions"])
         drift_cases = run_drift_cases(corpus, repo)
         cochange_cases, cochange_coverage = run_cochange_cases(corpus, repo)
+        retrieval_cases, retrieval_metrics = run_retrieval_cases(corpus, repo)
     cases = []
     for kind in REQUIRED_STEPS:
         for case in corpus[kind]:
@@ -120,15 +117,15 @@ def evaluate(corpus):
             elif kind == "cochange":
                 cases.append(cochange_cases[case["id"]])
             else:
-                cases.append(dict(id=case["id"], kind=kind, status="pending",
-                                  required_steps=REQUIRED_STEPS[kind]))
-    executed = sum(case["status"] == "passed" for case in cases)
+                cases.append(retrieval_cases[case["id"]])
+    executed = sum(case["status"] != "pending" for case in cases)
     return dict(schema_version=1, fixture="weave", fixture_validated=True,
                 fixture_commits=len(manifest["revisions"]), as_of=corpus["as_of"],
                 summary=dict(total=len(cases), executed=executed,
                              pending=len(cases) - executed,
                              by_kind={kind: len(corpus[kind]) for kind in REQUIRED_STEPS}),
-                cases=cases, cochange_coverage=cochange_coverage)
+                cases=cases, cochange_coverage=cochange_coverage,
+                retrieval_metrics=retrieval_metrics)
 
 
 def harnesskit_command():
@@ -161,6 +158,77 @@ def reset_derived_state(repo):
     state = repo / ".harnesskit" / "state"
     if state.exists():
         shutil.rmtree(state)
+
+
+def bundle_nodes(payload):
+    for bundle in payload["bundles"]:
+        yield bundle["primary"]
+        for related in bundle["related"]:
+            yield related["node"]
+            yield from (symbol["node"] for symbol in related.get("additional_symbols", []))
+
+
+def distinct(values):
+    return list(dict.fromkeys(values))
+
+
+def run_retrieval_cases(corpus, repo):
+    """Score sections and symbols independently in the mixed bundles.
+
+    Related nodes are real answers in the mixed bundles. The --code check also
+    requires direct code-card recall, so propagation cannot mask missing Chinese
+    vocabulary bridges. Neither the corpus nor its expected targets are changed.
+    """
+    results = {}
+    section_hits = symbol_hits = chinese_hits = chinese_count = 0
+    for case in corpus["retrieval"]:
+        reset_derived_state(repo)
+        subprocess.run(["git", "checkout", "--quiet", "--detach", case["revision"]],
+                       cwd=repo, check=True)
+        mixed = json.loads(run_cli(repo, "query", case["query"], "--json").stdout)
+        docs = json.loads(run_cli(repo, "query", case["query"], "--docs", "--json").stdout)
+        code = json.loads(run_cli(repo, "query", case["query"], "--code", "--json").stdout)
+        require(len(mixed["bundles"]) <= 5, f"bundle budget exceeded: {case['id']}")
+        require(all(len(bundle["related"]) <= 3 for bundle in mixed["bundles"]),
+                f"related-node budget exceeded: {case['id']}")
+        mixed_nodes = list(bundle_nodes(mixed))
+        mixed_sections = distinct((node["path"], node["heading"])
+                                  for node in mixed_nodes if node["kind"] == "section")
+        mixed_symbols = distinct(f"{node['path']}#{node['name']}"
+                                 for node in mixed_nodes if node["kind"] == "symbol")
+        sections = distinct((bundle["primary"]["path"], bundle["primary"]["heading"])
+                            for bundle in docs["bundles"]
+                            if bundle["primary"]["kind"] == "section")
+        symbols = distinct(f"{bundle['primary']['path']}#{bundle['primary']['name']}"
+                           for bundle in code["bundles"]
+                           if bundle["primary"]["kind"] == "symbol")
+        top_k = case["top_k"]
+        section_ok = all((target["path"], target["heading"]) in mixed_sections[:top_k]
+                         for target in case["expected_sections"])
+        symbol_ok = all(target in symbols[:top_k] and target in mixed_symbols[:top_k]
+                        for target in case["expected_symbols"])
+        section_hits += section_ok
+        symbol_hits += symbol_ok
+        chinese = any("\u4e00" <= ch <= "\u9fff" for ch in case["query"])
+        chinese_count += chinese
+        chinese_hits += chinese and symbol_ok
+        results[case["id"]] = dict(
+            id=case["id"], kind="retrieval", status="passed" if section_ok and symbol_ok else "failed",
+            required_steps=REQUIRED_STEPS["retrieval"], observed_sections=mixed_sections,
+            docs_only_sections=sections,
+            observed_symbols=symbols, mixed_sections=mixed_sections, mixed_symbols=mixed_symbols,
+            section_top3=section_ok, symbol_top3=symbol_ok,
+            score=float(symbol_ok),
+        )
+    count = len(corpus["retrieval"])
+    metrics = dict(queries=count, section_top3_hits=section_hits,
+                   section_top3_rate=section_hits / count, symbol_top3_hits=symbol_hits,
+                   symbol_top3_rate=symbol_hits / count, chinese_queries=chinese_count,
+                   chinese_symbol_top3_hits=chinese_hits,
+                   chinese_symbol_top3_rate=chinese_hits / chinese_count if chinese_count else 1.0)
+    require(metrics["symbol_top3_rate"] >= 0.8, f"W5 symbol top3 below 80%: {metrics}")
+    require(section_hits == count, f"W5 section retrieval regressed: {metrics}")
+    return results, metrics
 
 
 def run_drift_cases(corpus, repo):

@@ -1484,6 +1484,7 @@ fn query_candidates_include_snippet_heading_location_and_json() {
     let json = render_query_json(
         "phrase search",
         &candidates,
+        &[],
         &Default::default(),
         &[],
         None,
@@ -1508,6 +1509,50 @@ fn query_candidates_handles_punctuation_only_query() {
     let candidates = query_candidates(&db, &target, "--- ?! ::", DEFAULT_LIMIT).unwrap();
     assert!(candidates.is_empty());
 
+    fs::remove_dir_all(target).unwrap();
+}
+
+#[test]
+fn code_cards_bridge_only_extracted_or_threshold_cochange_evidence() {
+    let target = unique_temp_dir("code-bridge-threshold");
+    fs::create_dir_all(target.join("docs/design-docs")).unwrap();
+    fs::create_dir_all(target.join("src")).unwrap();
+    fs::write(
+        target.join("docs/design-docs/bridge.md"),
+        "# Bridge\n\n桥接词汇的摘要。\n",
+    )
+    .unwrap();
+    for index in 0..4 {
+        fs::write(
+            target.join(format!("src/target{index}.rs")),
+            format!("fn symbol_{index}() {{}}\n"),
+        )
+        .unwrap();
+    }
+    let context = EngineContext {
+        target_dir: target.clone(),
+        schema: bundled_schema(),
+    };
+    refresh_fact_store(&context).unwrap();
+    let db = open_fact_store(&target).unwrap();
+    for (index, confidence, kind, weight) in [
+        (0, "EXTRACTED", "import", 0.01),
+        (1, "INFERRED", "cochange", 0.2),
+        (2, "INFERRED", "cochange", 0.199999),
+        (3, "INFERRED", "mention", 1.0),
+    ] {
+        db.execute("INSERT INTO edges(src, dst, kind, confidence, weight, evidence_json) VALUES ('doc:docs/design-docs/bridge.md', ?1, ?2, ?3, ?4, '{}');", rusqlite::params![format!("file:src/target{index}.rs"), kind, confidence, weight]).unwrap();
+    }
+    crate::query::refresh_cards(&db, &target).unwrap();
+    for index in 0..4 {
+        let rows = db
+            .query(
+                "SELECT bridged FROM code_cards WHERE name = ?1;",
+                [format!("symbol_{index}")],
+            )
+            .unwrap();
+        assert_eq!(cell(&rows.rows[0], 0).contains("桥接词汇"), index < 2);
+    }
     fs::remove_dir_all(target).unwrap();
 }
 
@@ -1575,6 +1620,7 @@ fn json_parser_decodes_surrogate_pairs() {
 fn json_string_escapes_all_control_characters() {
     let rendered = render_query_json(
         "a\u{0001}\u{0008}\u{000c}z",
+        &[],
         &[],
         &Default::default(),
         &[],

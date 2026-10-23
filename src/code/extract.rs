@@ -56,6 +56,8 @@ impl Extractor {
             fingerprint: blake3::hash(text.as_bytes()).to_hex()[..12].to_string(),
             lang: lang.clone(),
             is_definition: false,
+            signature: String::new(),
+            doc_comment: String::new(),
         };
         if !self.languages.contains_key(grammar_key) {
             let Some((language, tags)) = grammar(grammar_key) else {
@@ -114,10 +116,71 @@ impl Extractor {
                     "package_clause" => false,
                     _ => true,
                 },
+                signature: signature(definition, text),
+                doc_comment: doc_comment(definition, text, &lang),
             });
         }
         Ok(nodes)
     }
+}
+
+fn signature(definition: Node<'_>, text: &str) -> String {
+    let end = definition
+        .child_by_field_name("body")
+        .or_else(|| {
+            definition
+                .child_by_field_name("value")
+                .and_then(|value| value.child_by_field_name("body"))
+        })
+        .map(|body| body.start_byte())
+        .unwrap_or_else(|| definition.end_byte());
+    text[definition.start_byte()..end]
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(1024)
+        .collect()
+}
+
+fn doc_comment(definition: Node<'_>, text: &str, lang: &str) -> String {
+    // Exports and decorators wrap the definition in the JS/Python grammars.
+    let attachment = definition
+        .parent()
+        .filter(|parent| matches!(parent.kind(), "export_statement" | "decorated_definition"))
+        .unwrap_or(definition);
+    let mut comments = Vec::new();
+    let mut start = attachment.start_byte();
+    let mut previous = attachment.prev_named_sibling();
+    while let Some(node) = previous {
+        let gap = &text[node.end_byte()..start];
+        if !gap.trim().is_empty() || gap.bytes().filter(|byte| *byte == b'\n').count() > 1 {
+            break;
+        }
+        if node.kind().contains("comment") {
+            let comment = text[node.byte_range()].trim();
+            if lang != "rust" || comment.starts_with("///") || comment.starts_with("/**") {
+                comments.push(comment.to_string());
+            }
+        } else if node.kind() != "attribute_item" {
+            break;
+        }
+        start = node.start_byte();
+        previous = node.prev_named_sibling();
+    }
+    comments.reverse();
+    if lang == "python" {
+        if let Some(string) = definition
+            .child_by_field_name("body")
+            .and_then(|body| body.named_child(0))
+            .filter(|statement| statement.kind() == "expression_statement")
+            .and_then(|statement| statement.named_child(0))
+            .filter(|expression| expression.kind() == "string")
+        {
+            comments.push(text[string.byte_range()].to_string());
+        }
+    }
+    comments.join("\n")
 }
 
 fn grammar(lang: &str) -> Option<(Language, String)> {

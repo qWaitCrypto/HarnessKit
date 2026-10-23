@@ -1,6 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
+use pulldown_cmark::{Event, Parser, Tag, TagEnd};
+
 use crate::fs_utils::normalize_path;
 
 pub(crate) struct ParsedDoc {
@@ -292,36 +294,58 @@ fn normalize_link(src_doc: &str, raw: &str) -> Option<String> {
 }
 
 fn extract_summary(body: &str) -> String {
-    let mut paragraph = Vec::new();
-    let mut in_fence = false;
-    for line in body.lines() {
-        let line_in_fence = in_fence;
-        let is_fence_line = is_backtick_fence_line(line);
-        if is_fence_line {
-            in_fence = !in_fence;
+    for (event, range) in Parser::new(body).into_offset_iter() {
+        let text = match event {
+            Event::Start(Tag::Paragraph) => &body[range],
+            // Tight lists have no paragraph events. Their first line is a
+            // useful summary for sections consisting entirely of requirements.
+            Event::Start(Tag::Item) => body[range].lines().next().unwrap_or_default(),
+            _ => continue,
+        };
+        let summary = summary_prose(text);
+        if !summary.is_empty() {
+            return summary;
         }
-        if line_in_fence || is_fence_line {
-            if !paragraph.is_empty() {
-                break;
-            }
-            continue;
-        }
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            if !paragraph.is_empty() {
-                break;
-            }
-            continue;
-        }
-        if trimmed.starts_with('#') || trimmed.starts_with("- ") {
-            if !paragraph.is_empty() {
-                break;
-            }
-            continue;
-        }
-        paragraph.push(trimmed);
     }
-    paragraph.join(" ")
+    String::new()
+}
+
+fn summary_prose(text: &str) -> String {
+    let text = text
+        .lines()
+        .filter(|line| !line.trim().starts_with("![") && !line.trim().starts_with("[!["))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut image_depth = 0;
+    let mut visible = false;
+    let mut omitted = Vec::new();
+    for (event, range) in Parser::new(&text).into_offset_iter() {
+        match event {
+            Event::Start(Tag::Image { .. }) => {
+                image_depth += 1;
+                omitted.push(range);
+            }
+            Event::End(TagEnd::Image) => image_depth -= 1,
+            Event::Html(_) | Event::InlineHtml(_) => omitted.push(range),
+            Event::Text(value) | Event::Code(value) if image_depth == 0 => {
+                visible |= !value.trim().is_empty();
+            }
+            _ => {}
+        }
+    }
+    if !visible {
+        return String::new();
+    }
+    let mut prose = String::new();
+    let mut offset = 0;
+    for range in omitted {
+        if range.start >= offset {
+            prose.push_str(&text[offset..range.start]);
+            offset = range.end;
+        }
+    }
+    prose.push_str(&text[offset..]);
+    prose.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 pub(crate) fn extract_inline_code_path_mentions(text: &str) -> Vec<String> {
