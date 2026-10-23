@@ -1,0 +1,12 @@
+[
+  {"name":"query-rust-chinese","fixture":"w0","kind":"query","args":["query","令牌刷新"],"terms":["令牌","刷新"],"snapshot":"query-rust-chinese.snap"},
+  {"name":"query-rust-symbol","fixture":"w0","kind":"query","args":["query","refresh_token"],"terms":["refresh_token"],"snapshot":"query-rust-symbol.snap"},
+  {"name":"query-typescript-chinese","fixture":"w0","kind":"query","args":["query","缓存续期"],"terms":["缓存","续期"],"snapshot":"query-typescript-chinese.snap"},
+  {"name":"query-python-chinese","fixture":"w0","kind":"query","args":["query","队列重试"],"terms":["队列","重试"],"snapshot":"query-python-chinese.snap"},
+  {"name":"context-file","fixture":"w0","kind":"context","args":["context","--for","src/auth/refresh.rs"],"terms":["refresh","auth"],"snapshot":"context-file.snap"},
+  {"name":"context-symbol","fixture":"w0","kind":"context","args":["context","--for","refresh_token"],"terms":["refresh","token"],"snapshot":"context-symbol.snap"},
+  {"name":"context-diff","fixture":"w0","kind":"context","args":["context","--diff"],"terms":["changed","code"],"snapshot":"context-diff.snap"},
+  {"name":"context-current","fixture":"repo","kind":"context","args":["context","--current"],"terms":["context","entrypoints"],"snapshot":"context-current.snap"},
+  {"name":"context-document","fixture":"repo","kind":"context","args":["context","docs/commands.md"],"terms":["context","command"],"snapshot":"context-document.snap"},
+  {"name":"check-anchors","fixture":"repo","kind":"check","args":["check","--rules","anchors"],"terms":["checks","coverage"],"snapshot":"check-anchors.snap"}
+]

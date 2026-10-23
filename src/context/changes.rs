@@ -180,7 +180,7 @@ pub(crate) fn build_diff_context(
 
 pub(crate) fn validate_diff_repository(root: &Path) -> Result<()> {
     if git_repo_check(root).0 != Some(true) {
-        return Err("context --diff requires a Git working tree (非 git 仓库); use context --for <path|symbol|dir> instead".into());
+        return Err("context --diff requires a Git working tree; use context --for <path|symbol|dir> instead".into());
     }
     Ok(())
 }
@@ -438,7 +438,7 @@ pub(super) fn snapshot_code_changes(
         hint: None,
     };
     let Some(snapshot) = snapshot else {
-        summary.hint = Some("尚无快照；运行 history snapshot -m <message> 建立代码指纹基线。");
+        summary.hint = Some("No snapshot yet; run history snapshot -m <message> to establish a code baseline.");
         return Ok(summary);
     };
     let graph = CodeGraph::load(db, &read_anchor_lock(root)?)?;
@@ -447,12 +447,12 @@ pub(super) fn snapshot_code_changes(
         changed_fingerprints(before, &graph.regions)
     } else if let Some(head) = &snapshot.host_git_head {
         if git_repo_check(root).0 != Some(true) {
-            summary.hint = Some("旧快照没有代码指纹，且当前非 git 仓库；运行 history snapshot --allow-empty 创建新基线。");
+            summary.hint = Some("The old snapshot has no code fingerprints and this is not a Git repository; run history snapshot --allow-empty to create a new baseline.");
             return Ok(summary);
         }
         summary.baseline = "legacy-git-head";
         summary.hint =
-            Some("旧快照没有代码指纹，回退到快照的 Git HEAD；可能包含快照时已有的未提交改动。");
+            Some("The old snapshot has no code fingerprints; falling back to its Git HEAD may include edits that were already uncommitted at snapshot time.");
         match git_changes(root, schema, Some(head)) {
             Ok((_, changes)) => changes
                 .into_iter()
@@ -460,14 +460,14 @@ pub(super) fn snapshot_code_changes(
                 .collect(),
             Err(_) => {
                 summary.hint = Some(
-                    "旧快照的 Git HEAD 已不可用；运行 history snapshot --allow-empty 创建新基线。",
+                    "The old snapshot Git HEAD is unavailable; run history snapshot --allow-empty to create a new baseline.",
                 );
                 return Ok(summary);
             }
         }
     } else {
         summary.hint = Some(
-            "旧快照没有代码基线；运行 history snapshot --allow-empty -m <message> 创建新快照。",
+            "The old snapshot has no code baseline; run history snapshot --allow-empty -m <message> to create a new snapshot.",
         );
         return Ok(summary);
     };

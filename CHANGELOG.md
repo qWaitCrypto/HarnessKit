@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased (W5b output contract)
+
+- Query and context text now use KWIC excerpts, abnormal-only badges, merged
+  symbols/chapters, a shared token budget and opaque paging cursors. Query sets
+  are cached under `.harnesskit/state/query-cache/` and invalidated by index
+  generation; JSON keeps the existing fields and adds `next_cursor` and
+  `truncated` (use `--full` when verbose evidence is required).
+- Default query/context output omits coverage and repeated hints; check keeps a
+  single coverage line. Existing JSON evidence fields remain for compatibility;
+  future cleanup of redundant legacy fields is tracked here for the 0.2.0
+  migration notes.
+
 ## 0.1.0-alpha.7
 
 ### Breaking and behavior changes

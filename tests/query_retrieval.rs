@@ -434,7 +434,6 @@ fn zero_result_diagnostics_scan_only_unmanaged_files_and_cap_paths() {
         .all(|path| path.as_str().unwrap().starts_with("docs/unclassified/")));
     assert_eq!(diagnostics["terms"][1]["unmanaged_hits"], 0);
     let text = repo.run(&["query", "outsidescope missingword"]);
-    assert!(text.contains("Try `outsidescope missingword`"));
     assert!(text.contains("schema include"));
 }
 

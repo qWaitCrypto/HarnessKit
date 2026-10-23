@@ -231,6 +231,21 @@ pub(crate) struct CommonArgs {
     /// Explain coverage and inferred layout, including previously shown hints.
     #[arg(long)]
     pub(crate) verbose: bool,
+    /// Approximate output token budget (default: 1500).
+    #[arg(long, value_name = "TOKENS", value_parser = clap::value_parser!(u32).range(1..))]
+    pub(crate) budget: Option<u32>,
+    /// Expand one result bundle or context section.
+    #[arg(long, value_name = "N", value_parser = clap::value_parser!(u32).range(1..))]
+    pub(crate) expand: Option<u32>,
+    /// Select a result page (one-based).
+    #[arg(long, value_name = "K", value_parser = clap::value_parser!(u32).range(1..))]
+    pub(crate) page: Option<u32>,
+    /// Continue from an opaque result cursor.
+    #[arg(long, value_name = "TOKEN")]
+    pub(crate) cursor: Option<String>,
+    /// Include verbose evidence fields in JSON output.
+    #[arg(long)]
+    pub(crate) full: bool,
     /// Explain document layout inference and coverage (doctor).
     #[arg(long)]
     pub(crate) layout: bool,

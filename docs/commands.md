@@ -10,12 +10,13 @@ Project commands default to the current directory and accept `--schema <path>`
 and `--docs-root <path>`. Input precedes the optional target directory:
 
 ```text
-harnesskit query <terms> [target_dir] [--docs|--code] [--limit N] [--json]
+harnesskit query <terms> [target_dir] [--docs|--code] [--limit N] [--budget N]
+                  [--expand N] [--page K|--cursor TOKEN] [--json|--full]
 harnesskit context <terms-or-path> [target_dir] [--json]
 harnesskit context --current [target_dir] [--json]
 harnesskit context --since <snapshot|latest|YYYY-MM-DD> [target_dir] [--json]
-harnesskit context --for <path|symbol|dir> [target_dir] [--json]
-harnesskit context --diff [<rev>] [--json]
+harnesskit context --for <path|symbol|dir> [target_dir] [--budget N] [--page K] [--json]
+harnesskit context --diff [<rev>] [--budget N] [--page K] [--json]
 harnesskit check [target_dir] [--format summary|full|json] [--all]
 harnesskit index [target_dir] [--json]
 harnesskit list-docs [target_dir] [--json]
@@ -39,7 +40,7 @@ In `context --current`/`--since` mode the sole positional is the target; bare
 include their text, lifecycle and edge evidence; current decisions and active
 plans sort first. Cochanged files are the top five inferred neighbours, using
 W4's scope, decay and large-commit filter. Lock states distinguish drift, moves
-and broken anchors. No associations returns `无关联文档` and suggests writing an
+and broken anchors. No associations return `No related documents` and suggest writing an
 inline-code anchor in a decision or experience chapter; W7's suggest command is
 not required. Symbol ambiguity lists candidates and suggests a qualified anchor.
 
@@ -59,9 +60,12 @@ revision is optional, use `context /path/to/repo --diff` or
 `--for`, `--diff`, `--current` and `--since` are mutually exclusive; the existing
 `context <terms-or-doc-path> [target_dir]` interface remains unchanged.
 
-These text packets use at most forty lines. JSON retains `coverage`, `hints`,
-bounded lists and omitted counts in `truncated`; file/region/document totals are
-computed before truncation. `--current` adds at most eight lines about code since
+These text packets use a shared approximate token budget (1500 by default), page
+with `--page` or an opaque `--cursor`, and show at most one short hint. Normal
+query/context text omits coverage; check keeps one coverage line. JSON retains
+`coverage`, `hints`, bounded lists and omitted counts in `truncated`, and query,
+context and check reports include `next_cursor`. `--full` retains verbose evidence
+fields. `--current` adds at most eight lines about code since
 the last snapshot. New snapshots include code fingerprints (including dirty code),
 without storing source contents or changing document restore scope. Code-only
 structural changes create a new checkpoint. Legacy snapshots remain readable;

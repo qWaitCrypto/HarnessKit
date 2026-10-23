@@ -379,13 +379,19 @@ pub(crate) fn build_code_context(
             .map(|region| region.path.clone())
             .collect::<BTreeSet<_>>(),
     )?;
-    let message = documents.is_empty().then_some("无关联文档");
+    let message = documents.is_empty().then_some("No related documents");
     let mut anchor_counts = BTreeMap::new();
     for state in &states {
         *anchor_counts.entry(state.status.clone()).or_default() += 1;
     }
     let mut truncated = BTreeMap::new();
     cap(&mut documents, DOC_LIMIT, "documents", &mut truncated);
+    // A full document page is intentionally treated as potentially bounded so
+    // clients can offer a continuation even when the graph supplied exactly
+    // the display limit.
+    if documents.len() == DOC_LIMIT {
+        truncated.entry("documents".to_string()).or_insert(1);
+    }
     cap(&mut targets, REGION_LIMIT, "targets", &mut truncated);
     states.sort_by_key(|state| {
         (

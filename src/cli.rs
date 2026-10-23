@@ -33,12 +33,16 @@ use crate::query::{
     QuerySide, DEFAULT_BUNDLE_LIMIT, DEFAULT_LIMIT,
 };
 use crate::render::{
-    print_check_output, print_context_packet, print_current_context, print_doctor_report,
+    print_check_output, print_context_packet, print_context_packet_with_options,
+    print_current_context_with_options, print_doctor_report,
     print_handoff_context, print_history_diff, print_history_list, print_history_snapshot_result,
     print_history_status, print_index_result, print_init_preview, print_init_result,
-    print_init_summary, print_inspect_output, print_list_docs_rows, print_query_bundles,
-    print_query_candidates, print_rank_rows, print_refs_output, print_restore_plan,
-    render_check_json, render_context_packet_json, render_doctor_json, render_query_json,
+    print_init_summary, print_inspect_output, print_list_docs_rows,
+    print_query_bundles_with_options, print_query_candidates_with_options,
+    print_rank_rows, print_refs_output, print_restore_plan,
+    render_check_json, render_check_json_page, render_context_packet_json,
+    render_context_packet_json_page, render_doctor_json, render_query_json_page,
+    render_covered_json_page, RenderOptions,
 };
 use crate::schema::{
     default_context_schema_arg, load_schema, parse_schema, render_schema_copy,
@@ -54,6 +58,34 @@ pub(crate) struct CommandOptions {
     pub(crate) json: bool,
     pub(crate) strict: bool,
     pub(crate) rules: Option<BTreeSet<String>>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct CachedQuerySet {
+    candidates: Vec<crate::query::QueryCandidate>,
+    bundles: Vec<crate::query::QueryBundle>,
+}
+
+fn render_options(options: &CommonArgs) -> RenderOptions {
+    RenderOptions::from_values(
+        options.budget,
+        options.expand,
+        options.page,
+        options.cursor.clone(),
+        options.full,
+        options.verbose,
+    )
+}
+
+fn relevant_query_hint(hints: &[String]) -> Option<String> {
+    if hints.iter().any(|hint| hint.contains("schema include")) {
+        return Some("Review coverage and add a schema include mapping for unmanaged results.".to_string());
+    }
+    hints
+        .iter()
+        .find(|hint| hint.starts_with("Did you mean"))
+        .or_else(|| hints.first())
+        .cloned()
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -184,8 +216,10 @@ fn run_check(args: &CheckArgs) -> Result<()> {
                         &checks,
                         &BaselineDelta::default(),
                         args.all || format == CheckFormat::Full,
+                        None,
+                        &RenderOptions::default(),
                     );
-                    println!("Hint: {}", hints[0]);
+                    let _ = hints;
                 }
                 usage::results(1);
                 usage::exit(1);
@@ -247,9 +281,11 @@ fn run_check(args: &CheckArgs) -> Result<()> {
         .filter(|check| !check.suppressed && check.severity == "error")
         .count();
     if format == CheckFormat::Json {
+        let next_cursor = (checks.len() > 20)
+            .then(|| crate::render::cursor_for_offset(20, "check"));
         println!(
             "{}",
-            render_check_json(
+            render_check_json_page(
                 target_dir,
                 docs_count,
                 relation_count,
@@ -257,7 +293,8 @@ fn run_check(args: &CheckArgs) -> Result<()> {
                 &coverage,
                 &hints,
                 &baseline,
-                args.all
+                args.all || args.target.options.full,
+                next_cursor.as_deref()
             )
         );
         if error_count > 0 || (options.strict && warning_count > 0) {
@@ -267,6 +304,7 @@ fn run_check(args: &CheckArgs) -> Result<()> {
     }
 
     let full = args.all || format == CheckFormat::Full;
+    let check_render_options = render_options(&args.target.options);
     print_check_output(
         target_dir,
         docs_count,
@@ -274,25 +312,15 @@ fn run_check(args: &CheckArgs) -> Result<()> {
         &checks,
         &baseline,
         full,
+        orphan_hints
+            .first()
+            .map(String::as_str)
+            .or_else(|| args.target.options.verbose.then(|| hints.first()).flatten().map(String::as_str)),
+        &check_render_options,
     );
-    if full {
-        print_coverage(&coverage, &hints);
-    } else {
-        println!("{}", coverage.summary());
-        let explanations = coverage.explanation_hints();
-        for hint in hints.iter().filter(|hint| explanations.contains(hint)) {
-            println!("Hint: {}", hint);
-        }
-        for hint in orphan_hints.iter().take(3) {
-            println!("Hint: {}", hint);
-        }
-        if orphan_hints.len() > 3 {
-            println!(
-                "Hint: {} more orphan-state hints; use check --all to review.",
-                orphan_hints.len() - 3
-            );
-        }
-    }
+    // Check keeps one compact coverage line for maintenance triage.  The
+    // shared renderer already limits actionable hints to one short line.
+    println!("{}", coverage.summary());
 
     if error_count > 0 || (options.strict && warning_count > 0) {
         usage::exit(1);
@@ -540,7 +568,6 @@ fn run_query(query_args: &QueryArgs) -> Result<()> {
     let query_terms = args.input.clone().ok_or("query requires <terms>")?;
     usage::query_text(&query_terms);
     let context = load_engine_context(&args.target)?;
-    let options = command_options(&args.target.options, Some(&context.schema));
     refresh_fact_store(&context)?;
     let db = open_fact_store(&context.target_dir)?;
 
@@ -564,24 +591,107 @@ fn run_query(query_args: &QueryArgs) -> Result<()> {
         } else {
             DEFAULT_BUNDLE_LIMIT
         });
-    // Preserve the established document schema/ranking for existing clients;
-    // bundles contain the mixed ranking and code-only results.
+    let bundle_limit = if legacy && query_args.limit.is_none() {
+        DEFAULT_BUNDLE_LIMIT
+    } else {
+        limit
+    };
+    let render_options = render_options(&args.target.options);
+    let cache_limit = limit.saturating_mul(8).max(64);
+    let generation = crate::render::cache::generation(&db)?;
+    let descriptor = format!(
+        "query={}\nside={}\nlimit={}\nbudget={}\nexpand={:?}\nfull={}",
+        query_terms
+            .split_whitespace()
+            .map(str::to_lowercase)
+            .collect::<Vec<_>>()
+            .join(" "),
+        match side {
+            QuerySide::Mixed => "mixed",
+            QuerySide::Docs => "docs",
+            QuerySide::Code => "code",
+        },
+        cache_limit,
+        render_options.budget,
+        render_options.expand,
+        render_options.full
+    );
+    let cache_key = crate::render::cache::key(&generation, &descriptor);
+    let cached: Option<CachedQuerySet> = crate::render::cache::read(
+        &context.target_dir,
+        &cache_key,
+        &generation,
+    )?;
+    let cached = if let Some(cached) = cached {
+        cached
+    } else {
+        // Preserve the established document schema/ranking for existing
+        // clients; bundles contain the mixed ranking and code-only results.
+        let candidates = if side == QuerySide::Code {
+            Vec::new()
+        } else {
+            query_candidates(&db, &context.target_dir, &query_terms, cache_limit)?
+        };
+        let bundles = query_bundles(
+            &db,
+            &query_terms,
+            side,
+            cache_limit,
+            legacy.then_some(candidates.as_slice()),
+        )?;
+        let cached = CachedQuerySet { candidates, bundles };
+        let _ = crate::render::cache::write(
+            &context.target_dir,
+            &cache_key,
+            &generation,
+            &cached,
+        );
+        cached
+    };
+    let result_offset = render_options
+        .cursor
+        .as_deref()
+        .and_then(crate::render::cursor_offset)
+        .unwrap_or_else(|| (render_options.page.saturating_sub(1)) * limit);
+    let bundle_offset = render_options
+        .cursor
+        .as_deref()
+        .and_then(crate::render::cursor_offset)
+        .unwrap_or_else(|| (render_options.page.saturating_sub(1)) * bundle_limit);
+    let result_end = result_offset.saturating_add(limit);
+    let bundle_end = bundle_offset.saturating_add(bundle_limit);
     let candidates = if side == QuerySide::Code {
         Vec::new()
     } else {
-        query_candidates(&db, &context.target_dir, &query_terms, limit)?
+        cached
+            .candidates
+            .iter()
+            .skip(result_offset)
+            .take(limit)
+            .cloned()
+            .collect::<Vec<_>>()
     };
-    let bundle_limit = query_args
-        .limit
-        .map(|limit| limit as usize)
-        .unwrap_or(DEFAULT_BUNDLE_LIMIT);
-    let bundles = query_bundles(
-        &db,
-        &query_terms,
-        side,
-        bundle_limit,
-        legacy.then_some(candidates.as_slice()),
-    )?;
+    let bundles = cached
+        .bundles
+        .iter()
+        .skip(bundle_offset)
+        .take(bundle_limit)
+        .cloned()
+        .collect::<Vec<_>>();
+    let total_results = if legacy {
+        cached.candidates.len()
+    } else {
+        cached.bundles.len()
+    };
+    let truncated_results = total_results.saturating_sub(
+        if legacy {
+            result_end.min(total_results)
+        } else {
+            bundle_end.min(total_results)
+        },
+    );
+    let next_cursor = (result_end < total_results)
+        .then(|| crate::render::cursor_for_offset(result_end, "query"));
     let relaxed = if legacy {
         candidates.iter().any(|candidate| {
             candidate
@@ -644,12 +754,17 @@ fn run_query(query_args: &QueryArgs) -> Result<()> {
             suggestion.title, suggestion.path
         ));
     }
-    if options.json {
-        let mut hints = indexed_hints(&context, &db, &args.target.options)?;
-        hints.extend(query_hints.iter().cloned());
+    let mut hints = query_hints.clone();
+    if let Some(hint) = project_hint(&context.target_dir, &context.schema) {
+        hints.push(hint);
+    }
+    if args.target.options.verbose {
+        hints.extend(indexed_hints(&context, &db, &args.target.options)?);
+    }
+    if args.target.options.json {
         println!(
             "{}",
-            render_query_json(
+            render_query_json_page(
                 &query_terms,
                 &candidates,
                 &bundles,
@@ -657,36 +772,61 @@ fn run_query(query_args: &QueryArgs) -> Result<()> {
                 &hints,
                 diagnostics.as_ref(),
                 &suggestions,
+                next_cursor.as_deref(),
+                truncated_results,
+                render_options.full,
             )
         );
     } else if legacy {
-        print_query_candidates(&query_terms, &candidates);
+        let mut display_options = render_options.clone();
+        display_options.page = 1;
+        display_options.cursor = None;
+        let mut extra = Vec::new();
         if args.target.options.verbose {
-            print_coverage(
-                &coverage,
-                &indexed_hints(&context, &db, &args.target.options)?,
-            );
+            extra.push(coverage.summary());
         }
-        for hint in &query_hints {
-            println!("Hint: {}", hint);
+        if truncated_results > 0 {
+            extra.push(format!(
+                "… {} more (harnesskit query --page {})",
+                truncated_results,
+                render_options.page.saturating_add(1)
+            ));
         }
+        if let Some(hint) = relevant_query_hint(&hints) {
+            extra.push(hint);
+        }
+        print_query_candidates_with_options(
+            &context.target_dir,
+            &query_terms,
+            &candidates,
+            &extra,
+            &display_options,
+        );
     } else {
+        let mut display_options = render_options.clone();
+        display_options.page = 1;
+        display_options.cursor = None;
         let mut extra_lines = Vec::new();
         if args.target.options.verbose {
-            extra_lines.push(format!(
-                "Coverage: {}/{} managed Markdown documents ({:.1}%).",
-                coverage.managed,
-                coverage.markdown_total,
-                coverage.ratio * 100.0
-            ));
-            extra_lines.extend(
-                indexed_hints(&context, &db, &args.target.options)?
-                    .iter()
-                    .map(|hint| format!("Hint: {hint}")),
-            );
+            extra_lines.push(coverage.summary());
         }
-        extra_lines.extend(query_hints.iter().map(|hint| format!("Hint: {hint}")));
-        print_query_bundles(&query_terms, &bundles, &extra_lines);
+        if truncated_results > 0 {
+            extra_lines.push(format!(
+                "… {} more (harnesskit query --page {})",
+                truncated_results,
+                render_options.page.saturating_add(1)
+            ));
+        }
+        if let Some(hint) = relevant_query_hint(&hints) {
+            extra_lines.push(hint);
+        }
+        print_query_bundles_with_options(
+            &context.target_dir,
+            &query_terms,
+            &bundles,
+            &extra_lines,
+            &display_options,
+        );
     }
     Ok(())
 }
@@ -740,9 +880,8 @@ fn run_context(args: &ContextArgs) -> Result<()> {
         let db = open_fact_store(&context.target_dir)?;
         let coverage = discover_docs(&context.target_dir, &context.schema)?;
         usage::coverage(coverage.ratio);
-        let mut hints = indexed_hints(&context, &db, &target.options)?;
-        hints.truncate(2);
-        hints.push("覆盖指 current 文档的锚点或无歧义提及；同提交关系仅是推断线索。".to_string());
+        let render_options = render_options(&target.options);
+        let mut hints = Vec::new();
         if let Some(input) = &args.code_for {
             let packet = build_code_context(
                 &db,
@@ -767,23 +906,40 @@ fn run_context(args: &ContextArgs) -> Result<()> {
                         )
                     })
                     .unwrap_or_else(|| "src/file.rs#symbol".to_string());
-                hints.push(format!("suggest: 在决策或经验章节中用反引号写代码锚点，例如 `{example}`（目录可写 `src/`）。"));
+                hints.push(format!("Suggestion: add a code anchor such as `{example}` to the relevant decision or note; directories such as `src/` are also valid."));
             }
             if packet.ambiguous {
-                hints.push(
-                    "符号匹配到多处，已汇总所有候选；使用 --for <path#symbol> 缩小范围。"
-                        .to_string(),
-                );
+                hints.push("The symbol has multiple matches; use --for <path#symbol> to narrow it.".to_string());
+            }
+            if target.options.verbose {
+                hints.extend(indexed_hints(&context, &db, &target.options)?);
             }
             if target.options.json {
+                let next_cursor = (!packet.truncated.is_empty())
+                    .then(|| crate::render::cursor_for_offset(1, "context"));
                 println!(
                     "{}",
-                    crate::render::render_covered_json(&packet, &coverage, &hints)
+                    render_covered_json_page(
+                        &packet,
+                        &coverage,
+                        &hints,
+                        next_cursor.as_deref(),
+                        packet.truncated.values().sum(),
+                        render_options.full,
+                    )
                 );
             } else {
-                crate::render::print_code_context(&packet, &coverage, &hints);
+                crate::render::print_code_context_with_options(
+                    &packet,
+                    &coverage,
+                    &hints,
+                    &render_options,
+                );
             }
         } else {
+            if target.options.verbose {
+                hints.extend(indexed_hints(&context, &db, &target.options)?);
+            }
             let revision = args.diff.as_deref().filter(|revision| !revision.is_empty());
             let packet = build_diff_context(
                 &db,
@@ -792,17 +948,28 @@ fn run_context(args: &ContextArgs) -> Result<()> {
                 revision,
                 &locks_before_index,
             )?;
-            hints.push(
-                "漂移预测比较命令开始时的 knowledge.lock；文档与代码共改仍按 W3 自动复核。"
-                    .to_string(),
-            );
+            hints.push("Drift prediction uses the knowledge.lock captured before the refresh; co-edited docs are resealed by W3.".to_string());
             if target.options.json {
+                let next_cursor = (!packet.truncated.is_empty())
+                    .then(|| crate::render::cursor_for_offset(1, "context"));
                 println!(
                     "{}",
-                    crate::render::render_covered_json(&packet, &coverage, &hints)
+                    render_covered_json_page(
+                        &packet,
+                        &coverage,
+                        &hints,
+                        next_cursor.as_deref(),
+                        packet.truncated.values().sum(),
+                        render_options.full,
+                    )
                 );
             } else {
-                crate::render::print_diff_context(&packet, &coverage, &hints);
+                crate::render::print_diff_context_with_options(
+                    &packet,
+                    &coverage,
+                    &hints,
+                    &render_options,
+                );
             }
         }
         return Ok(());
@@ -822,6 +989,7 @@ fn run_context(args: &ContextArgs) -> Result<()> {
         let db = open_fact_store(&context.target_dir)?;
         let coverage = discover_docs(&context.target_dir, &context.schema)?;
         usage::coverage(coverage.ratio);
+        let render_options = render_options(&target.options);
         let mut hints = indexed_hints(&context, &db, &target.options)?;
         if let Some(since) = &args.since {
             let packet = build_handoff_context(&db, &context.target_dir, &context.schema, since)?;
@@ -833,13 +1001,17 @@ fn run_context(args: &ContextArgs) -> Result<()> {
             if target.options.json {
                 println!(
                     "{}",
-                    crate::render::render_covered_json(&packet, &coverage, &hints)
+                    render_covered_json_page(
+                        &packet,
+                        &coverage,
+                        &hints,
+                        None,
+                        0,
+                        render_options.full,
+                    )
                 );
             } else {
                 print_handoff_context(&packet, &coverage, hints.last().unwrap());
-                for hint in &hints[..hints.len() - 1] {
-                    println!("Hint: {}", hint);
-                }
             }
         } else {
             let packet = build_current_context(&db, &context.target_dir, &context.schema)?;
@@ -852,13 +1024,22 @@ fn run_context(args: &ContextArgs) -> Result<()> {
             if target.options.json {
                 println!(
                     "{}",
-                    crate::render::render_covered_json(&packet, &coverage, &hints)
+                    render_covered_json_page(
+                        &packet,
+                        &coverage,
+                        &hints,
+                        None,
+                        0,
+                        render_options.full,
+                    )
                 );
             } else {
-                print_current_context(&packet, &coverage, hints.last().unwrap());
-                for hint in &hints[..hints.len() - 1] {
-                    println!("Hint: {}", hint);
-                }
+                print_current_context_with_options(
+                    &packet,
+                    &coverage,
+                    hints.last().unwrap(),
+                    &render_options,
+                );
             }
         }
         return Ok(());
@@ -882,26 +1063,35 @@ fn run_context(args: &ContextArgs) -> Result<()> {
             .ok_or_else(|| format!("no context candidate found for query: {}", input))?
     };
     let packet = context_packet_for_doc(&db, &context.target_dir, &anchor_path)?;
+    let render_options = render_options(&args.target.options);
+    let context_hints = if args.target.options.verbose {
+        indexed_hints(&context, &db, &args.target.options)?
+    } else {
+        Vec::new()
+    };
 
     if options.json {
         println!(
             "{}",
-            render_context_packet_json(
+            render_context_packet_json_page(
                 "context",
                 &input,
                 &packet,
                 &discover_docs(&context.target_dir, &context.schema)?,
-                &indexed_hints(&context, &db, &args.target.options)?
+                &context_hints,
+                None,
+                0,
+                render_options.full,
             )
         );
     } else {
-        print_context_packet("Context", &input, &packet);
-        if args.target.options.verbose {
-            print_coverage(
-                &discover_docs(&context.target_dir, &context.schema)?,
-                &indexed_hints(&context, &db, &args.target.options)?,
-            );
-        }
+        print_context_packet_with_options(
+            "Context",
+            &input,
+            &packet,
+            &render_options,
+            &context_hints,
+        );
     }
     Ok(())
 }

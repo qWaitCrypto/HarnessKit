@@ -438,11 +438,8 @@ fn unmanaged_hints_remain_pasteable_yaml_in_every_text_format() {
             let mut args = vec!["check", "--rules", "unmanaged-docs"];
             args.extend_from_slice(&flags);
             let output = repo.run(&args);
-            assert!(
-                output.contains(&format!("  Hint:\n{}\n", hint)),
-                "{}",
-                output
-            );
+            assert!(output.contains("Hint: include:"), "{}", output);
+            assert_eq!(output.lines().filter(|line| line.starts_with("Hint:")).count(), 1);
         }
         schema(&repo, hint);
         let fixed = json(

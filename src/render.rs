@@ -1,12 +1,21 @@
 mod code_context;
+pub(crate) mod cache;
+mod contract;
 mod json;
 
-pub(crate) use code_context::{print_code_context, print_diff_context};
+pub(crate) use code_context::{print_code_context_with_options, print_diff_context_with_options};
+pub(crate) use contract::{
+    compact, cursor_for_offset, cursor_offset, edge_badge, freshness_badge, highlight,
+    kwic_excerpt, merge_names, paginate_lines, short_hint, RenderLine, RenderOptions,
+    RenderedPage,
+};
 
+#[allow(unused_imports)]
 pub(crate) use json::{
-    render_check_json, render_context_packet_json, render_covered_json, render_doctor_json,
-    render_history_snapshot_json, render_index_json, render_query_json, serialize_evidence,
-    serialize_inline,
+    render_check_json, render_check_json_page, render_context_packet_json,
+    render_context_packet_json_page, render_covered_json, render_covered_json_page, render_doctor_json,
+    render_history_snapshot_json, render_index_json, render_query_json, render_query_json_page,
+    serialize_evidence, serialize_inline,
 };
 
 use std::collections::BTreeMap;
@@ -21,7 +30,7 @@ use crate::git::{find_host_git_dir, git_dirty_label};
 use crate::history::{is_history_dirty, HistoryDiff, HistorySnapshot, HistoryStatus, RestorePlan};
 use crate::index::{cell, DocRelation, IndexArtifact};
 use crate::output::println;
-use crate::query::{BundleNode, QueryBundle, QueryCandidate};
+use crate::query::{kwic_for_doc, BundleNode, QueryBundle, QueryCandidate};
 use crate::schema::Schema;
 use crate::sqlite::QueryResult;
 use crate::templates::{init_plan_paths, InitStats};
@@ -516,50 +525,69 @@ pub(crate) fn print_refs_output(doc_path: &str, result: &QueryResult) {
     }
 }
 
-pub(crate) fn print_query_candidates(query_terms: &str, candidates: &[QueryCandidate]) {
-    println!("Query: {}", query_terms);
+pub(crate) fn print_query_candidates_with_options(
+    target_dir: &Path,
+    query_terms: &str,
+    candidates: &[QueryCandidate],
+    extra_lines: &[String],
+    options: &RenderOptions,
+) -> RenderedPage {
+    let mut lines = Vec::new();
     if candidates.is_empty() {
-        println!("No candidate docs found.");
-        return;
+        lines.push(RenderLine::content("No matching documentation found."));
     }
-    for candidate in candidates {
-        println!(
-            "- {} [{}] status={} lifecycle={} score={} :: {}",
+    for (index, candidate) in candidates.iter().enumerate() {
+        let badge = if candidate.lifecycle == "historical" {
+            " superseded"
+        } else {
+            ""
+        };
+        lines.push(RenderLine::content(format!(
+            "{}. {} §{}{}",
+            index + 1,
             candidate.path,
-            candidate.role,
-            blank_as_dash(&candidate.status),
-            candidate.lifecycle,
-            candidate.score,
-            candidate.title
+            candidate.title,
+            badge
+        )));
+        let excerpt = kwic_for_doc(
+            target_dir,
+            &candidate.path,
+            query_terms,
+            (!candidate.snippet_heading.is_empty()).then_some(candidate.snippet_heading.as_str()),
         );
-        println!("  why: {}", candidate.why);
-        if let Some(info) = &candidate.match_info {
-            println!(
-                "  match: {} (matched: {}; missing: {})",
-                info.mode,
-                info.matched_terms.join(", "),
-                info.missing_terms.join(", ")
-            );
-        }
-        if !candidate.superseded_by.is_empty() {
-            println!("  superseded by: {}", candidate.superseded_by.join(", "));
-        }
-        if !candidate.summary.is_empty() {
-            println!("  summary: {}", candidate.summary);
-        }
-        if !candidate.snippet.is_empty() {
-            println!("  snippet: {}", candidate.snippet);
-            if !candidate.snippet_heading.is_empty() {
-                println!("  heading: {}", candidate.snippet_heading);
+        let excerpt = if excerpt.is_empty() {
+            kwic_excerpt(&candidate.summary, query_terms, &candidate.title, 160)
+        } else {
+            excerpt
+        };
+        lines.push(RenderLine::content(format!("   {}", excerpt)));
+        if options.full || options.verbose {
+            if let Some(info) = &candidate.match_info {
+                lines.push(RenderLine::related(format!(
+                    "   match {}: {}{}",
+                    info.mode,
+                    info.matched_terms.join(", "),
+                    if info.missing_terms.is_empty() {
+                        String::new()
+                    } else {
+                        format!("; missing {}", info.missing_terms.join(", "))
+                    }
+                )));
             }
-            if !candidate.snippet_location.is_empty() {
-                println!("  location: {}", candidate.snippet_location);
-            }
-        }
-        if !candidate.neighbors.is_empty() {
-            println!("  neighbors: {}", candidate.neighbors.join(" | "));
         }
     }
+    for line in extra_lines.iter().take(2) {
+        if line.starts_with("Coverage:") || line.starts_with('…') {
+            lines.push(RenderLine::related(short_hint(line)));
+        } else {
+            lines.push(RenderLine::hint(format!("Hint: {}", short_hint(line))));
+        }
+    }
+    let page = paginate_lines(lines, options, "query");
+    for line in &page.lines {
+        println!("{}", line);
+    }
+    page
 }
 
 fn compact_line(text: &str, max_chars: usize) -> String {
@@ -573,57 +601,100 @@ fn compact_line(text: &str, max_chars: usize) -> String {
 
 fn bundle_node_label(node: &BundleNode) -> String {
     let location = match node.kind.as_str() {
-        "symbol" => format!("{}#{}", node.path, node.name),
-        "section" => format!("{} §{} (L{})", node.path, node.heading, node.span_start),
+        "symbol" => format!("{}: {}", node.path, node.name),
+        "section" => format!("{} §{}", node.path, node.heading),
         _ => node.path.clone(),
     };
     compact_line(&format!("{} {}", node.role, location), 240)
 }
 
-pub(crate) fn print_query_bundles(query: &str, bundles: &[QueryBundle], extra_lines: &[String]) {
-    let mut lines = vec![format!("Query: {}", compact_line(query, 180))];
+pub(crate) fn print_query_bundles_with_options(
+    target_dir: &Path,
+    query: &str,
+    bundles: &[QueryBundle],
+    extra_lines: &[String],
+    options: &RenderOptions,
+) -> RenderedPage {
+    let bundles = merge_document_bundles(bundles);
+    let mut lines = Vec::new();
     if bundles.is_empty() {
-        lines.push("No matching knowledge bundles found.".to_string());
+        lines.push(RenderLine::content("No matching knowledge bundles found."));
     }
     for (index, bundle) in bundles.iter().enumerate() {
         let node = &bundle.primary;
-        let status = [&node.status, &bundle.freshness.status]
-            .into_iter()
-            .filter(|status| !status.trim().is_empty())
-            .map(|status| compact_line(status, 30))
-            .collect::<Vec<_>>()
-            .join("; ");
-        lines.push(format!(
-            "{}. {} [{}]",
-            index + 1,
-            bundle_node_label(node),
-            status
-        ));
-        let detail = if node.signature.is_empty() {
-            &node.summary
+        let badge = freshness_badge(&bundle.freshness.status);
+        let badge = if badge.is_empty() {
+            if node.lifecycle == "historical" {
+                "superseded"
+            } else {
+                ""
+            }
         } else {
-            &node.signature
+            badge
+        };
+        let primary_issue = bundle
+            .freshness
+            .issues
+            .iter()
+            .filter_map(|issue| issue["kind"].as_str())
+            .next()
+            .unwrap_or("");
+        let badge = if badge.is_empty() {
+            primary_issue
+                .is_empty()
+                .then_some("")
+                .unwrap_or("")
+        } else {
+            badge
+        };
+        let suffix = if badge.is_empty() {
+            String::new()
+        } else if primary_issue.is_empty() {
+            format!(" {badge}")
+        } else {
+            format!(" {badge} {primary_issue}")
+        };
+        let label = bundle_node_label(node);
+        lines.push(RenderLine::content(if suffix.is_empty() {
+            format!("{}. {}", index + 1, label)
+        } else {
+            format!("{}. {} [{}]", index + 1, label, suffix.trim())
+        }));
+        let detail = if node.kind == "section" || node.kind == "doc" {
+            kwic_for_doc(
+                target_dir,
+                &node.path,
+                query,
+                (!node.heading.is_empty())
+                    .then(|| node.heading.split("; ").next().unwrap_or(node.heading.as_str())),
+            )
+        } else if !node.signature.is_empty() {
+            highlight(&node.signature, query)
+        } else {
+            kwic_excerpt(&node.summary, query, &node.name, 160)
         };
         if !detail.is_empty() {
-            lines.push(format!("   {}", compact_line(detail, 220)));
+            lines.push(RenderLine::content(format!("   {}", compact(&detail, 160))));
+        } else {
+            lines.push(RenderLine::content(format!(
+                "   {}",
+                kwic_excerpt(&node.summary, query, &node.name, 160)
+            )));
+        }
+        if options.expand == Some(index + 1) {
+            if !node.summary.is_empty() {
+                lines.push(RenderLine::content(format!("   {}", compact(&node.summary, 600))));
+            }
+            if !node.signature.is_empty() {
+                lines.push(RenderLine::content(format!("   {}", compact(&node.signature, 600))));
+            }
         }
         for related in &bundle.related {
             let link = &related.link;
+            if link.edge.weight < 0.05 && link.edge.confidence == "INFERRED" {
+                continue;
+            }
             let links = std::iter::once(link).chain(related.additional_symbols.iter());
-            let drift = links
-                .clone()
-                .flat_map(|link| &link.freshness.issues)
-                .next()
-                .map(|issue| {
-                    let evidence = &issue["evidence"];
-                    format!(
-                        " · {} {} {}",
-                        issue["kind"].as_str().unwrap_or("drift"),
-                        evidence["changed_at"].as_str().unwrap_or_default(),
-                        evidence["commit"].as_str().unwrap_or_default()
-                    )
-                })
-                .unwrap_or_default();
             let label = if related.additional_symbols.is_empty() {
                 bundle_node_label(&link.node)
             } else {
@@ -632,70 +703,172 @@ pub(crate) fn print_query_bundles(query: &str, bundles: &[QueryBundle], extra_li
                     .filter(|link| link.node.kind == "symbol")
                     .map(|link| link.node.name.as_str())
                     .collect::<Vec<_>>();
-                let shown = names
-                    .iter()
-                    .take(3)
-                    .map(|name| compact_line(name, 50))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                let more = if names.len() > 3 {
-                    format!(" (+{} symbols)", names.len() - 3)
-                } else {
-                    String::new()
-                };
-                compact_line(
-                    &format!("{} {}#{}{}", link.node.role, link.node.path, shown, more),
-                    240,
-                )
+                format!("{}: {}", link.node.path, merge_names(names.into_iter().map(str::to_string), 3))
             };
-            let freshness = if links.clone().any(|link| link.freshness.status == "drifted") {
-                "drifted"
+            let mut badges = Vec::new();
+            let edge_badge = edge_badge(&link.edge.confidence);
+            if !edge_badge.is_empty() {
+                badges.push(edge_badge);
+            }
+            for related_link in links.clone() {
+                let badge = freshness_badge(&related_link.freshness.status);
+                if !badge.is_empty() && !badges.contains(&badge) {
+                    badges.push(badge);
+                }
+            }
+            let issue_kind = links
+                .clone()
+                .flat_map(|item| item.freshness.issues.iter())
+                .filter_map(|issue| issue["kind"].as_str())
+                .next()
+                .unwrap_or("");
+            let suffix = if badges.is_empty() && issue_kind.is_empty() {
+                String::new()
+            } else if issue_kind.is_empty() {
+                format!(" {}", badges.join(" "))
             } else {
-                &link.freshness.status
+                format!(" {} {}", badges.join(" "), issue_kind)
             };
-            lines.push(format!(
-                "   ↳ {} · {} {} · {}{}",
-                label,
-                link.edge.kind,
-                link.edge.confidence,
-                freshness,
-                compact_line(&drift, 180)
-            ));
+            let evidence = links
+                .clone()
+                .map(|item| {
+                    if !item.node.signature.is_empty() {
+                        item.node.signature.clone()
+                    } else {
+                        item.node.summary.clone()
+                    }
+                })
+                .find(|text| !text.is_empty())
+                .map(|text| kwic_excerpt(&text, query, &label, 140));
+            if evidence.is_none() && !options.full && options.expand != Some(index + 1) {
+                continue;
+            }
+            let evidence = evidence.unwrap_or_else(|| label.clone());
+            lines.push(RenderLine::related(format!("   ↳ {}{}: {}", label, suffix, evidence)));
+            if options.expand == Some(index + 1) {
+                for related_link in links {
+                    if !related_link.node.signature.is_empty() {
+                        lines.push(RenderLine::related(format!(
+                            "      {}",
+                            compact(&related_link.node.signature, 600)
+                        )));
+                    }
+                }
+            }
         }
     }
-    lines.extend(extra_lines.iter().map(|line| compact_line(line, 300)));
-    // Includes verbose coverage, diagnostics and hints in the same line budget.
-    for line in lines.iter().take(40) {
+    for line in extra_lines.iter().take(2) {
+        if line.starts_with("Coverage:") || line.starts_with('…') {
+            lines.push(RenderLine::related(short_hint(line)));
+        } else {
+            lines.push(RenderLine::hint(format!("Hint: {}", short_hint(line))));
+        }
+    }
+    let page = paginate_lines(lines, options, "query");
+    for line in &page.lines {
         println!("{}", line);
     }
+    page
+}
+
+fn merge_document_bundles(bundles: &[QueryBundle]) -> Vec<QueryBundle> {
+    let mut merged = Vec::new();
+    for bundle in bundles {
+        let mergeable = matches!(bundle.primary.kind.as_str(), "doc" | "section");
+        if mergeable {
+            if let Some(existing) = merged.iter_mut().find(|candidate: &&mut QueryBundle| {
+                matches!(candidate.primary.kind.as_str(), "doc" | "section")
+                    && candidate.primary.path == bundle.primary.path
+            }) {
+                if !bundle.primary.heading.is_empty()
+                    && !existing.primary.heading.contains(&bundle.primary.heading)
+                {
+                    if !existing.primary.heading.is_empty() {
+                        existing.primary.heading.push_str("; ");
+                    }
+                    existing.primary.heading.push_str(&bundle.primary.heading);
+                }
+                if !bundle.primary.summary.is_empty()
+                    && !existing.primary.summary.contains(&bundle.primary.summary)
+                {
+                    existing.primary.summary.push_str(" ");
+                    existing.primary.summary.push_str(&bundle.primary.summary);
+                }
+                existing.related.extend(bundle.related.clone());
+                continue;
+            }
+        }
+        merged.push(bundle.clone());
+    }
+    merged
 }
 
 pub(crate) fn print_context_packet(label: &str, input: &str, packet: &ContextPacket) {
-    println!("{}: {}", label, input);
-    println!(
+    let _ = print_context_packet_with_options(
+        label,
+        input,
+        packet,
+        &RenderOptions::default(),
+        &[],
+    );
+}
+
+pub(crate) fn print_context_packet_with_options(
+    label: &str,
+    input: &str,
+    packet: &ContextPacket,
+    options: &RenderOptions,
+    hints: &[String],
+) -> RenderedPage {
+    let mut lines = vec![RenderLine::content(format!("{}: {}", label, input))];
+    lines.push(RenderLine::content(format!(
         "Anchor: {} [{}] :: {}",
         packet.anchor.path, packet.anchor.role, packet.anchor.title
-    );
-    if !packet.anchor.summary.is_empty() {
-        println!("Summary: {}", packet.anchor.summary);
+    )));
+    let excerpt = if !packet.anchor.snippet.is_empty() {
+        highlight(&packet.anchor.snippet, input)
+    } else {
+        kwic_excerpt(&packet.anchor.summary, input, &packet.anchor.title, 160)
+    };
+    if !excerpt.is_empty() {
+        lines.push(RenderLine::content(format!("{}", excerpt)));
     }
-    if !packet.anchor.snippet.is_empty() {
-        println!("Snippet: {}", packet.anchor.snippet);
-        if !packet.anchor.snippet_location.is_empty() {
-            println!("Location: {}", packet.anchor.snippet_location);
+    if !packet.incoming.is_empty() {
+        lines.push(RenderLine::related("Incoming refs:"));
+        lines.extend(relation_lines(&packet.incoming, true));
+    }
+    if !packet.outgoing.is_empty() {
+        lines.push(RenderLine::related("Outgoing refs:"));
+        lines.extend(relation_lines(&packet.outgoing, false));
+    }
+    if !packet.collection_siblings.is_empty() {
+        lines.push(RenderLine::related(format!(
+            "Collection siblings: {}",
+            packet.collection_siblings.join(", ")
+        )));
+    }
+    if !packet.same_scope_docs.is_empty() {
+        lines.push(RenderLine::related(format!(
+            "Same-scope docs: {}",
+            packet.same_scope_docs.join(", ")
+        )));
+    }
+    if !packet.recommended_reading_order.is_empty() {
+        lines.push(RenderLine::related(format!(
+            "Reading order: {}",
+            packet.recommended_reading_order.join(" -> ")
+        )));
+    }
+    if options.verbose || options.full {
+        for hint in hints.iter().take(1) {
+            lines.push(RenderLine::hint(format!("Hint: {}", short_hint(hint))));
         }
     }
-
-    println!("\nIncoming refs:");
-    print_relation_list(&packet.incoming, true);
-    println!("\nOutgoing refs:");
-    print_relation_list(&packet.outgoing, false);
-    println!("\nCollection siblings:");
-    print_path_list(&packet.collection_siblings);
-    println!("\nSame-scope docs:");
-    print_path_list(&packet.same_scope_docs);
-    println!("\nRecommended reading order:");
-    print_path_list(&packet.recommended_reading_order);
+    let page = paginate_lines(lines, options, "context");
+    for line in &page.lines {
+        println!("{}", line);
+    }
+    page
 }
 
 fn short_line(text: &str, limit: usize) -> String {
@@ -707,120 +880,127 @@ fn short_line(text: &str, limit: usize) -> String {
     }
 }
 
-fn print_context_pointer(doc: &ContextDoc) {
-    println!(
-        "- {} [status={}, lifecycle={}] :: {}",
-        doc.path,
-        doc.status.as_deref().unwrap_or("default"),
-        doc.lifecycle,
-        short_line(&doc.title, 96)
-    );
+pub(crate) fn print_current_context_with_options(
+    packet: &CurrentContext,
+    coverage: &Coverage,
+    hint: &str,
+    options: &RenderOptions,
+) -> RenderedPage {
+    let mut lines = vec![RenderLine::content("Current context:")];
+    if !packet.entrypoints.is_empty() {
+        lines.push(RenderLine::content("Entrypoints:"));
+        lines.extend(packet.entrypoints.iter().map(|doc| {
+            RenderLine::content(context_pointer_line(doc))
+        }));
+    }
+    if let Some(doc) = &packet.project_map {
+        lines.push(RenderLine::content("Project map:"));
+        lines.push(RenderLine::content(context_pointer_line(doc)));
+    }
+    if !packet.active_plans.is_empty() {
+        lines.push(RenderLine::content("Active plans:"));
+        lines.extend(
+            packet
+                .active_plans
+                .iter()
+                .take(8)
+                .map(|doc| RenderLine::content(context_pointer_line(doc))),
+        );
+        if packet.active_plans.len() > 8 {
+            lines.push(RenderLine::related(format!(
+                "- {} more active plans; use --json",
+                packet.active_plans.len() - 8
+            )));
+        }
+    }
+    if !packet.recent_decisions.is_empty() {
+        lines.push(RenderLine::content("Current decisions:"));
+        lines.extend(
+            packet
+                .recent_decisions
+                .iter()
+                .take(3)
+                .map(|doc| RenderLine::content(context_pointer_line(doc))),
+        );
+    }
+    if let Some(snapshot) = &packet.latest_snapshot {
+        lines.push(RenderLine::content(format!("Latest snapshot: {}", snapshot.id)));
+    }
+    if let Some(changes) = &packet.changes_since_snapshot {
+        lines.push(RenderLine::content(format!(
+            "Since snapshot: {} added, {} modified, {} removed documents",
+            changes.added.len(), changes.modified.len(), changes.removed.len()
+        )));
+    }
+    lines.extend(code_context::code_changes_lines(&packet.code_changes_since_snapshot));
+    if packet.unverified_items > 0 {
+        lines.push(RenderLine::content(format!(
+            "Unverified: {} unchecked items in {} current documents",
+            packet.unverified_items,
+            packet.unverified_documents.len()
+        )));
+    }
+    if options.verbose {
+        lines.push(RenderLine::related(coverage.summary()));
+    }
+    if !hint.is_empty() && (options.verbose || packet.entrypoints.is_empty()) {
+        lines.push(RenderLine::hint(format!("Hint: {}", short_hint(hint))));
+    }
+    let page = paginate_lines(lines, options, "context");
+    for line in &page.lines {
+        println!("{}", line);
+    }
+    page
 }
 
-pub(crate) fn print_current_context(packet: &CurrentContext, coverage: &Coverage, hint: &str) {
-    println!("Current context:");
-    println!("Entrypoints:");
-    for doc in &packet.entrypoints {
-        print_context_pointer(doc);
-    }
-    if packet.entrypoints.is_empty() {
-        println!("- none");
-    }
-    println!("Project map:");
-    if let Some(doc) = &packet.project_map {
-        print_context_pointer(doc);
+fn context_pointer_line(doc: &ContextDoc) -> String {
+    let badge = freshness_badge(&doc.lifecycle);
+    if badge.is_empty() {
+        format!("- {} :: {}", doc.path, short_line(&doc.title, 96))
     } else {
-        println!("- none");
+        format!("- {} {} :: {}", doc.path, badge, short_line(&doc.title, 96))
     }
-    println!("Active plans: {} (newest first)", packet.active_plans.len());
-    for doc in packet.active_plans.iter().take(8) {
-        print_context_pointer(doc);
-    }
-    if packet.active_plans.len() > 8 {
-        println!(
-            "- {} more active plans; use --json",
-            packet.active_plans.len() - 8
-        );
-    }
-    println!("Recent current decisions:");
-    for doc in packet.recent_decisions.iter().take(3) {
-        print_context_pointer(doc);
-    }
-    println!(
-        "Latest snapshot: {}",
-        packet
-            .latest_snapshot
-            .as_ref()
-            .map(|snapshot| snapshot.id.as_str())
-            .unwrap_or("none")
-    );
-    if let Some(changes) = &packet.changes_since_snapshot {
-        println!(
-            "Since snapshot: {} added, {} modified, {} removed documents",
-            changes.added.len(),
-            changes.modified.len(),
-            changes.removed.len()
-        );
-    }
-    code_context::print_code_changes_summary(&packet.code_changes_since_snapshot);
-    println!(
-        "Unverified: {} unchecked items in {} current documents",
-        packet.unverified_items,
-        packet.unverified_documents.len()
-    );
-    println!("{}", coverage.summary());
-    println!("Hint: {}", hint);
 }
 
 pub(crate) fn print_handoff_context(packet: &HandoffContext, coverage: &Coverage, hint: &str) {
     println!("Context since {}:", packet.since);
     for (label, docs) in [("Added", &packet.added), ("Modified", &packet.modified)] {
-        println!("{}: {}", label, docs.len());
+        if docs.is_empty() {
+            continue;
+        }
+        println!("{}:", label);
         for doc in docs {
-            println!(
-                "- {} [status={}, lifecycle={}] :: {} | {}",
-                doc.path,
-                doc.status.as_deref().unwrap_or("default"),
-                doc.lifecycle,
-                short_line(&doc.title, 96),
-                short_line(&doc.summary, 180)
-            );
+            println!("- {} :: {} | {}", doc.path, short_line(&doc.title, 96), short_line(&doc.summary, 180));
         }
     }
-    println!("Removed: {}", packet.removed.len());
-    for path in &packet.removed {
-        println!("- {}", path);
+    if !packet.removed.is_empty() {
+        println!("Removed:");
+        for path in &packet.removed {
+            println!("- {}", path);
+        }
     }
-    println!("{}", coverage.summary());
-    println!("Hint: {}", hint);
-}
-
-fn print_relation_list(relations: &[DocRelation], incoming: bool) {
-    if relations.is_empty() {
-        println!("- none");
-        return;
-    }
-    for relation in relations {
-        let path = if incoming {
-            &relation.src_path
-        } else {
-            &relation.dst_path
-        };
-        println!(
-            "- {} via {} ({}, confidence={:.2})",
-            path, relation.relation_type, relation.reason, relation.confidence
-        );
+    let _ = coverage;
+    if !hint.is_empty() {
+        println!("Hint: {}", short_hint(hint));
     }
 }
 
-fn print_path_list(paths: &[String]) {
-    if paths.is_empty() {
-        println!("- none");
-        return;
-    }
-    for path in paths {
-        println!("- {}", path);
-    }
+fn relation_lines(relations: &[DocRelation], incoming: bool) -> Vec<RenderLine> {
+    relations
+        .iter()
+        .map(|relation| {
+            let path = if incoming {
+                &relation.src_path
+            } else {
+                &relation.dst_path
+            };
+            let badge = if relation.explicit { "" } else { " ~" };
+            RenderLine::related(format!(
+                "- {} via {}{}",
+                path, relation.relation_type, badge
+            ))
+        })
+        .collect()
 }
 
 fn blank_as_dash(value: &str) -> &str {
@@ -865,42 +1045,44 @@ pub(crate) fn print_check_output(
     checks: &[CheckView],
     baseline: &BaselineDelta,
     full: bool,
+    fallback_hint: Option<&str>,
+    options: &RenderOptions,
 ) {
     let summary = CheckSummary::from_checks(checks);
     let active_count = checks.iter().filter(|check| !check.suppressed).count();
 
-    println!(
+    let mut lines = vec![RenderLine::content(format!(
         "HarnessKit checks for {}: docs {}, relations {}, checks {}",
         target_dir.display(),
         docs_count,
         relation_count,
         active_count
-    );
+    ))];
 
-    println!(
+    lines.push(RenderLine::content(format!(
         "Severity summary: error {}, warning {}, info {}, suppressed {}",
         summary.error, summary.warning, summary.info, summary.suppressed
-    );
+    )));
     if baseline.available {
-        println!(
+        lines.push(RenderLine::content(format!(
             "Baseline: {}new {}, resolved {}{}",
             if baseline.created { "created; " } else { "" },
             baseline.new_count,
             baseline.resolved_count,
             if baseline.updated { "; updated" } else { "" }
-        );
+        )));
     } else {
-        println!("Baseline: not evaluated");
+        lines.push(RenderLine::content("Baseline: not evaluated"));
     }
     for rule in &summary.by_rule {
-        println!(
+        lines.push(RenderLine::content(format!(
             "- {}: error {}, warning {}, info {}, suppressed {}",
             rule.rule_id, rule.error, rule.warning, rule.info, rule.suppressed
-        );
+        )));
     }
     for (label, changes) in [("new", &baseline.new), ("resolved", &baseline.resolved)] {
         for finding in changes.iter().take(if full { usize::MAX } else { 3 }) {
-            println!(
+            lines.push(RenderLine::related(format!(
                 "[{}] {} {} - {}",
                 label,
                 finding.rule_id,
@@ -910,24 +1092,25 @@ pub(crate) fn print_check_output(
                 } else {
                     check_example(&finding.message)
                 }
-            );
+            )));
         }
     }
     let examples = checks
         .iter()
         .filter(|check| full || !check.suppressed)
         .take(if full { usize::MAX } else { 3 });
+    let mut first_hint = None::<String>;
     for check in examples {
         if check.suppressed {
-            println!(
+            lines.push(RenderLine::related(format!(
                 "[suppressed] {} {} - {}",
                 check.rule_id,
                 check.subject_path,
                 check.suppression_reason.as_deref().unwrap_or("suppressed")
-            );
+            )));
             continue;
         }
-        println!(
+        lines.push(RenderLine::content(format!(
             "[{}] {} {} - {}",
             check.severity,
             check.rule_id,
@@ -937,27 +1120,25 @@ pub(crate) fn print_check_output(
             } else {
                 check_example(&check.message)
             }
-        );
-        if let Some(hint) = &check.hint {
-            if hint.contains('\n') {
-                println!("  Hint:\n{}", hint);
-            } else {
-                println!(
-                    "  Hint: {}",
-                    if full {
-                        hint.clone()
-                    } else {
-                        check_example(hint)
-                    }
-                );
-            }
+        )));
+        if first_hint.is_none() {
+            first_hint = check.hint.clone();
         }
         if full && !check.evidence_json.is_empty() && check.evidence_json != "{}" {
-            println!("  evidence: {}", check.evidence_json);
+            lines.push(RenderLine::related(format!("  evidence: {}", check.evidence_json)));
         }
     }
-    if !full {
-        println!("Hint: Use check --all for all findings; --update-baseline accepts the current findings as the baseline.");
+    if let Some(hint) = fallback_hint
+        .map(str::to_string)
+        .or(first_hint)
+    {
+        lines.push(RenderLine::hint(format!("Hint: {}", short_hint(&hint))));
+    } else if !full {
+        lines.push(RenderLine::hint("Hint: Use check --all for all findings; --update-baseline accepts the current findings as the baseline."));
+    }
+    let page = paginate_lines(lines, options, "check");
+    for line in page.lines {
+        println!("{}", line);
     }
 }
 

@@ -29,7 +29,7 @@ impl QuerySide {
     }
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, serde::Deserialize)]
 pub(crate) struct BundleNode {
     pub(crate) id: String,
     pub(crate) kind: String,
@@ -90,7 +90,7 @@ fn is_test_path(path: &str) -> bool {
         })
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, serde::Deserialize)]
 pub(crate) struct BundleEdge {
     pub(crate) src: String,
     pub(crate) dst: String,
@@ -104,21 +104,21 @@ pub(crate) struct BundleEdge {
     pub(crate) via_file: Option<String>,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, serde::Deserialize)]
 pub(crate) struct Freshness {
     pub(crate) status: String,
     pub(crate) modified_at: Option<u64>,
     pub(crate) issues: Vec<Value>,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize, serde::Deserialize)]
 pub(crate) struct RelatedLink {
     pub(crate) node: BundleNode,
     pub(crate) edge: BundleEdge,
     pub(crate) freshness: Freshness,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize, serde::Deserialize)]
 pub(crate) struct RelatedNode {
     #[serde(flatten)]
     pub(crate) link: RelatedLink,
@@ -126,7 +126,7 @@ pub(crate) struct RelatedNode {
     pub(crate) additional_symbols: Vec<RelatedLink>,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize, serde::Deserialize)]
 pub(crate) struct QueryBundle {
     pub(crate) primary: BundleNode,
     pub(crate) related: Vec<RelatedNode>,
@@ -531,6 +531,12 @@ pub(crate) fn query_bundles(
             .then_with(|| priority(a).cmp(&priority(b)))
             .then_with(|| a.cmp(b))
     });
+    if let Some((_, best_score)) = ranked.first() {
+        let floor = *best_score * 0.30;
+        ranked.retain(|(id, score)| {
+            **score >= floor || is_test_path(&graph.nodes[id.as_str()].path)
+        });
+    }
     let mut covered = BTreeSet::new();
     let mut bundles = Vec::new();
     for (id, score) in ranked {

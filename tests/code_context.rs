@@ -153,14 +153,14 @@ fn mentions_and_active_plans_sort_ahead_of_historical_decisions() {
 fn no_association_is_explicit_and_suggests_inline_anchors_without_w7() {
     let repo = fixture("baseline");
     let packet = for_code(&repo, "bulk/unrelated.rs");
-    assert_eq!(packet["message"], "无关联文档");
+    assert_eq!(packet["message"], "No related documents");
     assert!(packet["hints"]
         .as_array()
         .unwrap()
         .iter()
-        .any(|hint| hint.as_str().unwrap().contains("suggest:")));
+        .any(|hint| hint.as_str().unwrap().contains("Suggestion:")));
     let text = repo.run(&["context", "--for", "bulk/unrelated.rs"]);
-    assert!(text.contains("无关联文档"));
+    assert!(text.contains("No related documents"));
     assert!(text.contains("`bulk/unrelated.rs#symbol`"));
     assert!(for_code(&repo, "unknown_symbol")["documents"]
         .as_array()
@@ -486,11 +486,11 @@ fn current_reports_covered_and_deleted_regions_and_limits_its_code_section_to_ei
     let text = repo.run(&["context", "--current"]);
     let section = text
         .lines()
-        .skip_while(|line| !line.starts_with("上个快照以来"))
+        .skip_while(|line| !line.starts_with("Code changes since snapshot"))
         .take_while(|line| !line.starts_with("Unverified:"))
         .collect::<Vec<_>>();
     assert!(section.len() <= 8, "{text}");
-    assert!(section.iter().any(|line| line.contains("另有")), "{text}");
+    assert!(section.iter().any(|line| line.contains("more regions")), "{text}");
 }
 
 #[test]
@@ -536,7 +536,7 @@ fn legacy_snapshots_remain_readable_with_explicit_code_baseline_fallbacks() {
     assert!(packet["code_changes_since_snapshot"]["hint"]
         .as_str()
         .unwrap()
-        .contains("未提交"));
+        .contains("uncommitted"));
     stored["host_git_head"] = Value::Null;
     fs::write(&path, serde_json::to_vec(&stored).unwrap()).unwrap();
     assert_eq!(

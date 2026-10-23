@@ -1,7 +1,7 @@
 use crate::code::CodeRegion;
 use crate::context::{CodeChangesSummary, CodeContext, DiffContext};
 use crate::discover::Coverage;
-use crate::output::println;
+use super::{freshness_badge, paginate_lines, short_hint, RenderLine, RenderOptions, RenderedPage};
 
 fn label(region: &CodeRegion) -> String {
     if region.name.is_empty() {
@@ -11,126 +11,94 @@ fn label(region: &CodeRegion) -> String {
     }
 }
 
-fn print_lines(mut lines: Vec<String>) {
-    if lines.len() > 40 {
-        let omitted = lines.len() - 39;
-        lines.truncate(39);
-        lines.push(format!(
-            "… 另有 {omitted} 行未显示；使用 --json 查看结构化结果。"
-        ));
-    }
-    for line in lines {
-        println!("{}", super::short_line(&line, 360));
-    }
-}
-
-pub(crate) fn print_code_context(packet: &CodeContext, coverage: &Coverage, hints: &[String]) {
-    let mut lines = vec![format!("Context --for {}:", packet.input)];
-    if !packet.targets.is_empty() {
-        lines.push(format!(
-            "代码: {}",
-            packet
-                .targets
-                .iter()
-                .map(label)
-                .collect::<Vec<_>>()
-                .join(", ")
-        ));
-    }
+pub(crate) fn print_code_context_with_options(
+    packet: &CodeContext,
+    coverage: &Coverage,
+    hints: &[String],
+    options: &RenderOptions,
+) -> RenderedPage {
+    let mut lines = vec![RenderLine::content(format!("Context --for {}:", packet.input))];
     if let Some(message) = packet.message {
-        lines.push(message.to_string());
+        lines.push(RenderLine::content(message));
     } else {
-        lines.push("关联文档章节（决策与 active 计划优先）:".to_string());
         for doc in &packet.documents {
-            let role = if doc.constrains {
-                "决策约束"
-            } else if doc.active_plan {
-                "active 计划"
+            let badge = if doc.lifecycle == "historical" {
+                " superseded"
             } else {
-                &doc.role
+                ""
             };
-            let kinds = doc
-                .links
-                .iter()
-                .map(|link| link.kind.as_str())
-                .collect::<std::collections::BTreeSet<_>>()
-                .into_iter()
-                .collect::<Vec<_>>()
-                .join(",");
-            lines.push(format!(
-                "- {} §{} [{role}; status={}; lifecycle={}] ({kinds})",
+            let summary = if doc.summary.is_empty() {
+                String::new()
+            } else {
+                format!(" :: {}", doc.summary)
+            };
+            lines.push(RenderLine::content(format!(
+                "- {} §{}{}{}",
                 doc.path,
                 if doc.heading.is_empty() {
                     &doc.title
                 } else {
                     &doc.heading
                 },
-                if doc.status.is_empty() {
-                    "default"
-                } else {
-                    &doc.status
-                },
-                doc.lifecycle
-            ));
-            if !doc.summary.is_empty() {
-                lines.push(format!("  {}", doc.summary));
-            }
+                badge,
+                summary
+            )));
         }
     }
-    lines.push(format!(
-        "常一起改的文件（top5）: {}",
-        packet.cochanged_files.len()
-    ));
-    for file in &packet.cochanged_files {
-        lines.push(format!(
-            "- {} [INFERRED; {} 次; weight={:.4}]",
-            file.path, file.count, file.weight
-        ));
+    if !packet.cochanged_files.is_empty() {
+        lines.push(RenderLine::related("Co-changed files:"));
+        for file in &packet.cochanged_files {
+            lines.push(RenderLine::related(format!("- {} ~", file.path)));
+        }
     }
-    lines.push(format!(
-        "锚点状态: {} 个正常，{} 个漂移/迁移/断链/歧义",
-        packet.anchor_counts.get("current").copied().unwrap_or(0),
-        packet
-            .anchor_counts
-            .iter()
-            .filter(|(status, _)| status.as_str() != "current")
-            .map(|(_, count)| count)
-            .sum::<usize>()
-    ));
     for state in packet
         .anchor_status
         .iter()
         .filter(|state| state.status != "current")
     {
-        lines.push(format!(
-            "- {} `{}` [{}]",
-            state.doc, state.anchor, state.status
-        ));
+        let badge = freshness_badge(&state.status);
+        lines.push(RenderLine::related(format!(
+            "- {} `{}` {}",
+            state.doc, state.anchor, if badge.is_empty() { state.status.as_str() } else { badge }
+        )));
     }
     if !packet.truncated.is_empty() {
-        lines.push(format!("省略计数: {:?}", packet.truncated));
+        lines.push(RenderLine::related(format!("Truncated: {:?}", packet.truncated)));
     }
-    lines.push(coverage.summary());
-    lines.extend(hints.iter().map(|hint| format!("Hint: {hint}")));
-    print_lines(lines);
+    if options.verbose {
+        lines.push(RenderLine::related(coverage.summary()));
+    }
+    if let Some(hint) = hints.first() {
+        lines.push(RenderLine::hint(format!("Hint: {}", short_hint(hint))));
+    }
+    let page = paginate_lines(lines, options, "context");
+    for line in &page.lines {
+        println!("{}", line);
+    }
+    page
 }
 
-pub(crate) fn print_diff_context(packet: &DiffContext, coverage: &Coverage, hints: &[String]) {
+pub(crate) fn print_diff_context_with_options(
+    packet: &DiffContext,
+    coverage: &Coverage,
+    hints: &[String],
+    options: &RenderOptions,
+) -> RenderedPage {
     let mut lines = vec![
-        format!(
+        RenderLine::content(format!(
             "Context --diff {} + working tree:",
             packet.revision.as_deref().unwrap_or("HEAD")
-        ),
-        format!(
-            "改动代码: {} 文件，{} 区域（已覆盖 {} / 未覆盖 {}）",
+        )),
+        RenderLine::content(format!(
+            "Changed code: {} files, {} regions (covered {}, uncovered {})",
             packet.totals.files,
             packet.totals.regions,
             packet.totals.covered,
             packet.totals.uncovered
-        ),
+        )),
     ];
     for file in &packet.files {
-        lines.push(format!(
+        lines.push(RenderLine::content(format!(
             "- {} [{}; {}]: {}",
             file.path,
             file.change,
@@ -138,83 +106,99 @@ pub(crate) fn print_diff_context(packet: &DiffContext, coverage: &Coverage, hint
             file.regions
                 .iter()
                 .map(|impact| if impact.region.name.is_empty() {
-                    "文件区域"
+                    "file region"
                 } else {
                     &impact.region.name
                 })
                 .collect::<Vec<_>>()
                 .join(", ")
-        ));
+        )));
         let docs = file
             .documents
             .iter()
             .take(3)
             .map(|doc| format!("{} §{} [{}]", doc.path, doc.heading, doc.lifecycle))
             .collect::<Vec<_>>();
-        lines.push(format!(
+        lines.push(RenderLine::related(format!(
             "  → {}",
             if docs.is_empty() {
-                "无关联文档".to_string()
+                "no related documents".to_string()
             } else {
                 docs.join(", ")
             }
-        ));
+        )));
         if !file.decisions.is_empty() {
-            lines.push(format!("  决策约束: {}", file.decisions.join(", ")));
+            lines.push(RenderLine::related(format!("  Decision constraints: {}", file.decisions.join(", "))));
         }
     }
-    lines.push(format!(
-        "锁预测漂移/迁移/断链: {}",
+    if packet.totals.drifting_anchors > 0 {
+        lines.push(RenderLine::related(format!(
+        "Predicted anchor issues: {}",
         packet.totals.drifting_anchors
-    ));
-    for state in packet.predicted_drift.iter().take(5) {
-        lines.push(format!(
-            "- {} `{}` [{}]",
-            state.doc, state.anchor, state.status
-        ));
+        )));
     }
-    lines.push(format!("无文档覆盖区域: {}", packet.totals.uncovered));
+    for state in packet.predicted_drift.iter().take(5) {
+        let badge = freshness_badge(&state.status);
+        lines.push(RenderLine::related(format!(
+            "- {} `{}` {}",
+            state.doc, state.anchor, if badge.is_empty() { state.status.as_str() } else { badge }
+        )));
+    }
+    if packet.totals.uncovered > 0 {
+        lines.push(RenderLine::related(format!("Uncovered code regions: {}", packet.totals.uncovered)));
+    }
     for region in packet.uncovered_regions.iter().take(5) {
-        lines.push(format!(
+        lines.push(RenderLine::related(format!(
             "- {} (L{}–L{})",
             label(region),
             region.span_start,
             region.span_end
-        ));
+        )));
     }
     if !packet.truncated.is_empty() {
-        lines.push(format!("省略计数: {:?}", packet.truncated));
+        lines.push(RenderLine::related(format!("Truncated: {:?}", packet.truncated)));
     }
-    lines.push(coverage.summary());
-    lines.extend(hints.iter().map(|hint| format!("Hint: {hint}")));
-    print_lines(lines);
+    if options.verbose {
+        lines.push(RenderLine::related(coverage.summary()));
+    }
+    if let Some(hint) = hints.first() {
+        lines.push(RenderLine::hint(format!("Hint: {}", short_hint(hint))));
+    }
+    let page = paginate_lines(lines, options, "context");
+    for line in &page.lines {
+        println!("{}", line);
+    }
+    page
 }
 
-pub(super) fn print_code_changes_summary(summary: &CodeChangesSummary) {
-    println!("上个快照以来改动的代码区域：已覆盖 / 未覆盖 / 漂移");
-    if summary.available {
-        println!(
-            "- 已覆盖 {} / 未覆盖 {} / 漂移 {}",
+pub(super) fn code_changes_lines(summary: &CodeChangesSummary) -> Vec<RenderLine> {
+    if !summary.available {
+        return Vec::new();
+    }
+    let mut lines = vec![RenderLine::content(
+        "Code changes since snapshot: covered / uncovered / drifted",
+    )];
+    {
+        lines.push(RenderLine::content(format!(
+            "- Covered {} / uncovered {} / drifted {}",
             summary.covered, summary.uncovered, summary.drifted
-        );
+        )));
         for area in summary.areas.iter().take(4) {
-            println!(
+            lines.push(RenderLine::related(format!(
                 "- {}{} [{}]",
                 super::short_line(&area.path, 140),
                 if area.name.is_empty() {
                     String::new()
                 } else {
-                    format!("#{}", super::short_line(&area.name, 100))
+                    format!(":{}", super::short_line(&area.name, 100))
                 },
                 area.status
-            );
+            )));
         }
         let omitted = summary.truncated + summary.areas.len().saturating_sub(4);
         if omitted > 0 {
-            println!("- 另有 {} 个区域（计数已包含）", omitted);
+            lines.push(RenderLine::related(format!("- {} more regions", omitted)));
         }
     }
-    if let Some(hint) = summary.hint {
-        println!("- {}", hint);
-    }
+    lines
 }

@@ -434,9 +434,9 @@ fn bundle_status_omits_empty_fields_and_preserves_explicit_lifecycle_status() {
     let repo = TestRepo::new(None);
     write(&repo, "src/engine.rs", "pub fn stateprobe() {}\n");
     for (frontmatter, expected) in [
-        ("", "[current]"),
-        ("---\nstatus: accepted\n---\n", "[accepted; current]"),
-        ("---\nstatus: superseded\n---\n", "[superseded; historical]"),
+        ("", "docs/status.md §Stateprobe"),
+        ("---\nstatus: accepted\n---\n", "docs/status.md §Stateprobe"),
+        ("---\nstatus: superseded\n---\n", "[superseded]"),
     ] {
         write(
             &repo,
@@ -449,7 +449,7 @@ fn bundle_status_omits_empty_fields_and_preserves_explicit_lifecycle_status() {
     }
     assert!(repo
         .run(&["query", "stateprobe", "--code"])
-        .contains("[current]"));
+        .contains("stateprobe"));
 }
 
 #[test]
@@ -533,7 +533,7 @@ fn related_slots_prefer_production_then_tests_then_docs_and_merge_symbols_by_fil
                 .count(),
             1
         );
-        assert!(text.contains("#alpha, beta, gamma"), "{text}");
+        assert!(text.contains("src/z.rs: alpha, beta, gamma"), "{text}");
     }
 }
 

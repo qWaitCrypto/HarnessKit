@@ -179,21 +179,41 @@ pub(crate) fn render_covered_json<T: Serialize>(
     coverage: &Coverage,
     hints: &[String],
 ) -> String {
+    render_covered_json_page(result, coverage, hints, None, 0, false)
+}
+
+pub(crate) fn render_covered_json_page<T: Serialize>(
+    result: &T,
+    coverage: &Coverage,
+    hints: &[String],
+    next_cursor: Option<&str>,
+    truncated: usize,
+    full: bool,
+) -> String {
     #[derive(Serialize)]
     struct Report<'a, T> {
         #[serde(flatten)]
         result: &'a T,
         coverage: &'a Coverage,
         hints: &'a [String],
+        next_cursor: Option<&'a str>,
+        truncated_count: usize,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        full: Option<bool>,
     }
-    to_json(
-        &Report {
-            result,
-            coverage,
-            hints,
-        },
-        false,
-    )
+    let mut report = serde_json::to_value(Report {
+        result,
+        coverage,
+        hints,
+        next_cursor,
+        truncated_count: truncated,
+        full: full.then_some(true),
+    })
+    .expect("serialize covered report");
+    if report.get("truncated").is_none() {
+        report["truncated"] = truncated.into();
+    }
+    serde_json::to_string_pretty(&report).expect("render covered report") + "\n"
 }
 
 pub(crate) fn render_doctor_json(report: &DoctorReport) -> String {
@@ -222,6 +242,30 @@ pub(crate) fn render_check_json(
     baseline: &BaselineDelta,
     all: bool,
 ) -> String {
+    render_check_json_page(
+        target_dir,
+        docs_count,
+        relation_count,
+        checks,
+        coverage,
+        hints,
+        baseline,
+        all,
+        None,
+    )
+}
+
+pub(crate) fn render_check_json_page(
+    target_dir: &Path,
+    docs_count: usize,
+    relation_count: usize,
+    checks: &[CheckView],
+    coverage: &Coverage,
+    hints: &[String],
+    baseline: &BaselineDelta,
+    all: bool,
+    next_cursor: Option<&str>,
+) -> String {
     #[derive(Serialize)]
     struct Check<'a> {
         severity: &'a str,
@@ -246,6 +290,7 @@ pub(crate) fn render_check_json(
         summary: CheckSummary,
         baseline: serde_json::Value,
         truncated: usize,
+        next_cursor: Option<&'a str>,
         coverage: serde_json::Value,
         hints: &'a [String],
     }
@@ -278,6 +323,7 @@ pub(crate) fn render_check_json(
         truncated,
         coverage: serde_json::to_value(coverage).expect("serialize check coverage"),
         hints,
+        next_cursor,
     })
     .expect("serialize check report");
     if !all {
@@ -327,6 +373,7 @@ fn limit_check_lists(value: &mut serde_json::Value, limit: usize) {
     }
 }
 
+#[allow(dead_code)]
 pub(crate) fn render_query_json(
     query_terms: &str,
     candidates: &[QueryCandidate],
@@ -335,6 +382,32 @@ pub(crate) fn render_query_json(
     hints: &[String],
     diagnostics: Option<&QueryDiagnostics>,
     suggestions: &[TitleSuggestion],
+) -> String {
+    render_query_json_page(
+        query_terms,
+        candidates,
+        bundles,
+        coverage,
+        hints,
+        diagnostics,
+        suggestions,
+        None,
+        0,
+        false,
+    )
+}
+
+pub(crate) fn render_query_json_page(
+    query_terms: &str,
+    candidates: &[QueryCandidate],
+    bundles: &[QueryBundle],
+    coverage: &Coverage,
+    hints: &[String],
+    diagnostics: Option<&QueryDiagnostics>,
+    suggestions: &[TitleSuggestion],
+    next_cursor: Option<&str>,
+    truncated: usize,
+    full: bool,
 ) -> String {
     #[derive(Serialize)]
     struct Report<'a> {
@@ -346,6 +419,10 @@ pub(crate) fn render_query_json(
         hints: &'a [String],
         diagnostics: Option<&'a QueryDiagnostics>,
         did_you_mean: &'a [TitleSuggestion],
+        next_cursor: Option<&'a str>,
+        truncated: usize,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        full: Option<bool>,
     }
     to_json(
         &Report {
@@ -357,6 +434,9 @@ pub(crate) fn render_query_json(
             hints,
             diagnostics,
             did_you_mean: suggestions,
+            next_cursor,
+            truncated,
+            full: full.then_some(true),
         },
         false,
     ) + "\n"
@@ -368,6 +448,19 @@ pub(crate) fn render_context_packet_json(
     packet: &ContextPacket,
     coverage: &Coverage,
     hints: &[String],
+) -> String {
+    render_context_packet_json_page(kind, input, packet, coverage, hints, None, 0, false)
+}
+
+pub(crate) fn render_context_packet_json_page(
+    kind: &str,
+    input: &str,
+    packet: &ContextPacket,
+    coverage: &Coverage,
+    hints: &[String],
+    next_cursor: Option<&str>,
+    truncated: usize,
+    full: bool,
 ) -> String {
     #[derive(Serialize)]
     struct Relation<'a> {
@@ -407,6 +500,10 @@ pub(crate) fn render_context_packet_json(
         recommended_reading_order: &'a [String],
         coverage: &'a Coverage,
         hints: &'a [String],
+        next_cursor: Option<&'a str>,
+        truncated: usize,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        full: Option<bool>,
     }
     to_json(
         &Report {
@@ -420,6 +517,9 @@ pub(crate) fn render_context_packet_json(
             recommended_reading_order: &packet.recommended_reading_order,
             coverage,
             hints,
+            next_cursor,
+            truncated,
+            full: full.then_some(true),
         },
         false,
     ) + "\n"

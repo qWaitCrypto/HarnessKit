@@ -16,7 +16,7 @@ use crate::Result;
 
 pub(crate) const DEFAULT_LIMIT: usize = 8;
 
-#[derive(Clone, serde::Serialize)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct QueryCandidate {
     pub(crate) path: String,
     pub(crate) title: String,
@@ -37,7 +37,7 @@ pub(crate) struct QueryCandidate {
     pub(crate) superseded_by: Vec<String>,
 }
 
-#[derive(Clone, serde::Serialize)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct QueryMatch {
     pub(crate) matched_terms: Vec<String>,
     pub(crate) missing_terms: Vec<String>,
@@ -81,6 +81,12 @@ fn query_tokens(query: &str) -> Vec<String> {
         .map(str::to_lowercase)
         .filter(|term| seen.insert(term.clone()))
         .collect()
+}
+
+/// Rendering needs the same token normalization as retrieval, but should not
+/// depend on the search implementation's visibility.
+pub(crate) fn query_tokens_for_render(query: &str) -> Vec<String> {
+    query_tokens(query)
 }
 
 fn contains_cjk(term: &str) -> bool {
@@ -329,6 +335,10 @@ pub(crate) fn query_candidates(
             .then_with(|| b_score.total_cmp(a_score))
             .then_with(|| a.path.cmp(&b.path))
     });
+    if let Some((_, best_score)) = ranked.first() {
+        let floor = *best_score * 0.30;
+        ranked.retain(|(_, score)| *score >= floor);
+    }
     ranked.truncate(limit);
     let mut candidates = Vec::with_capacity(ranked.len());
     for (mut candidate, _) in ranked {
@@ -594,6 +604,47 @@ pub(crate) fn snippet_for_doc(
         }
     }
     best
+}
+
+/// W5b's signal-first excerpt.  The legacy `snippet` field above remains
+/// byte-compatible for existing JSON consumers; renderers use this highlighted
+/// sentence for the human-facing contract.
+pub(crate) fn kwic_for_doc(
+    target_dir: &Path,
+    doc_path: &str,
+    query_terms: &str,
+    heading: Option<&str>,
+) -> String {
+    let text = fs::read_to_string(target_dir.join(doc_path)).unwrap_or_default();
+    let scoped = if let Some(heading) = heading.filter(|heading| !heading.is_empty()) {
+        let mut found = false;
+        let mut section = String::new();
+        for line in text.lines() {
+            if let Some((_level, candidate)) = parse_heading(line) {
+                if candidate == heading {
+                    found = true;
+                    section.push_str(line);
+                    section.push('\n');
+                    continue;
+                }
+                if found {
+                    break;
+                }
+            }
+            if found {
+                section.push_str(line);
+                section.push('\n');
+            }
+        }
+        if section.trim().is_empty() {
+            text.clone()
+        } else {
+            section
+        }
+    } else {
+        text.clone()
+    };
+    crate::render::kwic_excerpt(&scoped, query_terms, "", 160)
 }
 
 fn matching_offset(line: &str, term: &str) -> Option<usize> {
