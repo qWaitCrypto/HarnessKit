@@ -168,6 +168,9 @@ fn missing_home_does_not_create_relative_usage_state() {
 fn usage_write_failures_preserve_stdout_stderr_and_all_exit_codes() {
     let repo = TestRepo::new(Some("standard"));
     let home = TestRepo::new(None);
+    // Compare telemetry with a stable presentation state, after the first
+    // inferred-layout explanation has been shown.
+    repo.run(&["index"]);
     fs::write(
         repo.root.join("docs/broken.md"),
         "# Broken\n\n[Missing](missing.md)\n",
@@ -290,6 +293,69 @@ fn invalid_schema_check_still_logs_exit_one() {
     assert_eq!(entry["result_count"], 1);
     assert!(entry.get("coverage_ratio").is_none());
     assert!(entry.get("check_new_findings").is_none());
+}
+
+#[test]
+fn invalid_targets_have_no_project_hash_and_are_counted_separately() {
+    let repo = TestRepo::new(Some("flat"));
+    let home = TestRepo::new(None);
+    let cases = [
+        vec!["index", "missing-target"],
+        vec!["check", "missing-target", "--json"],
+        vec!["query", "secret-query", "missing-target", "--json"],
+        vec!["context", "--current", "missing-target", "--json"],
+        vec!["doctor", "missing-target", "--json"],
+        vec!["history", "snapshot", "missing-target", "--json"],
+        vec!["check", "--invalid"],
+    ];
+    for args in &cases {
+        let output = command(&repo, &home, args).output().unwrap();
+        assert_eq!(output.status.code(), Some(2), "{:?}", args);
+    }
+    for entry in records(&home) {
+        assert_eq!(entry["invalid"], true);
+        assert!(entry.get("project_root_hash").is_none());
+    }
+    assert!(!repo.root.join("missing-target").exists());
+    let invalid = report(&repo, &home, &["doctor", "--usage", "--json"]);
+    assert_eq!(invalid["usage"]["calls"], cases.len());
+    assert_eq!(invalid["usage"]["invalid"], cases.len());
+    assert!(invalid["usage"]["projects"].as_array().unwrap().is_empty());
+    run(&repo, &home, &["index"]);
+    let mixed = report(&repo, &home, &["doctor", "--usage", "--json"]);
+    assert_eq!(mixed["usage"]["projects"].as_array().unwrap().len(), 1);
+    assert_eq!(mixed["usage"]["projects"][0]["calls"], 1);
+    assert_eq!(mixed["usage"]["invalid"], cases.len());
+    assert!(!fs::read_to_string(log_path(&home))
+        .unwrap()
+        .contains("secret-query"));
+}
+
+#[test]
+fn legacy_exit_two_records_are_excluded_from_project_aggregates() {
+    let repo = TestRepo::new(Some("flat"));
+    let home = TestRepo::new(None);
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let mut invalid = synthetic(now, "query", "phantom", 1, 2, None, None);
+    invalid.as_object_mut().unwrap().remove("project_root_hash");
+    invalid["invalid"] = true.into();
+    write_records(
+        &home,
+        &[
+            synthetic(now, "index", "real", 1, 0, None, None),
+            synthetic(now, "query", "phantom", 1, 2, None, None),
+            invalid,
+        ],
+    );
+    let usage = report(&repo, &home, &["doctor", "--usage", "--json"]);
+    assert_eq!(usage["usage"]["calls"], 3);
+    assert_eq!(usage["usage"]["invalid"], 2);
+    assert_eq!(usage["usage"]["ignored_lines"], 0);
+    assert_eq!(usage["usage"]["projects"].as_array().unwrap().len(), 1);
+    assert_eq!(usage["usage"]["projects"][0]["project_root_hash"], "real");
 }
 
 #[test]

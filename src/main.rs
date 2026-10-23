@@ -14,6 +14,7 @@ mod parse;
 mod query;
 mod render;
 mod schema;
+mod skills;
 mod sqlite;
 mod templates;
 mod update;

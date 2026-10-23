@@ -201,6 +201,8 @@ fn summaries_are_brief_and_full_json_preserves_every_finding() {
         .map(|number| format!("[Missing](missing-{}.md)\n", number))
         .collect::<String>();
     write(&repo, "docs/a.md", &format!("# A\n\n{}", links));
+    // Both JSON aliases should be compared after the one-time layout notice.
+    repo.run(&["index"]);
     let compact = report(&repo, &["--rules", "broken-link"], 1);
     assert_eq!(compact["checks"].as_array().unwrap().len(), 20);
     assert_eq!(compact["truncated"], 20);

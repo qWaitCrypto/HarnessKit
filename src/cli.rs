@@ -118,7 +118,8 @@ fn run_index(args: &TargetArgs) -> Result<()> {
     let doc_count = scalar_count(&db, "SELECT COUNT(*) FROM docs;")?;
     let relation_count = scalar_count(&db, "SELECT COUNT(*) FROM relations;")?;
 
-    let artifact = crate::index::read_index_artifact_from_fact_store(&db)?;
+    let mut artifact = crate::index::read_index_artifact_from_fact_store(&db)?;
+    artifact.hints = output_hints(&context, &args.options, &artifact.coverage, artifact.hints);
     usage::results(doc_count);
     usage::coverage(artifact.coverage.ratio);
     if args.options.json {
@@ -196,7 +197,9 @@ fn run_check(args: &CheckArgs) -> Result<()> {
     refresh_fact_store(&context)?;
     let target_dir = &context.target_dir;
     let db = open_fact_store(target_dir)?;
-    let mut hints = indexed_hints(&context, &db)?;
+    let mut hint_options = args.target.options.clone();
+    hint_options.json = format == CheckFormat::Json;
+    let mut hints = indexed_hints(&context, &db, &hint_options)?;
     hints.extend(orphan_hints.iter().cloned());
     let docs_count = scalar_count(&db, "SELECT COUNT(*) FROM docs;")?;
     let relation_count = scalar_count(&db, "SELECT COUNT(*) FROM relations;")?;
@@ -255,6 +258,10 @@ fn run_check(args: &CheckArgs) -> Result<()> {
         print_coverage(&coverage, &hints);
     } else {
         println!("{}", coverage.summary());
+        let explanations = coverage.explanation_hints();
+        for hint in hints.iter().filter(|hint| explanations.contains(hint)) {
+            println!("Hint: {}", hint);
+        }
         for hint in orphan_hints.iter().take(3) {
             println!("Hint: {}", hint);
         }
@@ -278,10 +285,12 @@ fn run_doctor(doctor_args: &DoctorArgs) -> Result<()> {
     let context = load_engine_context(args)?;
     let json = args.options.json;
     let mut report = build_doctor_report(&context.target_dir);
-    report.hints = orphan_state_hints(&context.target_dir, &context.schema)?;
+    report
+        .hints
+        .extend(orphan_state_hints(&context.target_dir, &context.schema)?);
     report.coverage = discover_docs(&context.target_dir, &context.schema)?;
     usage::coverage(report.coverage.ratio);
-    report.hints.extend(project_hints(&context)?);
+    report.hints.extend(project_hints(&context, &args.options)?);
     if doctor_args.usage {
         let usage = usage::summarize(doctor_args.days);
         report.hints.extend(usage.hints.iter().cloned());
@@ -417,7 +426,8 @@ fn run_list_docs(args: &TargetArgs) -> Result<()> {
          FROM docs
          ORDER BY path ASC;", [])?;
 
-    let artifact = crate::index::read_index_artifact_from_fact_store(&db)?;
+    let mut artifact = crate::index::read_index_artifact_from_fact_store(&db)?;
+    artifact.hints = output_hints(&context, &args.options, &artifact.coverage, artifact.hints);
     usage::results(result.rows.len());
     usage::coverage(artifact.coverage.ratio);
     if args.options.json {
@@ -555,10 +565,9 @@ fn run_query(query_args: &QueryArgs) -> Result<()> {
             suggestion.title, suggestion.path
         ));
     }
-    let mut hints = indexed_hints(&context, &db)?;
-    hints.extend(query_hints.iter().cloned());
-
     if options.json {
+        let mut hints = indexed_hints(&context, &db, &args.target.options)?;
+        hints.extend(query_hints.iter().cloned());
         println!(
             "{}",
             render_query_json(
@@ -572,6 +581,12 @@ fn run_query(query_args: &QueryArgs) -> Result<()> {
         );
     } else {
         print_query_candidates(&query_terms, &candidates);
+        if args.target.options.verbose {
+            print_coverage(
+                &coverage,
+                &indexed_hints(&context, &db, &args.target.options)?,
+            );
+        }
         for hint in &query_hints {
             println!("Hint: {}", hint);
         }
@@ -595,11 +610,17 @@ fn run_graph(args: &InputArgs) -> Result<()> {
                 &doc_path,
                 &packet,
                 &discover_docs(&context.target_dir, &context.schema)?,
-                &indexed_hints(&context, &db)?
+                &indexed_hints(&context, &db, &args.target.options)?
             )
         );
     } else {
         print_context_packet("Graph", &doc_path, &packet);
+        if args.target.options.verbose {
+            print_coverage(
+                &discover_docs(&context.target_dir, &context.schema)?,
+                &indexed_hints(&context, &db, &args.target.options)?,
+            );
+        }
     }
     Ok(())
 }
@@ -620,7 +641,7 @@ fn run_context(args: &ContextArgs) -> Result<()> {
         let db = open_fact_store(&context.target_dir)?;
         let coverage = discover_docs(&context.target_dir, &context.schema)?;
         usage::coverage(coverage.ratio);
-        let mut hints = indexed_hints(&context, &db)?;
+        let mut hints = indexed_hints(&context, &db, &target.options)?;
         if let Some(since) = &args.since {
             let packet = build_handoff_context(&db, &context.target_dir, &context.schema, since)?;
             if packet.cutoff_unix.is_some() {
@@ -635,6 +656,9 @@ fn run_context(args: &ContextArgs) -> Result<()> {
                 );
             } else {
                 print_handoff_context(&packet, &coverage, hints.last().unwrap());
+                for hint in &hints[..hints.len() - 1] {
+                    println!("Hint: {}", hint);
+                }
             }
         } else {
             let packet = build_current_context(&db, &context.target_dir, &context.schema)?;
@@ -651,6 +675,9 @@ fn run_context(args: &ContextArgs) -> Result<()> {
                 );
             } else {
                 print_current_context(&packet, &coverage, hints.last().unwrap());
+                for hint in &hints[..hints.len() - 1] {
+                    println!("Hint: {}", hint);
+                }
             }
         }
         return Ok(());
@@ -683,11 +710,17 @@ fn run_context(args: &ContextArgs) -> Result<()> {
                 &input,
                 &packet,
                 &discover_docs(&context.target_dir, &context.schema)?,
-                &indexed_hints(&context, &db)?
+                &indexed_hints(&context, &db, &args.target.options)?
             )
         );
     } else {
         print_context_packet("Context", &input, &packet);
+        if args.target.options.verbose {
+            print_coverage(
+                &discover_docs(&context.target_dir, &context.schema)?,
+                &indexed_hints(&context, &db, &args.target.options)?,
+            );
+        }
     }
     Ok(())
 }
@@ -730,7 +763,7 @@ fn run_history_snapshot(args: &SnapshotArgs) -> Result<()> {
         // Report current coverage when skipped, even for a legacy snapshot.
         report.as_object_mut().unwrap().remove("coverage");
         report["skipped"] = outcome.skipped.into();
-        print_history_json(&context, &report, &hints)?;
+        print_history_json(&context, &args.target.options, &report, &hints)?;
     } else {
         if outcome.skipped {
             println!("{}", hints[0]);
@@ -739,7 +772,7 @@ fn run_history_snapshot(args: &SnapshotArgs) -> Result<()> {
         }
         print_coverage(
             &discover_docs(&context.target_dir, &context.schema)?,
-            &project_hints(&context)?,
+            &project_hints(&context, &args.target.options)?,
         );
     }
     Ok(())
@@ -750,7 +783,12 @@ fn run_history_list(args: &TargetArgs) -> Result<()> {
     let snapshots = list_history_snapshots(&context.target_dir)?;
     usage::results(snapshots.len());
     if args.options.json {
-        print_history_json(&context, &serde_json::json!({"snapshots": snapshots}), &[])?;
+        print_history_json(
+            &context,
+            &args.options,
+            &serde_json::json!({"snapshots": snapshots}),
+            &[],
+        )?;
     } else {
         print_history_list(&snapshots);
     }
@@ -763,7 +801,7 @@ fn run_history_status(args: &TargetArgs) -> Result<()> {
     if args.options.json {
         let mut report = serde_json::to_value(&status)?;
         report["dirty"] = is_history_dirty(&status).into();
-        print_history_json(&context, &report, &status.hints())?;
+        print_history_json(&context, &args.options, &report, &status.hints())?;
     } else {
         print_history_status(&status);
         for hint in status.hints() {
@@ -803,7 +841,7 @@ fn run_history_diff(args: &DiffArgs) -> Result<()> {
         diff_snapshot_to_worktree(&context.target_dir, &context.schema, &first)?
     };
     if args.options.json {
-        print_history_json(&context, &diff, &[])?;
+        print_history_json(&context, &args.options, &diff, &[])?;
     } else {
         print_history_diff(&diff);
     }
@@ -852,6 +890,7 @@ fn run_history_restore(args: &InputArgs) -> Result<()> {
     if args.target.options.json {
         print_history_json(
             &context,
+            &args.target.options,
             &serde_json::json!({
                 "snapshot": snapshot.id, "apply": apply,
                 "restore_files": plan.restore_files, "remove_paths": plan.remove_paths
@@ -879,7 +918,7 @@ fn run_history_transfer(args: &InputArgs, importing: bool) -> Result<()> {
         export_history(&context.target_dir, Path::new(path))?
     };
     if args.target.options.json {
-        print_history_json(&context, &summary, &[])?;
+        print_history_json(&context, &args.target.options, &summary, &[])?;
     } else {
         println!("{} HarnessKit history: {} snapshots, {} objects, {} existing snapshot IDs skipped ({})",
             if importing { "Imported" } else { "Exported" }, summary.snapshots, summary.objects,
@@ -895,6 +934,7 @@ fn run_history_show(args: &ShowArgs) -> Result<()> {
     if args.target.options.json {
         print_history_json(
             &context,
+            &args.target.options,
             &serde_json::json!({
                 "snapshot": snapshot.id, "path": args.path,
                 "content": String::from_utf8_lossy(&content)
@@ -910,12 +950,13 @@ fn run_history_show(args: &ShowArgs) -> Result<()> {
 
 fn print_history_json<T: serde::Serialize>(
     context: &EngineContext,
+    options: &CommonArgs,
     report: &T,
     extra_hints: &[String],
 ) -> Result<()> {
     let coverage = discover_docs(&context.target_dir, &context.schema)?;
     usage::coverage(coverage.ratio);
-    let mut hints = project_hints(context)?;
+    let mut hints = project_hints(context, options)?;
     hints.extend_from_slice(extra_hints);
     println!(
         "{}",
@@ -983,22 +1024,64 @@ fn print_project_hint(target_dir: &Path, schema: &Schema) {
     }
 }
 
-fn project_hints(context: &EngineContext) -> Result<Vec<String>> {
-    let mut hints = discover_docs(&context.target_dir, &context.schema)?.hints();
+fn project_hints(context: &EngineContext, options: &CommonArgs) -> Result<Vec<String>> {
+    let coverage = discover_docs(&context.target_dir, &context.schema)?;
+    let mut hints = coverage.hints();
     hints.extend(project_hint(&context.target_dir, &context.schema));
-    Ok(hints)
+    Ok(output_hints(context, options, &coverage, hints))
 }
 
 fn indexed_hints(
     context: &EngineContext,
     db: &crate::sqlite::SqliteConnection,
+    options: &CommonArgs,
 ) -> Result<Vec<String>> {
     let mut hints: Vec<String> = crate::index::meta_value(db, "coverage_hints")?
         .map(|text| serde_json::from_str(&text))
         .transpose()?
         .unwrap_or_default();
     hints.extend(project_hint(&context.target_dir, &context.schema));
-    Ok(hints)
+    let coverage = discover_docs(&context.target_dir, &context.schema)?;
+    Ok(output_hints(context, options, &coverage, hints))
+}
+
+fn output_hints(
+    context: &EngineContext,
+    options: &CommonArgs,
+    coverage: &crate::discover::Coverage,
+    mut hints: Vec<String>,
+) -> Vec<String> {
+    let record = context
+        .target_dir
+        .join(".harnesskit/state/layout-hints-shown");
+    let layout = format!(
+        "{}\n{:?}\n",
+        context.schema.managed_root, context.schema.inferred_root
+    );
+    // Explicit explanation requests remain read-only (notably doctor --layout).
+    // Only an automatic first-run explanation records that it was shown.
+    let first_inference = !options.verbose
+        && !options.layout
+        && context.schema.inferred_layout
+        && fs::read_to_string(&record).ok().as_deref() != Some(layout.as_str());
+    if !options.verbose && !options.layout && !first_inference {
+        let explanations = coverage.explanation_hints();
+        hints.retain(|hint| !explanations.contains(hint));
+    }
+    if first_inference {
+        // Muting a repeated explanation must not prevent doctor from reporting
+        // an unwritable state directory, or fail an otherwise valid command.
+        let _ =
+            fs::create_dir_all(record.parent().unwrap()).and_then(|_| fs::write(record, layout));
+    }
+    hints.retain(|hint| !hint.starts_with("0 external file reference(s)"));
+    if hints.is_empty() && options.json {
+        hints.push(
+            "Use doctor --layout to review coverage mappings, or --verbose for scope details."
+                .to_string(),
+        );
+    }
+    hints
 }
 
 fn print_coverage(coverage: &crate::discover::Coverage, hints: &[String]) {

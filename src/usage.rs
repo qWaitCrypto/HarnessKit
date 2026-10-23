@@ -27,7 +27,10 @@ struct UsageRecord {
     timestamp_unix: u64,
     version: String,
     command: String,
-    project_root_hash: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    project_root_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    invalid: bool,
     duration_ms: u64,
     exit_code: i32,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -128,7 +131,8 @@ pub(crate) fn start() {
                 timestamp_unix: now_unix(),
                 version: env!("CARGO_PKG_VERSION").to_string(),
                 command: command_name(),
-                project_root_hash: root_hash(Path::new(".")),
+                project_root_hash: Some(root_hash(Path::new("."))),
+                invalid: false,
                 duration_ms: 0,
                 exit_code: 0,
                 result_count: None,
@@ -151,7 +155,7 @@ fn record_with(update: impl FnOnce(&mut Recorder)) {
 }
 
 pub(crate) fn target(path: &Path) {
-    record_with(|recorder| recorder.record.project_root_hash = root_hash(path));
+    record_with(|recorder| recorder.record.project_root_hash = Some(root_hash(path)));
 }
 
 pub(crate) fn query_text(text: &str) {
@@ -194,6 +198,10 @@ pub(crate) fn finish(exit_code: i32) {
             .as_millis()
             .min(u128::from(u64::MAX)) as u64;
         recorder.record.exit_code = exit_code;
+        if exit_code == 2 {
+            recorder.record.invalid = true;
+            recorder.record.project_root_hash = None;
+        }
         // Telemetry is best effort. No write/serialization failure may change
         // command output, stderr, or the process exit code.
         let _ = append_record(&recorder.path, &recorder.record);
@@ -225,6 +233,7 @@ pub(crate) struct UsageReport {
     #[serde(flatten)]
     summary: UsageStats,
     projects: Vec<ProjectUsage>,
+    invalid: usize,
     patterns: UsagePatterns,
     ignored_lines: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -338,6 +347,7 @@ pub(crate) fn summarize(days: Option<u32>) -> UsageReport {
     let mut previous = BTreeMap::<String, (String, u64, i32)>::new();
     let mut patterns = UsagePatterns::default();
     let mut ignored_lines = 0;
+    let mut invalid = 0;
     let mut read_error = None;
     if let Some(path) = log_path() {
         match fs::File::open(path) {
@@ -363,9 +373,19 @@ pub(crate) fn summarize(days: Option<u32>) -> UsageReport {
                     if record.timestamp_unix < cutoff || record.timestamp_unix > now {
                         continue;
                     }
+                    summary.add(&record);
+                    // Also classify older exit=2 records, which carried a root
+                    // hash before invalid invocations had their own category.
+                    if record.invalid || record.exit_code == 2 {
+                        invalid += 1;
+                        continue;
+                    }
+                    let Some(project_root_hash) = &record.project_root_hash else {
+                        continue;
+                    };
                     if record.command == "check" && record.exit_code == 0 {
                         if let Some((command, timestamp, exit_code)) =
-                            previous.get(&record.project_root_hash)
+                            previous.get(project_root_hash)
                         {
                             if command == "index"
                                 && *exit_code == 0
@@ -380,7 +400,7 @@ pub(crate) fn summarize(days: Option<u32>) -> UsageReport {
                         }
                     }
                     previous.insert(
-                        record.project_root_hash.clone(),
+                        project_root_hash.clone(),
                         (
                             record.command.clone(),
                             record.timestamp_unix,
@@ -389,10 +409,9 @@ pub(crate) fn summarize(days: Option<u32>) -> UsageReport {
                     );
                     patterns.version_calls += usize::from(record.command == "--version");
                     projects
-                        .entry(record.project_root_hash.clone())
+                        .entry(project_root_hash.clone())
                         .or_default()
                         .add(&record);
-                    summary.add(&record);
                 }
             }
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
@@ -431,6 +450,7 @@ pub(crate) fn summarize(days: Option<u32>) -> UsageReport {
     UsageReport {
         days,
         summary,
+        invalid,
         projects: projects
             .into_iter()
             .map(|(project_root_hash, accumulator)| ProjectUsage {
@@ -451,6 +471,10 @@ pub(crate) fn print_report(report: &UsageReport) {
         .map(|days| format!("last {} days", days))
         .unwrap_or_else(|| "all time".to_string());
     println!("Usage ({}): {} calls", period, report.summary.calls);
+    println!(
+        "Invalid invocations: {} (excluded from projects)",
+        report.invalid
+    );
     println!(
         "Queries: {}; zero-hit rate: {:.1}%; relaxed-hit rate: {:.1}%",
         report.summary.query_calls,

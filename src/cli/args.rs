@@ -208,6 +208,9 @@ pub(crate) struct CommonArgs {
     pub(crate) tracked: bool,
     #[arg(long, action = clap::ArgAction::SetTrue, overrides_with = "preview")]
     pub(crate) preview: bool,
+    /// Explain coverage and inferred layout, including previously shown hints.
+    #[arg(long)]
+    pub(crate) verbose: bool,
     /// Explain document layout inference and coverage (doctor).
     #[arg(long)]
     pub(crate) layout: bool,

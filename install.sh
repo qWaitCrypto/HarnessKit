@@ -237,7 +237,7 @@ trap 'rm -rf "${tmp_dir}"' EXIT
 echo "Downloading HarnessKit ${version} for ${target}..."
 echo "Install prefix: ${prefix}"
 if [[ "${install_claude}" -eq 1 ]]; then
-  echo "Claude skill: ${HOME}/.claude/skills/harnesskit/SKILL.md"
+  echo "Claude skill: ${CLAUDE_CONFIG_DIR:-${HOME}/.claude}/skills/harnesskit/SKILL.md"
 fi
 if [[ "${install_codex}" -eq 1 ]]; then
   codex_home="${CODEX_HOME:-${HOME}/.codex}"
@@ -264,15 +264,16 @@ chmod +x "${prefix}/bin/harnesskit" 2>/dev/null || true
 echo "Installed CLI: ${prefix}/bin/harnesskit"
 
 if [[ "${install_claude}" -eq 1 ]]; then
-  mkdir -p "${HOME}/.claude/skills/harnesskit"
-  cp "${package_dir}/agent-surfaces/skills/harnesskit/SKILL.md" "${HOME}/.claude/skills/harnesskit/SKILL.md"
-  echo "Installed Claude Code skill: ${HOME}/.claude/skills/harnesskit/SKILL.md"
+  claude_skill_dir="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}/skills/harnesskit"
+  mkdir -p "${claude_skill_dir}"
+  cp -R "${package_dir}/agent-surfaces/skills/harnesskit/." "${claude_skill_dir}/"
+  echo "Installed Claude Code skill: ${claude_skill_dir}/SKILL.md"
 fi
 
 if [[ "${install_codex}" -eq 1 ]]; then
   codex_home="${CODEX_HOME:-${HOME}/.codex}"
   mkdir -p "${codex_home}/skills/harnesskit"
-  cp "${package_dir}/agent-surfaces/skills/harnesskit/SKILL.md" "${codex_home}/skills/harnesskit/SKILL.md"
+  cp -R "${package_dir}/agent-surfaces/skills/harnesskit/." "${codex_home}/skills/harnesskit/"
   echo "Installed Codex skill: ${codex_home}/skills/harnesskit/SKILL.md"
 fi
 
@@ -280,7 +281,7 @@ if [[ "${install_codex_plugin}" -eq 1 ]]; then
   mkdir -p "${HOME}/plugins/harnesskit/.codex-plugin"
   mkdir -p "${HOME}/plugins/harnesskit/skills/harnesskit"
   cp "${package_dir}/agent-surfaces/codex/.codex-plugin/plugin.json" "${HOME}/plugins/harnesskit/.codex-plugin/plugin.json"
-  cp "${package_dir}/agent-surfaces/skills/harnesskit/SKILL.md" "${HOME}/plugins/harnesskit/skills/harnesskit/SKILL.md"
+  cp -R "${package_dir}/agent-surfaces/skills/harnesskit/." "${HOME}/plugins/harnesskit/skills/harnesskit/"
   upsert_codex_marketplace "${HOME}/.agents/plugins/marketplace.json"
   echo "Installed Codex local plugin package: ${HOME}/plugins/harnesskit"
   echo "Updated Codex personal marketplace: ${HOME}/.agents/plugins/marketplace.json"

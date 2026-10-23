@@ -44,5 +44,6 @@ If no relevant document exists, create the narrowest missing doc from `{{docs_ro
 ## Update Rules
 
 - Keep this file short.
+- Write current state only in `{{project_map_path}}`; link to it from other docs.
 - Keep durable knowledge in focused docs.
 - Prefer updating docs when semantics change, not on every small diff.

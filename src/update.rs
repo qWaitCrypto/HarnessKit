@@ -1,9 +1,10 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, Stdio};
 use std::{env, fs};
 
-use crate::fs_utils::{home_dir, now_unix};
+use crate::fs_utils::now_unix;
 use crate::output::println;
+use crate::skills::{copy_skill, skill_locations};
 use crate::Result;
 
 pub(crate) fn detect_release_target() -> Result<String> {
@@ -205,43 +206,21 @@ fn sync_existing_installed_skills(package_dir: &Path) -> Result<()> {
     let source_skill = package_dir
         .join("agent-surfaces")
         .join("skills")
-        .join("harnesskit")
-        .join("SKILL.md");
-    if !source_skill.is_file() {
+        .join("harnesskit");
+    if !source_skill.join("SKILL.md").is_file() {
         return Ok(());
     }
 
-    if let Some(home) = home_dir() {
-        let claude_skill = home
-            .join(".claude")
-            .join("skills")
-            .join("harnesskit")
-            .join("SKILL.md");
-        if claude_skill.exists() {
-            copy_skill(&source_skill, &claude_skill)?;
-            println!("Updated Claude Code skill: {}", claude_skill.display());
-        }
-
-        let codex_home = env::var_os("CODEX_HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| home.join(".codex"));
-        let codex_skill = codex_home
-            .join("skills")
-            .join("harnesskit")
-            .join("SKILL.md");
-        if codex_skill.exists() {
-            copy_skill(&source_skill, &codex_skill)?;
-            println!("Updated Codex skill: {}", codex_skill.display());
+    for location in skill_locations() {
+        if location.path.exists() {
+            copy_skill(&source_skill, location.path.parent().unwrap())?;
+            println!(
+                "Updated {} skill: {}",
+                location.agent,
+                location.path.display()
+            );
         }
     }
 
-    Ok(())
-}
-
-fn copy_skill(source: &Path, target: &Path) -> Result<()> {
-    if let Some(parent) = target.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    fs::copy(source, target)?;
     Ok(())
 }

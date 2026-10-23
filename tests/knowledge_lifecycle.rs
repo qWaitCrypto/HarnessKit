@@ -50,6 +50,8 @@ fn paths(docs: &Value) -> Vec<&str> {
 #[test]
 fn lifecycle_fixture_defaults_to_short_current_routes_and_live_plans() {
     let repo = TestRepo::new(Some("lifecycle"));
+    // Compare aliases after the one-time inferred-layout notice.
+    repo.run(&["index"]);
     let packet = current(&repo);
     assert_eq!(report(&repo, &["context", "--json"]), packet);
     assert_eq!(packet["kind"], "current");
@@ -358,6 +360,8 @@ fn date_handoff_includes_utc_boundary_and_explains_mtime_limits() {
 #[test]
 fn current_and_since_accept_target_directories_without_breaking_legacy_context() {
     let repo = TestRepo::new(Some("lifecycle"));
+    // Target spelling must not change the packet in a stable presentation state.
+    repo.run(&["index"]);
     let parent = TestRepo::new(None);
     let path = repo.root.to_str().unwrap();
     let output = parent.run(&["context", "--current", path, "--json"]);

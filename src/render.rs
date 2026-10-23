@@ -184,6 +184,19 @@ pub(crate) fn print_doctor_report(report: &DoctorReport) {
         installed_label(report.codex_skill_installed),
         report.codex_skill_path
     );
+    for skill in &report.skills {
+        println!(
+            "{} skill version: {} (bundled {}; {})",
+            skill.agent,
+            skill.version.as_deref().unwrap_or("unknown"),
+            report.bundled_skill_version,
+            if skill.matches_bundled {
+                "current"
+            } else {
+                "sync needed"
+            }
+        );
+    }
     println!(
         "Current executable: {}",
         report.current_exe.as_deref().unwrap_or("(unknown)")

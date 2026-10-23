@@ -27,7 +27,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 source_dir="${repo_root}/agent-surfaces/skills/harnesskit"
-target_dir="${home_dir}/.claude/skills/harnesskit"
+target_dir="${CLAUDE_CONFIG_DIR:-${home_dir}/.claude}/skills/harnesskit"
 
 if [[ ! -f "${source_dir}/SKILL.md" ]]; then
   echo "missing shared skill at ${source_dir}/SKILL.md" >&2
@@ -35,6 +35,6 @@ if [[ ! -f "${source_dir}/SKILL.md" ]]; then
 fi
 
 mkdir -p "${target_dir}"
-cp "${source_dir}/SKILL.md" "${target_dir}/SKILL.md"
+cp -R "${source_dir}/." "${target_dir}/"
 
 echo "Installed Claude Code HarnessKit skill to ${target_dir}"

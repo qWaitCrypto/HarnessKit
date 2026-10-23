@@ -44,6 +44,6 @@ if [[ ! -f "${source_dir}/SKILL.md" ]]; then
 fi
 
 mkdir -p "${target_dir}"
-cp "${source_dir}/SKILL.md" "${target_dir}/SKILL.md"
+cp -R "${source_dir}/." "${target_dir}/"
 
 echo "Installed Codex HarnessKit skill to ${target_dir}"

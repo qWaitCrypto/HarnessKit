@@ -45,7 +45,7 @@ rm -rf "${plugin_root}"
 mkdir -p "${plugin_root}/.codex-plugin"
 mkdir -p "${plugin_root}/skills/harnesskit"
 cp "${repo_root}/agent-surfaces/codex/.codex-plugin/plugin.json" "${plugin_root}/.codex-plugin/plugin.json"
-cp "${repo_root}/agent-surfaces/skills/harnesskit/SKILL.md" "${plugin_root}/skills/harnesskit/SKILL.md"
+cp -R "${repo_root}/agent-surfaces/skills/harnesskit/." "${plugin_root}/skills/harnesskit/"
 
 mkdir -p "$(dirname "${marketplace_path}")"
 MARKETPLACE_PATH="${marketplace_path}" python3 - <<'PY'

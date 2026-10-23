@@ -1,9 +1,19 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 use std::{env, fs};
 
 use crate::fs_utils::{absolute_display_path, nearest_existing_parent, now_unix};
 use crate::git::git_repo_check;
+use crate::skills::{skill_locations, skill_version, BUNDLED_SKILL};
+
+#[derive(serde::Serialize)]
+pub(crate) struct SkillCheck {
+    pub(crate) agent: String,
+    pub(crate) path: String,
+    pub(crate) version: Option<String>,
+    pub(crate) matches_bundled: bool,
+    pub(crate) error: Option<String>,
+}
 
 #[derive(serde::Serialize)]
 pub(crate) struct CommandCheck {
@@ -34,6 +44,8 @@ pub(crate) struct DoctorReport {
     pub(crate) claude_skill_installed: bool,
     pub(crate) codex_skill_path: String,
     pub(crate) codex_skill_installed: bool,
+    pub(crate) bundled_skill_version: String,
+    pub(crate) skills: Vec<SkillCheck>,
     pub(crate) current_exe: Option<String>,
     pub(crate) path_contains_cli_dir: bool,
     pub(crate) hints: Vec<String>,
@@ -62,22 +74,45 @@ pub(crate) fn build_doctor_report(target_dir: &Path) -> DoctorReport {
     let history_dir = target_dir.join(".harnesskit").join("history");
     let schema_path = target_dir.join(".harnesskit").join("schema.yaml");
     let (state_writable, state_error) = state_writable_check(target_dir, &state_dir);
-    let home = env::var("HOME").unwrap_or_default();
-    let claude_skill = PathBuf::from(&home)
-        .join(".claude")
-        .join("skills")
-        .join("harnesskit")
-        .join("SKILL.md");
-    let codex_home = env::var("CODEX_HOME").unwrap_or_else(|_| {
-        PathBuf::from(&home)
-            .join(".codex")
-            .to_string_lossy()
-            .to_string()
-    });
-    let codex_skill = PathBuf::from(codex_home)
-        .join("skills")
-        .join("harnesskit")
-        .join("SKILL.md");
+    let locations = skill_locations();
+    let skill_path = |agent| {
+        locations
+            .iter()
+            .find(|location| location.agent == agent)
+            .map(|location| absolute_display_path(&location.path))
+            .unwrap_or_default()
+    };
+    let skill_installed = |agent| {
+        locations
+            .iter()
+            .any(|location| location.agent == agent && location.path.exists())
+    };
+    let bundled_skill_version = skill_version(BUNDLED_SKILL).unwrap_or_default();
+    let mut skills = Vec::new();
+    let mut hints = Vec::new();
+    for location in locations.iter().filter(|location| location.path.exists()) {
+        let (version, error) = match fs::read_to_string(&location.path) {
+            Ok(text) => (skill_version(&text), None),
+            Err(error) => (None, Some(error.to_string())),
+        };
+        let matches_bundled = version.as_deref() == Some(bundled_skill_version.as_str());
+        let path = absolute_display_path(&location.path);
+        if !matches_bundled {
+            hints.push(format!(
+                "Installed {} skill at {} has version {} (bundled {}). Run `harnesskit update` or sync from this checkout with {} (include references/).{}",
+                location.agent, path, version.as_deref().unwrap_or("unknown"),
+                bundled_skill_version, location.sync,
+                error.as_ref().map(|error| format!(" Read error: {}", error)).unwrap_or_default()
+            ));
+        }
+        skills.push(SkillCheck {
+            agent: location.agent.to_string(),
+            path,
+            version,
+            matches_bundled,
+            error,
+        });
+    }
     let current_exe = env::current_exe().ok();
     let path_contains_cli_dir = current_exe
         .as_ref()
@@ -101,13 +136,15 @@ pub(crate) fn build_doctor_report(target_dir: &Path) -> DoctorReport {
         state_error,
         history_exists: history_dir.exists(),
         schema_exists: schema_path.exists(),
-        claude_skill_path: absolute_display_path(&claude_skill),
-        claude_skill_installed: claude_skill.exists(),
-        codex_skill_path: absolute_display_path(&codex_skill),
-        codex_skill_installed: codex_skill.exists(),
+        claude_skill_path: skill_path("Claude Code"),
+        claude_skill_installed: skill_installed("Claude Code"),
+        codex_skill_path: skill_path("Codex"),
+        codex_skill_installed: skill_installed("Codex"),
+        bundled_skill_version,
+        skills,
         path_contains_cli_dir,
         current_exe: current_exe.as_ref().map(|path| absolute_display_path(path)),
-        hints: Vec::new(),
+        hints,
         coverage: Default::default(),
         schema_preview: None,
         schema_written: false,

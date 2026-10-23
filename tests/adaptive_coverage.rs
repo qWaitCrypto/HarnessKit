@@ -679,9 +679,10 @@ fn repository_dogfood_needs_no_init_or_schema_and_explains_every_mapping() {
             "ITERATION_PLAN.md",
             "agent-surfaces/README.md",
             "agent-surfaces/skills/harnesskit/SKILL.md",
+            "agent-surfaces/skills/harnesskit/references/cli.md",
         ])
     );
-    assert_eq!(report["coverage"]["managed"], 4);
+    assert_eq!(report["coverage"]["managed"], 5);
     assert!(report["coverage"]["excluded"].as_u64().unwrap() > 0);
     assert_eq!(report["coverage"]["ratio"], 1.0);
     assert!(report["coverage"]["mappings"]

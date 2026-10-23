@@ -1,0 +1,272 @@
+# HarnessKit CLI Reference
+
+Read this reference for setup, less common commands, or recovery details. Prefer CLI `--help`, `coverage` and `hints` for current behavior.
+
+## What HarnessKit Is
+
+HarnessKit is a lightweight repo-level project harness, not an agent runtime. It follows the file-as-memory model: repository files are the source of truth for project knowledge, and agents read, query, and update them through normal file operations and the `harnesskit` CLI.
+
+Key concepts:
+- **Repository files are memory.** AGENTS.md, CLAUDE.md, ARCHITECTURE.md, docs/ — these are the persistent knowledge layer, not chat history or external databases.
+- **SQLite is a derived index.** `.harnesskit/state` contains the incremental fact store and can be rebuilt from docs. `.harnesskit/history` stores local doc checkpoints; do not delete it as cache.
+- **CLI is the deterministic action boundary.** The `harnesskit` CLI handles indexing, querying, checking, and history — operations that require consistency guarantees. Normal doc edits are done by the agent directly.
+
+This architecture is permanent: skill defines workflow, CLI executes deterministic actions, agent reads and edits files. Do not build MCP servers, daemons, tool wrappers, or large command menus around HarnessKit.
+
+## CLI availability
+
+Use the CLI on PATH, or `cargo run --` from a source checkout. Run the needed action directly; repeated version preflights are unnecessary. If the CLI is unavailable, normal file reading and focused doc edits can still proceed.
+
+## Phase 1: Initialization
+
+### When to Init
+
+Run `harnesskit init` when:
+- The user asks to set up HarnessKit or project docs
+- The user asks to initialize a docs system or project memory
+
+Do not initialize a repository merely because this skill was triggered. Treat initialization as a project setup action that needs an explicit user request or clear user authorization.
+
+### Running Init
+
+```bash
+harnesskit init [target_dir] [--schema <path>] [--docs-root <path>] [--force] [--local|--tracked] [--preview]
+```
+
+Choose the init mode from the user's intent:
+- Use `--tracked` when the user says the docs should be committed, shared with the team, used in an open-source repo, or become repo-visible project memory.
+- Use `--local` when the user says they are only trying HarnessKit locally, do not want to affect git status, or do not want to commit generated docs yet.
+- If intent is unclear, briefly explain local versus tracked and use the conservative default `--local`.
+
+Most common local trial:
+
+```bash
+harnesskit init --local
+```
+
+Team-visible project memory:
+
+```bash
+harnesskit init --tracked
+```
+
+Preview without writing files:
+
+```bash
+harnesskit init --preview
+```
+
+Init creates a managed docs scaffold based on the schema:
+- **Entrypoints**: `AGENTS.md`, `CLAUDE.md`, `ARCHITECTURE.md`
+- **Docs manifest**: `docs/index.md`, `docs/project.md`, `docs/DOCUMENTATION_SYSTEM.md`, `docs/commands.md`
+- **Doc collections**: `docs/product-specs/`, `docs/design-docs/`, `docs/decisions/`, `docs/exec-plans/`, `docs/worklog/`, `docs/operations/`, `docs/generated/`, `docs/references/` — each with its own `index.md`
+- **Templates**: `docs/templates/` for creating new docs per collection type
+- **Internal state**: `.harnesskit/state/`, `.harnesskit/history/`, `.harnesskit/schema.yaml`
+
+Files that already exist are skipped unless `--force` is passed.
+
+### Git Exclude
+
+In local mode, init creates the docs scaffold without requiring git.
+
+When the target directory is inside a git repository, init also adds HarnessKit-managed paths (`docs/`, `AGENTS.md`, `CLAUDE.md`, `ARCHITECTURE.md`, `.harnesskit/`) to `.git/info/exclude` for local isolation.
+
+When no git repository is found, init skips `.git/info/exclude` and should report that it generated local docs without git exclude entries. Do not require the user to run `git init` first unless they specifically want git visibility or local exclude behavior.
+
+In tracked mode, init does not write `.git/info/exclude`. Generated docs remain visible to `git status` and can be committed.
+
+When init reports this, explain to the user:
+> HarnessKit local mode added its managed paths to your local git exclude (`.git/info/exclude`). This keeps them out of git status locally without modifying `.gitignore`. If you want these paths tracked by git, rerun or initialize with `harnesskit init --tracked` in a clean target and commit the files normally.
+
+If init reports that no git repository was found, explain that docs were still created and no git exclude entries were written.
+
+Do not write `.gitignore` entries unless the user explicitly asks.
+
+### Post-Init: Read the Entrypoint
+
+After init completes, immediately read the agent entrypoint in the same session:
+
+- **Codex**: read `AGENTS.md`
+- **Claude Code**: read `CLAUDE.md`
+
+Then follow the progressive disclosure path — do not read everything at once:
+
+1. `AGENTS.md` or `CLAUDE.md` — orientation and reading paths
+2. `ARCHITECTURE.md` — high-level code map
+3. `docs/index.md` — docs manifest
+4. Relevant collection index (e.g., `docs/product-specs/index.md`)
+5. The smallest focused doc that answers the current task
+
+**Stop at the layer that answers the task.** Do not read the entire docs tree.
+
+## Phase 2: Ongoing Work
+
+Once HarnessKit is initialized, use the CLI proactively during normal development tasks.
+
+### Orientation in an Existing Repo
+
+When entering a repo that already has `.harnesskit/` or `AGENTS.md` / `CLAUDE.md`:
+
+1. Read the agent entrypoint, then run `harnesskit context --current`.
+2. Follow the progressive disclosure path described above.
+3. Use `harnesskit query` with 1–3 keywords to find evidence before browsing manually.
+
+### Target Directory Discipline
+
+All commands accept optional `[target_dir]`, `[--schema <path>]`, `[--docs-root <path>]` arguments. Defaults: target_dir = `.`, schema = bundled `file-first-v0.yaml`.
+
+In most cases, the default `.` is fine. If HarnessKit diagnostics show that `target_dir`, `current_dir`, `PWD`, or `.harnesskit/state` do not refer to the intended writable project root, pass the project root explicitly:
+
+```bash
+harnesskit check /absolute/project/path --json
+harnesskit index /absolute/project/path
+harnesskit context "auth" /absolute/project/path --json
+```
+
+Use this to correct target selection before treating state as corrupt. Do not delete `.harnesskit/history` unless the user intentionally wants to discard local doc checkpoints.
+
+### CLI Reference
+
+#### Indexing
+
+```bash
+harnesskit index
+```
+
+Explicitly refreshes the derived fact store. Query, context and check refresh it automatically; do not run index before check. Indexing is incremental.
+
+#### Querying
+
+```bash
+harnesskit query "<terms>" --json
+```
+
+Search with 1–3 distinctive keywords. The CLI combines strict and relaxed matches, CJK/substring retrieval and lifecycle-aware ranking. Read coverage, match metadata and hints; on zero results, adjust terms using diagnostics before falling back to rg. Use `--limit N` to control candidate count.
+
+**When to use**: before manually searching docs for project context, design rationale, or prior decisions. Let the index do the work.
+
+#### Context Retrieval
+
+```bash
+harnesskit context "<terms-or-doc-path>" --json
+```
+
+With terms or a path, returns that doc and its relevant neighbors in reading order. `harnesskit context --current` (also the default without input) returns entrypoints, the project map, active plans, recent decisions, snapshot changes and unchecked acceptance items. Use `context --since <snapshot|latest|YYYY-MM-DD> --json` for a handoff of changed docs.
+
+**When to use**: when you need to understand a doc in context — what it links to, what references it, what code it scopes.
+
+#### Inspection
+
+```bash
+harnesskit inspect <doc_path>
+```
+
+Shows full metadata, relations (both incoming and outgoing), and checks for a single doc. Useful for understanding a doc's role in the knowledge graph.
+
+```bash
+harnesskit refs <doc_path>
+```
+
+Shows all incoming references (other docs that link to, index, or mention this doc).
+
+```bash
+harnesskit graph <doc_path> [--json]
+```
+
+Like `context`, but anchored on a specific doc path (no search fallback).
+
+#### Discovery
+
+```bash
+harnesskit list-docs
+```
+
+Lists all managed docs with path, title, role, status, authority, link counts, and collection. Use for broad orientation.
+
+```bash
+harnesskit rank
+```
+
+Shows the top 20 docs by incoming-link score. Useful for finding anchor documents — the high-value docs that other docs reference most.
+
+#### Health Check
+
+```bash
+harnesskit check [--json] [--strict] [--rules <rule-list>]
+```
+
+Refreshes the index and checks managed docs. The default summary groups rules and shows changes against the derived baseline. Use `--all` or `--format full` for every finding, `--format json` as an alias for `--json`, and `--update-baseline` to accept the current set after reviewing it. Findings include repair hints. JSON lists are bounded unless `--all` is used.
+
+Broken links, missing all entrypoints and invalid schema syntax are errors. No documentation errors does not mean delivery is verified: project tests, runtime checks and owner acceptance remain separate. Do not copy CLI statistics into worklogs.
+
+**When to use**: after doc changes to verify consistency, or when the user asks about doc health. Always add `--json` for structured output. Use `--strict` to treat warnings as errors (exit code 1).
+
+Summarize findings grouped by rule id and path. Focus on errors first, then warnings.
+
+#### History
+
+```bash
+harnesskit history status
+```
+
+Shows whether any managed docs have changed since the last snapshot. Use as a quick check before and after work.
+
+```bash
+harnesskit history snapshot -m "<message>"
+```
+
+Creates a content-addressed snapshot of all managed docs, with coverage metadata. Unchanged contents skip creation; use `--allow-empty` to force a checkpoint. Use at phase boundaries or before risky doc edits.
+
+```bash
+harnesskit history list
+```
+
+Lists all snapshots with id, timestamp, file count, and message.
+
+```bash
+harnesskit history diff <snapshot-id|latest>
+harnesskit history diff <snapshot-a> <snapshot-b>
+```
+
+Shows what changed between a snapshot and current state, or between two snapshots.
+
+```bash
+harnesskit history restore <snapshot-id|latest> [--apply] [--force]
+```
+
+Previews or applies a restore from a snapshot. Without `--apply`, shows what would change. With `--apply`, restores files after preflight checks. With `--force`, overwrites even if current files have unsaved changes.
+
+**When to use**: history is a lightweight local versioning system (not git). Use it for doc-level checkpoints and recovery, especially for exec-plans and worklog during complex tasks.
+
+`history show <snapshot|latest> <path>` prints one saved file without restoring it. `history export <file.tar.gz>` and `history import <file>` move local snapshots between devices; import merges without replacing existing snapshot IDs. Existing history formats remain supported. Files referenced outside the managed scope are not included in history.
+
+### Coverage and layout
+
+Coverage distinguishes managed, unmanaged and excluded Markdown. Text output normally has one Coverage summary line. Long scope and inferred-layout explanations appear automatically once for an inferred layout, recorded in `.harnesskit/state/layout-hints-shown`; `--verbose` repeats them. `doctor --layout` explicitly explains mappings without creating an index or changing this record. Actionable findings and repair hints remain visible.
+
+Explicit schema configurations keep their behavior. Use `doctor --layout --write-schema` to persist inferred mappings; replacing an existing schema needs `--force`, otherwise it is previewed. `--schema` and `--docs-root` override defaults. Do not move docs just to fit the bundled layout.
+
+### Diagnostics, installation and usage
+
+`harnesskit doctor --json` reports the environment and compares installed skill headers with the bundled version. It checks Codex (`CODEX_HOME` or `~/.codex`), Claude (`CLAUDE_CONFIG_DIR` or `~/.claude`), shared `~/.agents/skills`, and the optional local Codex plugin. Missing or different version headers on installed skills require synchronization. Use `harnesskit update` for a release install, or the checkout's `scripts/install-codex-skill.sh`, `scripts/install-claude-skill.sh` or `scripts/install-codex-plugin-local.sh`. `scripts/sync-agent-surfaces.sh` refreshes the plugin packaging copy. Copy the whole skill directory, including `references/`.
+
+`doctor --usage [--days N]` summarizes local metrics. Logs live under `HARNESSKIT_HOME` or `~/.harnesskit`; `HARNESSKIT_USAGE_LOG=off` disables them and `full` includes query text. Default logs omit raw queries and paths. Usage/environment errors (exit 2) have `invalid: true` with no project-root hash; `usage.invalid` counts them separately from project aggregates, including older exit-2 records. Total calls still include invalid invocations.
+
+Exit codes: 0 normal; 1 documentation errors (or warnings under `--strict`); 2 usage/environment errors, including nonexistent target directories. Only init creates a missing target. Broken output pipes exit silently with 0.
+
+### Updating Docs
+
+When durable semantic changes need capture:
+
+- Update the narrowest relevant doc and its collection index.
+- Create new docs from `docs/templates/` when no existing doc covers the topic — but only when the addition is the minimal useful memory for the task.
+- Keep `AGENTS.md` and `CLAUDE.md` short — they are routing tables, not encyclopedias. Detailed knowledge belongs in focused docs under `docs/`.
+- Keep current state only in the configured project map (normally `docs/project.md`); date its current focus and move ended work to its historical section.
+- After updates, run `harnesskit check --json` to verify consistency.
+
+## Rules
+
+- The user speaks naturally; the agent decides which CLI command fits. Do not ask users to memorize commands.
+- Prefer CLI retrieval (`query`, `context`, `inspect`) over manual file search for project knowledge.
+- When creating docs, use the correct collection directory and template. The schema defines which frontmatter fields each collection allows.
+- Progressive disclosure is not optional — always start from the entrypoint and drill down. Never scan the full docs tree to "catch up".

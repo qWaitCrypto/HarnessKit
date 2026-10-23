@@ -141,12 +141,17 @@ impl Coverage {
     }
 
     pub(crate) fn hints(&self) -> Vec<String> {
-        let mut hints = vec![format!(
-            "Coverage scans Markdown under {:?}, configured core/entrypoint files and explicit include matches. Templates, hidden directories, symlinks, target and node_modules are skipped. Nested projects (subdirectories with AGENTS.md, CLAUDE.md or .harnesskit) and fixture directories (tests/fixtures, testdata, fixture/fixtures under examples) are excluded by default, alongside schema ignore matches. Ratio = managed / (managed + unmanaged); an empty scope has ratio 0. Use --json (coverage.mappings) or doctor --layout for each classification; include overrides default exclusions and inference, ignore takes precedence.", self.scan_root
-        )];
+        let mut hints = self.explanation_hints();
         for dir in self.by_dir.iter().filter(|item| item.status == "unmanaged") {
             hints.push(format!("{} unmanaged Markdown file(s) in {}. Merge into .harnesskit/schema.yaml (globs are repository-relative):\n{}", dir.count, dir.dir, include_hint(&dir.dir)));
         }
+        hints
+    }
+
+    pub(crate) fn explanation_hints(&self) -> Vec<String> {
+        let mut hints = vec![format!(
+            "Coverage scans Markdown under {:?}, configured core/entrypoint files and explicit include matches. Templates, hidden directories, symlinks, target and node_modules are skipped. Nested projects (subdirectories with AGENTS.md, CLAUDE.md or .harnesskit) and fixture directories (tests/fixtures, testdata, fixture/fixtures under examples) are excluded by default, alongside schema ignore matches. Ratio = managed / (managed + unmanaged); an empty scope has ratio 0. Use --json (coverage.mappings) or doctor --layout for each classification; include overrides default exclusions and inference, ignore takes precedence.", self.scan_root
+        )];
         if self.root_reason.is_some() {
             hints.push("No default docs/ directory or explicit schema/docs-root was supplied: inferred managed_root '.' and supporting notes for otherwise unclassified repository Markdown. Use doctor --layout to review, --write-schema to persist, or include/ignore to refine the scope.".to_string());
         }
