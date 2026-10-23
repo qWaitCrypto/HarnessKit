@@ -1,3 +1,4 @@
+mod anchors;
 mod checks;
 mod cli;
 mod code;

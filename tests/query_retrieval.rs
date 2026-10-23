@@ -103,16 +103,26 @@ fn frozen_query_metrics_improve_on_s4_without_per_query_regressions() {
     assert!(top3 >= baseline["metrics"]["top3_hits"].as_u64().unwrap() as usize + 7);
 
     let mut total_bytes = 0;
+    let mut total_doc_index_bytes = 0;
     for (fixture, repo) in repos {
         let database = repo.root.join(".harnesskit/state/facts.sqlite");
         let db = rusqlite::Connection::open(&database).unwrap();
         db.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
             .unwrap();
         let bytes = fs::metadata(database).unwrap().len();
+        // The S5 budget bounds document/trigram storage. W1/W2 add a separate
+        // graph; count its actual SQLite pages without relaxing the old gate.
+        let weave_bytes: u64 = db.query_row(
+            "SELECT COALESCE(SUM(pgsize), 0) FROM dbstat
+             WHERE name IN ('nodes', 'idx_nodes_path', 'edges', 'idx_edges_dst', 'inline_code_spans');",
+            [], |row| row.get(0),
+        ).unwrap();
+        let doc_index_bytes = bytes.checked_sub(weave_bytes).unwrap();
         total_bytes += bytes;
+        total_doc_index_bytes += doc_index_bytes;
         eprintln!(
-            "index {}: S4={} bytes -> S5={} bytes",
-            fixture, baseline["index_sizes"][fixture]["bytes"], bytes
+            "index {}: S4={} bytes -> current={} bytes (document index={}, Weave={})",
+            fixture, baseline["index_sizes"][fixture]["bytes"], bytes, doc_index_bytes, weave_bytes
         );
         let duplicated_content: usize = db
             .query_row(
@@ -128,13 +138,14 @@ fn frozen_query_metrics_improve_on_s4_without_per_query_regressions() {
     }
     let baseline_bytes = baseline["total_index_bytes"].as_u64().unwrap();
     eprintln!(
-        "index total: {} -> {} bytes ({:+.2}%)",
+        "document index total: {} -> {} bytes ({:+.2}%); including Weave: {} bytes",
         baseline_bytes,
+        total_doc_index_bytes,
+        (total_doc_index_bytes as f64 / baseline_bytes as f64 - 1.0) * 100.0,
         total_bytes,
-        (total_bytes as f64 / baseline_bytes as f64 - 1.0) * 100.0
     );
     assert!(
-        total_bytes * 100 <= baseline_bytes * 135,
+        total_doc_index_bytes * 100 <= baseline_bytes * 135,
         "trigram index grew beyond the measured fixture budget"
     );
 }

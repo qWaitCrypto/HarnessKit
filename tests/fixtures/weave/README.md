@@ -15,9 +15,16 @@ The runner generates history inside `TemporaryDirectory`, validates the corpus
 against its tagged revisions, removes the repository, and emits JSON. All 37
 behavior cases are explicitly `pending`, with their required W steps listed;
 `executed` is zero and there are no quality scores. A successful exit means the
-fixture inputs are valid, not that any Weave feature passes. W1/W3/W4/W5 will
-connect real evaluators; W9 will enforce the design's metric thresholds. The
+fixture inputs are valid, not that any Weave feature passes. W3/W4/W5 will
+connect the remaining evaluators; W9 will enforce the design's metric thresholds. The
 existing S5 corpus and regression gates remain independent and unchanged.
+
+`tests/anchors.rs` connects the W2 prerequisites to the existing corpus: all eight
+retrieval cases must have real section-to-symbol EXTRACTED edges, and all twenty
+drift cases must resolve their anchors before each change. At the after revision,
+logic/format/review changes keep the edge; moves/deletions produce W2 info
+diagnostics. These assertions do not claim retrieval ranking or W3 drift behavior,
+so the full feature evaluations remain pending in the skeleton runner.
 
 For manual inspection, generate only in a disposable directory:
 

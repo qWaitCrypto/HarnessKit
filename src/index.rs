@@ -23,7 +23,7 @@ use crate::schema::{core_file_rel_path, DocCollectionSpec, Schema};
 use crate::sqlite::{QueryResult, SqliteConnection};
 use crate::Result;
 
-pub(crate) const FACT_SCHEMA_VERSION: &str = "7";
+pub(crate) const FACT_SCHEMA_VERSION: &str = "8";
 
 #[derive(Clone, Default, Serialize)]
 pub(crate) struct IndexedDoc {
@@ -298,6 +298,8 @@ pub(crate) fn refresh_fact_store(context: &EngineContext) -> Result<()> {
     let db = open_fact_store(&context.target_dir)?;
     crate::code::refresh_code_facts(&db, &context.target_dir, &context.schema)?;
     let mut artifact = read_index_artifact_from_fact_store(&db)?;
+    let anchor_checks =
+        crate::anchors::refresh_anchor_facts(&db, &context.target_dir, &artifact.docs)?;
     let coverage = discover_docs(&context.target_dir, &context.schema)?;
     let (external_refs, external_checks) = crate::external_refs::refresh_external_refs(
         &db,
@@ -337,6 +339,7 @@ pub(crate) fn refresh_fact_store(context: &EngineContext) -> Result<()> {
         &artifact.relations,
     )?;
     checks.extend(external_checks);
+    checks.extend(anchor_checks);
     checks.sort_by(|left, right| {
         (&left.subject_path, &left.rule_id).cmp(&(&right.subject_path, &right.rule_id))
     });
@@ -504,6 +507,8 @@ fn fact_store_is_compatible(db: &SqliteConnection) -> Result<bool> {
         "docs",
         "file_states",
         "nodes",
+        "edges",
+        "inline_code_spans",
         "headings",
         "raw_links",
         "path_mentions",
@@ -828,6 +833,25 @@ fn initialize_fact_store(db: &SqliteConnection) -> Result<()> {
             fingerprint TEXT NOT NULL,
             lang TEXT NOT NULL
          ) WITHOUT ROWID;
+         CREATE TABLE IF NOT EXISTS edges (
+            src TEXT NOT NULL,
+            dst TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            confidence TEXT NOT NULL,
+            weight REAL NOT NULL,
+            evidence_json TEXT NOT NULL,
+            PRIMARY KEY (src, dst, kind, evidence_json)
+         ) WITHOUT ROWID;
+         CREATE TABLE IF NOT EXISTS inline_code_spans (
+            doc_path TEXT NOT NULL,
+            span_index INTEGER NOT NULL,
+            src TEXT NOT NULL,
+            section TEXT NOT NULL,
+            line INTEGER NOT NULL,
+            column_number INTEGER NOT NULL,
+            text TEXT NOT NULL,
+            PRIMARY KEY (doc_path, span_index)
+         ) WITHOUT ROWID;
          CREATE TABLE IF NOT EXISTS headings (
             doc_path TEXT NOT NULL,
             heading_index INTEGER NOT NULL,
@@ -887,6 +911,8 @@ fn initialize_fact_store(db: &SqliteConnection) -> Result<()> {
          CREATE INDEX IF NOT EXISTS idx_docs_collection ON docs(collection_name);
          CREATE INDEX IF NOT EXISTS idx_docs_status ON docs(status);
          CREATE INDEX IF NOT EXISTS idx_docs_mtime ON docs(mtime_unix);
+         CREATE INDEX IF NOT EXISTS idx_nodes_path ON nodes(path, kind);
+         CREATE INDEX IF NOT EXISTS idx_edges_dst ON edges(dst, kind);
          CREATE INDEX IF NOT EXISTS idx_relations_src ON relations(src_path, relation_type);
          CREATE INDEX IF NOT EXISTS idx_relations_dst ON relations(dst_path, relation_type);
          CREATE INDEX IF NOT EXISTS idx_checks_subject ON checks(subject_path, severity);
@@ -1313,6 +1339,8 @@ fn replace_fact_store_contents(db: &SqliteConnection, artifact: &IndexArtifact) 
              DELETE FROM docs;
              DELETE FROM file_states;
              DELETE FROM nodes;
+             DELETE FROM edges;
+             DELETE FROM inline_code_spans;
              DELETE FROM headings;
              DELETE FROM raw_links;
              DELETE FROM path_mentions;

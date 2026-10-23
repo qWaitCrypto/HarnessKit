@@ -107,6 +107,31 @@ source line numbers starting at one. Existing document index output remains unch
 If Git cannot inspect an existing worktree, its cached code nodes are preserved;
 `doctor --code` reports that the counts may be stale instead of scanning untracked files.
 
+Source builds implementing Weave W2 also resolve Markdown inline code such as
+`src/auth.rs`, `src/auth/`, `src/auth.rs#Session::renew` and `Session::renew`.
+Paths are first resolved relative to the document, then relative to the repository
+root; explicit `./` and `../` stay relative to the document. Directory anchors
+expand to indexed descendant files/documents. A missing pure path is ordinary text;
+`path#symbol` is diagnosed only after its file is found. Qualified symbols resolve
+only when unique; plain identifier mentions are reserved for W4. Unknown qualified
+names, commands such as `cargo test`, and options such as `--json` are ignored.
+Diagnostics are skipped for example/template/fixture documents and placeholder
+anchors containing `<...>`, `{...}` or `*`.
+
+`check --rules anchors --all --json` reports `anchor-unresolved`, `anchor-ambiguous`
+and `anchor-line-number` as info, with source lines, repair hints and candidates.
+Line anchors such as `src/auth.rs#L10-L20` resolve to the file with the requested
+span, but suggest using a symbol instead. Markdown examples and frontmatter do
+not supply anchors. The derived `edges` table stores successful `anchor` edges
+with `EXTRACTED` confidence, weight 1 and document/section/line/column evidence;
+document and section endpoints live in `nodes`. Changed documents update these
+source facts, and code changes re-resolve them. Incompatible derived state rebuilds
+automatically, preserving schema and history. Knowledge locks and drift checks
+are reserved for W3; query bundles are reserved for W5.
+The existing S5 storage gate retains its 35% budget for the document index,
+subtracting actual SQLite pages for Weave tables/indexes and reporting total size
+separately. Retrieval thresholds and frozen fixture inputs are unchanged.
+
 Coverage and `unmanaged-docs` use the same Markdown paths, including existing
 Markdown referenced by managed documents outside the scan root. Unmanaged files
 stay outside the index and history until mapped. Repair hints preserve multiline

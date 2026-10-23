@@ -11,6 +11,8 @@ Compare S5 (also enforced by cargo test):
 Top-k means any expected path occurs in the first k candidates. CJK includes
 the corpus's cjk and mixed categories. Sizes are fresh, checkpointed SQLite
 files, without VACUUM; all fixture inputs and their hashes are kept unchanged.
+The S5 storage gate excludes actual pages belonging to the W1/W2 graph tables
+and their indexes. Total database size is still reported separately.
 """
 
 import argparse
@@ -70,12 +72,20 @@ def evaluate(binary, label):
             database = Path(tmp) / fixture / ".harnesskit/state/facts.sqlite"
             with sqlite3.connect(database) as db:
                 db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-                sizes[fixture] = dict(bytes=database.stat().st_size,
+                total_bytes = database.stat().st_size
+                weave_bytes = db.execute(
+                    "SELECT COALESCE(SUM(pgsize), 0) FROM dbstat WHERE name IN "
+                    "('nodes', 'idx_nodes_path', 'edges', 'idx_edges_dst', 'inline_code_spans')"
+                ).fetchone()[0]
+                sizes[fixture] = dict(bytes=total_bytes,
+                                     doc_index_bytes=total_bytes - weave_bytes,
+                                     weave_bytes=weave_bytes,
                                      docs=db.execute("SELECT COUNT(*) FROM docs").fetchone()[0])
     return dict(label=label, corpus_sha256=digest.hexdigest(),
                 metrics=metrics(cases),
                 cjk=metrics([case for case in cases if case["category"] in ("cjk", "mixed")]),
                 index_sizes=sizes, total_index_bytes=sum(s["bytes"] for s in sizes.values()),
+                total_doc_index_bytes=sum(s["doc_index_bytes"] for s in sizes.values()),
                 cases=cases)
 
 
@@ -96,7 +106,9 @@ def compare(before, after):
         assert after["metrics"][key] - before["metrics"][key] >= 0.20
     assert before["metrics"]["zero_hit_rate"] - after["metrics"]["zero_hit_rate"] >= 0.20
     # Bound the added trigram cost on this small corpus (page allocation included).
-    assert after["total_index_bytes"] <= before["total_index_bytes"] * 1.35
+    before_bytes = before.get("total_doc_index_bytes", before["total_index_bytes"])
+    after_bytes = after.get("total_doc_index_bytes", after["total_index_bytes"])
+    assert after_bytes <= before_bytes * 1.35
 
 
 def main():
@@ -113,6 +125,10 @@ def main():
         delta = result["total_index_bytes"] - baseline["total_index_bytes"]
         result["index_delta_bytes"] = delta
         result["index_delta_ratio"] = delta / baseline["total_index_bytes"]
+        before_doc_bytes = baseline.get("total_doc_index_bytes", baseline["total_index_bytes"])
+        doc_delta = result["total_doc_index_bytes"] - before_doc_bytes
+        result["doc_index_delta_bytes"] = doc_delta
+        result["doc_index_delta_ratio"] = doc_delta / before_doc_bytes
     args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n")
     print(json.dumps({key: value for key, value in result.items() if key != "cases"},
                      ensure_ascii=False, indent=2))

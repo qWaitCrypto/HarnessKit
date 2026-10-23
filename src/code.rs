@@ -215,11 +215,6 @@ pub(crate) fn refresh_code_facts(
         ));
     }
     db.transaction(|db| {
-        // Keep the empty table cheap in documentation-only repositories. W1
-        // only needs path lookups when it starts writing code nodes.
-        if updates.iter().any(|(_, _, nodes)| nodes.is_some()) {
-            db.exec("CREATE INDEX IF NOT EXISTS idx_nodes_path ON nodes(path, kind);")?;
-        }
         for path in previous.keys().filter(|path| !current.contains(*path)) {
             db.execute("DELETE FROM nodes WHERE path = ?1;", [path])?;
             db.execute("DELETE FROM file_states WHERE path = ?1 AND kind = 'code';", [path])?;

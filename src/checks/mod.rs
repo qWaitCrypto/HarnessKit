@@ -236,6 +236,7 @@ pub(crate) fn rule_group(rule_id: &str) -> String {
         | "wrong-docs-navigation-target"
         | "orphan-managed-doc" => "manifest".to_string(),
         "stale-explicit-anchor" | "missing-scope-path" => "stale".to_string(),
+        "anchor-unresolved" | "anchor-ambiguous" | "anchor-line-number" => "anchors".to_string(),
         "duplicate-content" | "overlap-heading-fingerprint" => "duplicate".to_string(),
         "canonical-links-generated" | "canonical-links-reference" => "contamination".to_string(),
         "frontmatter-field-not-allowed" | "frontmatter-parse-error" => "frontmatter".to_string(),

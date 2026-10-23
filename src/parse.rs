@@ -79,7 +79,7 @@ pub(crate) fn parse_doc_text(path: &str, text: &str) -> ParsedDoc {
     }
 }
 
-fn split_frontmatter(text: &str) -> (Option<&str>, &str) {
+pub(crate) fn split_frontmatter(text: &str) -> (Option<&str>, &str) {
     if !text.starts_with("---\n") {
         return (None, text);
     }
