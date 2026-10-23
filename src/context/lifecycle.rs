@@ -81,6 +81,7 @@ pub(crate) struct CurrentContext {
     pub(crate) recent_decisions: Vec<ContextDoc>,
     pub(crate) latest_snapshot: Option<SnapshotPointer>,
     pub(crate) changes_since_snapshot: Option<ContextChanges>,
+    pub(crate) code_changes_since_snapshot: super::CodeChangesSummary,
     pub(crate) unverified_items: usize,
     pub(crate) unverified_documents: Vec<UnverifiedDoc>,
 }
@@ -166,6 +167,9 @@ pub(crate) fn build_current_context(
         recent_decisions,
         latest_snapshot: snapshot.as_ref().map(SnapshotPointer::from),
         changes_since_snapshot,
+        code_changes_since_snapshot: super::changes::snapshot_code_changes(
+            db, root, schema, snapshot.as_ref(),
+        )?,
         unverified_items: unverified_documents.iter().map(|doc| doc.count).sum(),
         unverified_documents,
     })

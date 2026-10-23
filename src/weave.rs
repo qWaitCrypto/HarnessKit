@@ -85,6 +85,96 @@ struct CommitRecord {
     paths: Vec<String>,
 }
 
+#[derive(serde::Serialize)]
+pub(crate) struct CochangedFile {
+    pub(crate) path: String,
+    pub(crate) count: u64,
+    pub(crate) weight: f64,
+    pub(crate) confidence: &'static str,
+    pub(crate) last_commit: String,
+}
+
+/// The reverse entrypoint also needs code/code neighbours. Reuse W4's history,
+/// scope, large-commit filter and decay rather than infer a second graph hop.
+pub(crate) fn cochanged_files(
+    db: &SqliteConnection,
+    root: &Path,
+    schema: &Schema,
+    selected: &BTreeSet<String>,
+) -> Result<Vec<CochangedFile>> {
+    if selected.is_empty() || git_repo_check(root).0 != Some(true) {
+        return Ok(Vec::new());
+    }
+    let Ok(head) = run_git_capture(root, &["rev-parse", "HEAD"]) else {
+        return Ok(Vec::new());
+    };
+    let (docs, code) = indexed_paths(db, schema)?;
+    let eligible = docs.union(&code).cloned().collect::<BTreeSet<_>>();
+    let selected = selected
+        .intersection(&eligible)
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    if selected.is_empty() {
+        return Ok(Vec::new());
+    }
+    let max_files = schema
+        .rules
+        .cochange_max_files
+        .unwrap_or(DEFAULT_MAX_COMMIT_FILES as u32)
+        .max(1) as usize;
+    let commits = read_commits(root, None, &head)?;
+    let mut counts = BTreeMap::<String, u64>::new();
+    let mut pairs = BTreeMap::<String, PairStats>::new();
+    let mut selected_count = 0u64;
+    let now = now_unix();
+    for commit in commits {
+        let changed = commit.paths.into_iter().collect::<BTreeSet<_>>();
+        if changed.len() > max_files {
+            continue;
+        }
+        for path in changed.intersection(&eligible) {
+            *counts.entry(path.clone()).or_default() += 1;
+        }
+        if changed.is_disjoint(&selected) {
+            continue;
+        }
+        selected_count += 1;
+        for path in changed
+            .intersection(&eligible)
+            .filter(|path| !selected.contains(*path))
+        {
+            let pair = pairs.entry(path.clone()).or_default();
+            pair.count += 1;
+            pair.decayed_count +=
+                0.5_f64.powf(now.saturating_sub(commit.timestamp) as f64 / HALF_LIFE_SECONDS);
+            if commit.timestamp >= pair.last_timestamp {
+                pair.last_timestamp = commit.timestamp;
+                pair.last_commit = commit.id.clone();
+            }
+        }
+    }
+    let mut files = pairs
+        .into_iter()
+        .map(|(path, pair)| {
+            let normalizer = (selected_count as f64 * counts[&path] as f64).sqrt();
+            CochangedFile {
+                path,
+                count: pair.count,
+                weight: pair.decayed_count / normalizer,
+                confidence: "INFERRED",
+                last_commit: pair.last_commit,
+            }
+        })
+        .collect::<Vec<_>>();
+    files.sort_by(|a, b| {
+        b.weight
+            .total_cmp(&a.weight)
+            .then_with(|| a.path.cmp(&b.path))
+    });
+    files.truncate(5);
+    Ok(files)
+}
+
 #[derive(Clone)]
 struct SymbolTarget {
     id: String,

@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::code::{snapshot_regions, CodeRegion};
 use crate::discover::{collect_managed_doc_paths, discover_docs, Coverage};
 use crate::fs_utils::{file_modified_parts, now_unix};
 use crate::git::{host_git_info, tracked_doc_paths, HostGitMode};
@@ -40,6 +41,8 @@ pub(crate) struct HistorySnapshot {
     pub(crate) files: Vec<HistoryFileRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) coverage: Option<Coverage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) code_regions: Option<Vec<CodeRegion>>,
 }
 
 pub(crate) struct SnapshotOutcome {
@@ -118,6 +121,7 @@ pub(crate) fn create_history_snapshot(
     let coverage = discover_docs(target_dir, schema)?;
     let files = history_file_records(target_dir, coverage.managed_paths())?;
     let schema_hash = schema_file_hash(target_dir);
+    let code_regions = snapshot_regions(target_dir, schema)?;
     if !allow_empty {
         if let Some(snapshot) = latest_history_snapshot(target_dir)? {
             let previous = snapshot
@@ -129,7 +133,19 @@ pub(crate) fn create_history_snapshot(
                 .iter()
                 .map(|file| (&file.path, &file.hash))
                 .collect::<BTreeMap<_, _>>();
-            if previous == current && snapshot.schema_hash == schema_hash {
+            // Legacy doc-only checkpoints have no code field. Preserve their
+            // no-op behavior, and keep an existing baseline if Git is unavailable.
+            let code_changed = code_regions
+                .as_ref()
+                .map(|current| {
+                    snapshot
+                        .code_regions
+                        .as_ref()
+                        .map(|previous| previous != current)
+                        .unwrap_or_else(|| !current.is_empty())
+                })
+                .unwrap_or(false);
+            if previous == current && snapshot.schema_hash == schema_hash && !code_changed {
                 return Ok(SnapshotOutcome {
                     snapshot,
                     skipped: true,
@@ -155,6 +171,7 @@ pub(crate) fn create_history_snapshot(
         host_git_branch: git.branch,
         host_git_dirty: git.dirty,
         coverage: Some(coverage),
+        code_regions,
     };
     write_history_snapshot(target_dir, &snapshot)?;
     fs::write(history_refs_dir(target_dir).join("latest"), &snapshot.id)?;

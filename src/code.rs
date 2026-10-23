@@ -6,7 +6,7 @@ use std::path::Path;
 
 use ignore::WalkBuilder;
 use rusqlite::params;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::discover::{is_ignored, is_markdown};
 use crate::fs_utils::{file_modified_parts, normalize_path};
@@ -31,6 +31,86 @@ struct CodeNode {
     is_definition: bool,
     signature: String,
     doc_comment: String,
+}
+
+/// A compact code baseline, without source contents or derived search cards.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+pub(crate) struct CodeRegion {
+    pub(crate) id: String,
+    pub(crate) kind: String,
+    pub(crate) path: String,
+    pub(crate) name: String,
+    pub(crate) span_start: usize,
+    pub(crate) span_end: usize,
+    pub(crate) fingerprint: String,
+}
+
+impl From<CodeNode> for CodeRegion {
+    fn from(node: CodeNode) -> Self {
+        Self {
+            id: node.id,
+            kind: node.kind.to_string(),
+            path: node.path,
+            name: node.name,
+            span_start: node.span_start,
+            span_end: node.span_end,
+            fingerprint: node.fingerprint,
+        }
+    }
+}
+
+pub(crate) fn regions_for_text(path: &str, text: &str) -> Result<Vec<CodeRegion>> {
+    Ok(extract::Extractor::default()
+        .extract(path, text)?
+        .into_iter()
+        .map(CodeRegion::from)
+        .collect())
+}
+
+pub(crate) fn indexed_regions(db: &SqliteConnection) -> Result<Vec<CodeRegion>> {
+    let rows = db.query(
+        "SELECT id, kind, path, name, span_start, span_end, fingerprint FROM nodes
+         WHERE kind IN ('file', 'symbol') ORDER BY path, kind, id;",
+        [],
+    )?;
+    rows.rows
+        .iter()
+        .map(|row| {
+            Ok(CodeRegion {
+                id: cell(row, 0).to_string(),
+                kind: cell(row, 1).to_string(),
+                path: cell(row, 2).to_string(),
+                name: cell(row, 3).to_string(),
+                span_start: cell(row, 4).parse()?,
+                span_end: cell(row, 5).parse()?,
+                fingerprint: cell(row, 6).to_string(),
+            })
+        })
+        .collect()
+}
+
+pub(crate) fn snapshot_regions(root: &Path, schema: &Schema) -> Result<Option<Vec<CodeRegion>>> {
+    let (paths, mode) = collect_code_paths(root, schema)?;
+    if mode == "git-unavailable" {
+        return Ok(None);
+    }
+    let mut extractor = extract::Extractor::default();
+    let mut regions = Vec::new();
+    for path in paths {
+        let bytes = fs::read(root.join(&path))?;
+        if let Ok(text) = std::str::from_utf8(&bytes) {
+            if !bytes.contains(&0) {
+                regions.extend(
+                    extractor
+                        .extract(&path, text)?
+                        .into_iter()
+                        .map(CodeRegion::from),
+                );
+            }
+        }
+    }
+    regions.sort_by(|a, b| a.id.cmp(&b.id));
+    Ok(Some(regions))
 }
 
 #[derive(Serialize)]

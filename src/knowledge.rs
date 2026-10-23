@@ -10,6 +10,7 @@ use std::path::Path;
 use std::process::Command;
 
 use pulldown_cmark::{Event, Parser};
+use serde::Serialize;
 use serde_json::{json, Value};
 
 use crate::checks::{complete_check, IndexCheck};
@@ -22,7 +23,7 @@ use crate::Result;
 const LOCK_HEADER: &str = "# HarnessKit knowledge.lock: confirmed document anchors and code fingerprints.";
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-struct LockEntry {
+pub(crate) struct LockEntry {
     doc: String,
     anchor: String,
     fingerprint: String,
@@ -40,6 +41,99 @@ struct TargetNode {
 struct CurrentSeal {
     fingerprint: String,
     target_path: String,
+    target_name: String,
+}
+
+#[derive(Clone, Serialize)]
+pub(crate) struct AnchorState {
+    pub(crate) doc: String,
+    pub(crate) anchor: String,
+    pub(crate) status: String,
+    pub(crate) target_path: String,
+    pub(crate) target_name: String,
+    pub(crate) expected_fingerprint: String,
+    pub(crate) actual_fingerprint: Option<String>,
+}
+
+pub(crate) fn read_anchor_lock(root: &Path) -> Result<Vec<LockEntry>> {
+    Ok(read_lock(&root.join(".harnesskit/knowledge.lock"))?.0)
+}
+
+/// Compare with the caller's seals without re-sealing. Review packets capture
+/// these before indexing, so automatic joint-review cannot hide a prediction.
+pub(crate) fn anchor_states(
+    db: &SqliteConnection,
+    entries: &[LockEntry],
+) -> Result<Vec<AnchorState>> {
+    let current = current_seals(db)?;
+    let doc_anchors = current_doc_anchors(db)?;
+    let mut states = Vec::new();
+    let mut seen = BTreeSet::new();
+    for entry in entries {
+        let key = (entry.doc.clone(), entry.anchor.clone());
+        if !doc_anchors.contains(&key) {
+            continue;
+        }
+        seen.insert(key.clone());
+        let seal = current.get(&key);
+        let matches = if seal.is_none() {
+            fingerprint_matches(db, entry)?
+        } else {
+            Vec::new()
+        };
+        let moved = (matches.len() == 1).then(|| &matches[0]);
+        states.push(AnchorState {
+            doc: entry.doc.clone(),
+            anchor: entry.anchor.clone(),
+            status: match seal {
+                Some(seal) if seal.fingerprint == entry.fingerprint => "current",
+                Some(_) => "drifted",
+                None if moved.is_some() => "moved",
+                None if matches.len() > 1 => "ambiguous",
+                None => "broken",
+            }
+            .to_string(),
+            target_path: seal
+                .map(|seal| seal.target_path.clone())
+                .or_else(|| moved.as_ref().map(|node| node.path.clone()))
+                .unwrap_or_else(|| anchor_path(&entry.anchor).to_string()),
+            target_name: seal
+                .map(|seal| seal.target_name.clone())
+                .or_else(|| moved.as_ref().map(|node| node.name.clone()))
+                .unwrap_or_else(|| {
+                    entry
+                        .anchor
+                        .split_once('#')
+                        .map(|(_, name)| name)
+                        .unwrap_or(if entry.anchor.contains("::") {
+                            &entry.anchor
+                        } else {
+                            ""
+                        })
+                        .to_string()
+                }),
+            expected_fingerprint: entry.fingerprint.clone(),
+            actual_fingerprint: seal
+                .map(|seal| seal.fingerprint.clone())
+                .or_else(|| moved.map(|node| node.fingerprint.clone())),
+        });
+    }
+    for ((doc, anchor), seal) in current {
+        if seen.contains(&(doc.clone(), anchor.clone())) {
+            continue;
+        }
+        states.push(AnchorState {
+            doc,
+            anchor,
+            status: "current".to_string(),
+            target_path: seal.target_path,
+            target_name: seal.target_name,
+            expected_fingerprint: seal.fingerprint.clone(),
+            actual_fingerprint: Some(seal.fingerprint),
+        });
+    }
+    states.sort_by(|a, b| (&a.doc, &a.anchor).cmp(&(&b.doc, &b.anchor)));
+    Ok(states)
 }
 
 #[derive(Default)]
@@ -326,6 +420,11 @@ fn current_seals(db: &SqliteConnection) -> Result<BTreeMap<(String, String), Cur
             CurrentSeal {
                 fingerprint,
                 target_path,
+                target_name: if is_directory {
+                    String::new()
+                } else {
+                    target.name.clone()
+                },
             },
         );
     }
@@ -543,8 +642,9 @@ fn should_reseal(
     let doc_changed = changed_paths
         .map(|paths| paths.iter().any(|path| path == &entry.doc))
         .unwrap_or(false);
-    if code_changed && doc_changed {
-        return true;
+    // A previous joint commit cannot review a newer code-only worktree edit.
+    if code_changed {
+        return doc_changed;
     }
     let Some(doc_commit) = latest_commit(root, &entry.doc) else {
         return false;

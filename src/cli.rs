@@ -14,7 +14,8 @@ use std::{env, fs};
 
 use crate::checks::{check_baseline, filter_and_suppress_checks, BaselineDelta, CheckView};
 use crate::context::{
-    build_current_context, build_handoff_context, context_packet_for_doc, doc_exists,
+    build_code_context, build_current_context, build_diff_context, build_handoff_context,
+    context_packet_for_doc, doc_exists,
 };
 use crate::discover::{discover_docs, orphan_state_hints, project_hint};
 use crate::doctor::build_doctor_report;
@@ -722,6 +723,90 @@ fn run_graph(args: &InputArgs) -> Result<()> {
 }
 
 fn run_context(args: &ContextArgs) -> Result<()> {
+    if args.code_for.is_some() || args.diff.is_some() {
+        let mut target = args.input.target.clone();
+        if let Some(path) = &args.input.input {
+            if target.target_dir.is_some() {
+                return Err("context --for/--diff accepts only one target_dir".into());
+            }
+            target.target_dir = Some(path.clone());
+        }
+        let context = load_engine_context(&target)?;
+        if args.diff.is_some() {
+            crate::context::validate_diff_repository(&context.target_dir)?;
+        }
+        let locks_before_index = crate::knowledge::read_anchor_lock(&context.target_dir)?;
+        refresh_fact_store(&context)?;
+        let db = open_fact_store(&context.target_dir)?;
+        let coverage = discover_docs(&context.target_dir, &context.schema)?;
+        usage::coverage(coverage.ratio);
+        let mut hints = indexed_hints(&context, &db, &target.options)?;
+        hints.truncate(2);
+        hints.push("覆盖指 current 文档的锚点或无歧义提及；同提交关系仅是推断线索。".to_string());
+        if let Some(input) = &args.code_for {
+            let packet = build_code_context(
+                &db,
+                &context.target_dir,
+                &context.schema,
+                input,
+                &crate::knowledge::read_anchor_lock(&context.target_dir)?,
+            )?;
+            if packet.message.is_some() {
+                let example = packet
+                    .targets
+                    .first()
+                    .map(|target| {
+                        format!(
+                            "{}#{}",
+                            target.path,
+                            if target.name.is_empty() {
+                                "symbol"
+                            } else {
+                                &target.name
+                            }
+                        )
+                    })
+                    .unwrap_or_else(|| "src/file.rs#symbol".to_string());
+                hints.push(format!("suggest: 在决策或经验章节中用反引号写代码锚点，例如 `{example}`（目录可写 `src/`）。"));
+            }
+            if packet.ambiguous {
+                hints.push(
+                    "符号匹配到多处，已汇总所有候选；使用 --for <path#symbol> 缩小范围。"
+                        .to_string(),
+                );
+            }
+            if target.options.json {
+                println!(
+                    "{}",
+                    crate::render::render_covered_json(&packet, &coverage, &hints)
+                );
+            } else {
+                crate::render::print_code_context(&packet, &coverage, &hints);
+            }
+        } else {
+            let revision = args.diff.as_deref().filter(|revision| !revision.is_empty());
+            let packet = build_diff_context(
+                &db,
+                &context.target_dir,
+                &context.schema,
+                revision,
+                &locks_before_index,
+            )?;
+            hints.push(
+                "漂移预测比较命令开始时的 knowledge.lock；文档与代码共改仍按 W3 自动复核。"
+                    .to_string(),
+            );
+            if target.options.json {
+                println!(
+                    "{}",
+                    crate::render::render_covered_json(&packet, &coverage, &hints)
+                );
+            } else {
+                crate::render::print_diff_context(&packet, &coverage, &hints);
+            }
+        }
+        return Ok(());
+    }
     if args.current || args.since.is_some() || args.input.input.is_none() {
         // In these modes the sole positional is TARGET_DIR; legacy INPUT TARGET_DIR
         // remains unchanged when retrieving a document or a search anchor.

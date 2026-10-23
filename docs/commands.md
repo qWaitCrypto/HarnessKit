@@ -14,6 +14,8 @@ harnesskit query <terms> [target_dir] [--docs|--code] [--limit N] [--json]
 harnesskit context <terms-or-path> [target_dir] [--json]
 harnesskit context --current [target_dir] [--json]
 harnesskit context --since <snapshot|latest|YYYY-MM-DD> [target_dir] [--json]
+harnesskit context --for <path|symbol|dir> [target_dir] [--json]
+harnesskit context --diff [<rev>] [--json]
 harnesskit check [target_dir] [--format summary|full|json] [--all]
 harnesskit index [target_dir] [--json]
 harnesskit list-docs [target_dir] [--json]
@@ -28,6 +30,43 @@ searches that repository; `query "auth session" 5` treats `5` as a target and
 fails with exit 2 if it does not exist. Only `init` may create a missing target.
 In `context --current`/`--since` mode the sole positional is the target; bare
 `context` returns current state for `.`.
+
+## Code context and change review (Weave W6)
+
+`context --for src/knowledge.rs` starts from a file; `--for CurrentContext` or
+`--for src/context/lifecycle.rs#CurrentContext` starts from a symbol. Directories
+(with or without a trailing slash) aggregate their descendants. Related chapters
+include their text, lifecycle and edge evidence; current decisions and active
+plans sort first. Cochanged files are the top five inferred neighbours, using
+W4's scope, decay and large-commit filter. Lock states distinguish drift, moves
+and broken anchors. No associations returns `无关联文档` and suggests writing an
+inline-code anchor in a decision or experience chapter; W7's suggest command is
+not required. Symbol ambiguity lists candidates and suggests a qualified anchor.
+
+`context --diff` compares HEAD with the worktree, including staged changes.
+`context --diff <rev>` compares the revision with HEAD plus current edits. Both
+map changed lines to symbols and retain changes outside symbols, then show
+related documents, decisions, lock-based drift predictions and uncovered areas.
+Like W1, code scope excludes untracked, ignored and binary files. Coverage means
+a current document's explicit anchor or unambiguous mention; inferred cochange
+is a review lead. Predictions use the lock from before automatic indexing, so a
+joint doc/code edit can appear as a prediction while W3 re-seals it as reviewed.
+Non-Git targets support `--for` but `--diff` reports an environment error (exit 2).
+
+The sole positional in `--for`/`--diff` mode is the target directory. Since the
+revision is optional, use `context /path/to/repo --diff` or
+`context --diff -- /path/to/repo` when reviewing another target against HEAD.
+`--for`, `--diff`, `--current` and `--since` are mutually exclusive; the existing
+`context <terms-or-doc-path> [target_dir]` interface remains unchanged.
+
+These text packets use at most forty lines. JSON retains `coverage`, `hints`,
+bounded lists and omitted counts in `truncated`; file/region/document totals are
+computed before truncation. `--current` adds at most eight lines about code since
+the last snapshot. New snapshots include code fingerprints (including dirty code),
+without storing source contents or changing document restore scope. Code-only
+structural changes create a new checkpoint. Legacy snapshots remain readable;
+without code fingerprints, the summary explains its Git-HEAD fallback or the need
+for a new baseline. No snapshot is reported as unavailable, rather than clean.
 
 ## Common workflow
 

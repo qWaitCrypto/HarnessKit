@@ -29,7 +29,7 @@ pub(super) enum Command {
     Query(QueryArgs),
     /// Show a document's relation graph.
     Graph(InputArgs),
-    /// Retrieve current project state, a handoff, or context for terms/a document.
+    /// Retrieve project state, code context, change impact, or a document graph.
     Context(ContextArgs),
     /// Manage local documentation checkpoints.
     History {
@@ -171,11 +171,17 @@ pub(super) struct ContextArgs {
     #[command(flatten)]
     pub(super) input: InputArgs,
     /// Show current routes and active plans (also the default without INPUT).
-    #[arg(long, conflicts_with = "since")]
+    #[arg(long, conflicts_with_all = ["since", "code_for", "diff"])]
     pub(super) current: bool,
     /// Show managed docs changed since a snapshot, latest, or YYYY-MM-DD (UTC).
-    #[arg(long, value_name = "SNAPSHOT_OR_DATE", conflicts_with = "current")]
+    #[arg(long, value_name = "SNAPSHOT_OR_DATE", conflicts_with_all = ["current", "code_for", "diff"])]
     pub(super) since: Option<String>,
+    /// Find chapters, decisions and cochanged files for a code path/symbol/directory.
+    #[arg(long = "for", value_name = "PATH_OR_SYMBOL", conflicts_with_all = ["current", "since", "diff"])]
+    pub(super) code_for: Option<String>,
+    /// Review code changes against HEAD, or REV..HEAD plus staged/unstaged edits.
+    #[arg(long, value_name = "REV", num_args = 0..=1, default_missing_value = "", conflicts_with_all = ["current", "since", "code_for"])]
+    pub(super) diff: Option<String>,
 }
 
 #[derive(Args)]

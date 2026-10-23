@@ -1,4 +1,7 @@
+mod code_context;
 mod json;
+
+pub(crate) use code_context::{print_code_context, print_diff_context};
 
 pub(crate) use json::{
     render_check_json, render_context_packet_json, render_covered_json, render_doctor_json,
@@ -759,6 +762,7 @@ pub(crate) fn print_current_context(packet: &CurrentContext, coverage: &Coverage
             changes.removed.len()
         );
     }
+    code_context::print_code_changes_summary(&packet.code_changes_since_snapshot);
     println!(
         "Unverified: {} unchecked items in {} current documents",
         packet.unverified_items,

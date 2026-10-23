@@ -1,4 +1,11 @@
+mod changes;
+mod code;
 mod lifecycle;
+
+pub(crate) use changes::{
+    build_diff_context, validate_diff_repository, CodeChangesSummary, DiffContext,
+};
+pub(crate) use code::{build_code_context, CodeContext};
 
 pub(crate) use lifecycle::{
     build_current_context, build_handoff_context, ContextDoc, CurrentContext, HandoffContext,
