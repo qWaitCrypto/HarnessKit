@@ -198,6 +198,21 @@ fn expanded_file_links_have_one_label_and_kwic_preserves_inline_paths() {
 }
 
 #[test]
+fn expanded_merged_file_signatures_are_neither_prefixed_nor_repeated() {
+    let repo = TestRepo::new(None);
+    write(&repo, "src/migration.rs", "struct LayoutMigration;\n");
+    write(
+        &repo,
+        "docs/guide.md",
+        "# Guide\n\nThis migration plan explains the release.\n",
+    );
+    let output = repo.run(&["query", "migration plan", "--expand", "2"]);
+    assert!(!output.contains("— ; struct Layout"), "{output}");
+    let plain = output.replace('«', "").replace('»', "");
+    assert_eq!(plain.matches("struct LayoutMigration;").count(), 1, "{output}");
+}
+
+#[test]
 fn fenced_kwic_uses_the_hit_line_for_docs_and_readme() {
     let repo = TestRepo::new(None);
     write(

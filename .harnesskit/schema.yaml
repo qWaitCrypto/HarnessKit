@@ -1,4 +1,4 @@
-schema_version: 0
+schema_version: 1
 managed_root: docs
 
 entrypoints:
@@ -23,9 +23,11 @@ rules:
   duplicate_detection: true
   contamination_checks: true
   strict_checks: false
+  entrypoint_max_lines: 120
+  stale_active_plan_days: 30
 
 suppressions:
   repository_git_history:
-    rule_id: history-missing
+    rule: history-missing
     path: .harnesskit/history
     reason: 'Repository documentation is versioned in Git; local HarnessKit snapshots are optional.'

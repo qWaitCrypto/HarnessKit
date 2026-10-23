@@ -113,5 +113,5 @@
 - 更新 init 模板：入口模板保持路由表，增加“当前状态只写在 docs/project.md”的约定一行；project map 模板增加“当前焦点（带日期）”与“已结束/历史”分区。
 
 ### S11 文档与发布
-- 更新 README、changelog、`docs` 内的命令说明；版本号 `0.1.0-alpha.7`；补齐迁移说明（旧 state 自动重建、旧 schema 兼容、新增字段）。
+- 更新 README、changelog、`docs` 内的命令说明；版本号 `0.2.0`；补齐迁移说明（旧 state 自动重建、旧 schema 兼容、新增字段）。
 - 最终全量 `cargo test`、`cargo clippy -- -D warnings`（如可用）。

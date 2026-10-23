@@ -15,7 +15,7 @@ HarnessKit is the bridge.
 
 </div>
 
-Source version: **0.1.0-alpha.7** · [Changelog](CHANGELOG.md) · [Migration guide](docs/migration-alpha.7.md) · [Commands](docs/commands.md)
+Source version: **0.2.0** · [Changelog](CHANGELOG.md) · [Migration guide](docs/migration-0.2.0.md) · [Commands](docs/commands.md)
 
 ---
 
@@ -466,18 +466,19 @@ Usage summaries show per-project counts, zero-hit and relaxed-hit rates, and
 redundant index/check or repeated version calls. Exit-2 invocations count as
 invalid usage and are excluded from project aggregates.
 
-## Upgrading to 0.1.0-alpha.7
+## Upgrading to 0.2.0
 
-Existing schema files work unchanged; `schema_version` remains 0. Incompatible
-derived `facts.sqlite` indexes rebuild automatically on the next indexed command.
+Existing schema files with `schema_version: 0` work unchanged; `migrate` can
+upgrade them to the compatible schema version 1. Incompatible derived
+`facts.sqlite` indexes rebuild automatically on the next indexed command.
 Keep `.harnesskit/history`: old snapshots still support list, diff and restore.
 New optional schema fields cover include/ignore globs, suppression globs and
 lifecycle thresholds; no document relocation or reinitialization is required.
 
-Review the [migration guide](docs/migration-alpha.7.md) before updating scripts:
-check now uses summary output and meaningful failure codes, nonexistent targets
-fail instead of being created, search may include partial matches, and usage
-logging defaults to on. The [changelog](CHANGELOG.md) lists the user-visible changes.
+Review the [migration guide](docs/migration-0.2.0.md) before updating scripts:
+Weave adds code-aware bundles, bidirectional context, anchor suggestions, optional
+hooks, migrations and knowledge-lock drift checks. The [changelog](CHANGELOG.md)
+lists the user-visible changes.
 
 ## How the Skill Works
 

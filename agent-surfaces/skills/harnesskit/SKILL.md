@@ -2,30 +2,27 @@
 name: harnesskit
 description: Use for project documentation, architecture, plans, decisions, and durable repo knowledge; follow existing AGENTS.md, CLAUDE.md, or .harnesskit conventions.
 metadata:
-  version: "0.1.0-alpha.7"
+  version: "0.2.0"
 ---
 
 # HarnessKit
 
-## When to use
+Repository files are the source of truth; the CLI gives deterministic retrieval, checks, migrations and checkpoints.
 
-Use for reading or changing durable project knowledge. Repository files are the source of truth; the CLI handles deterministic retrieval, checks and checkpoints.
+## Before working
 
-## Read the entrypoint first
+- Read `AGENTS.md` (Codex) or `CLAUDE.md` (Claude), then follow its routes to the smallest relevant document. Do not read the whole docs tree.
+- Taking over work: `harnesskit context --current` for current pointers, active plans and recent changes.
+- Finding evidence: `harnesskit query "1–3 distinctive keywords"`; on zero results follow `hints`, then use `rg`.
+- Before editing code: `harnesskit context --for <path|symbol>` shows the decisions, pitfalls and plans that constrain it. Treat decisions as binding unless the user overrides them.
+- Reviewing a change: `harnesskit context --diff [rev]` lists affected documents and anchors that will drift.
 
-Read `AGENTS.md` (Codex) or `CLAUDE.md` (Claude), then follow its routes through `ARCHITECTURE.md`, the docs index and the smallest relevant document. Do not read the whole docs tree.
+## After working
 
-## Common commands
+- Update the narrowest existing document that owns the changed knowledge; do not create a parallel doc. Mark replaced docs with `status: superseded` and `superseded_by`.
+- Reference related code paths or symbols in backticks so they become anchors.
+- Run `harnesskit check` once. For drift, update the doc or run `check --ack <doc>` if the code change does not affect it; `check --fix` repairs uniquely moved anchors.
+- A clean check does not verify delivery: run the project's tests and acceptance checks.
+- Keep current state in the project map (`docs/project.md`) and entrypoints as routing tables.
 
-- Taking over work: `harnesskit context --current` for current pointers, active plans and snapshot changes.
-- Finding evidence: `harnesskit query "1–3 distinctive keywords" --json`; on zero results, follow `hints` to change terms, then use `rg` if needed.
-- After editing docs: run `harnesskit check --json` once; it refreshes the index automatically.
-- At a phase boundary: `harnesskit history snapshot -m "what changed"` to preserve a checkpoint.
-
-Read CLI `coverage` and `hints` to understand scope and next steps. A check with no errors does not verify delivery: run the project's required tests and acceptance checks.
-
-## When to write docs
-
-Capture changed semantics, decisions, operating knowledge or handoff state in the narrowest existing doc; update its index when needed. Keep current state only in `docs/project.md` (or the configured project map), and keep entrypoints as routing tables. Do not copy CLI statistics into worklogs.
-
-For setup, command options, recovery and installation/version sync, read [references/cli.md](references/cli.md) only when needed.
+Command options, setup, hooks and version sync: [references/cli.md](references/cli.md). Upgrading an older project: [references/migration.md](references/migration.md).

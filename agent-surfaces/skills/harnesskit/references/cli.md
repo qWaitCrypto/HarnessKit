@@ -157,6 +157,34 @@ With terms or a path, returns that doc and its relevant neighbors in reading ord
 
 **When to use**: when you need to understand a doc in context — what it links to, what references it, what code it scopes.
 
+#### Code context and review
+
+```bash
+harnesskit context --for <path|symbol|dir> [target_dir] [--budget N] [--page K] [--json]
+harnesskit context --diff [<rev>] [target_dir] [--budget N] [--page K] [--json]
+```
+
+`context --for` starts from a code path, symbol or directory and returns related
+documents, decisions, plans, cochanged files and lock freshness. `context --diff`
+reviews worktree changes or a revision against `HEAD`, including uncovered code
+and anchors that may drift. `--current` also reports code regions since the last
+snapshot.
+
+#### Anchors and hooks
+
+```bash
+harnesskit suggest-anchors [<doc>] [target_dir] [--apply N[,N...]] [--json]
+harnesskit hook pre-edit [<path>]
+harnesskit hook post-edit [<path>]
+harnesskit install --hooks [--write] [target_dir]
+```
+
+Suggestions use explicit evidence from mentions and same-commit history; review
+them before `--apply`, which appends visible `Code:` lines. Hooks are disabled by
+default, emit at most three constraint or drift lines, and never block an edit.
+`install --hooks` prints Claude Code settings; add `--write` to back up and update
+project-local settings.
+
 #### Inspection
 
 ```bash
@@ -195,7 +223,8 @@ Shows the top 20 docs by incoming-link score. Useful for finding anchor document
 
 ```bash
 harnesskit check [target_dir] [--format summary|full|json] [--all]
-                [--update-baseline] [--json] [--strict] [--rules <rule-list>]
+                [--update-baseline] [--ack <doc>] [--fix]
+                [--json] [--strict] [--rules <rule-list>]
 ```
 
 Refreshes the index and checks managed docs. The default summary groups rules and shows changes against the derived baseline. Use `--all` or `--format full` for every finding, and choose either `--format json` or `--json` for structured output. First evaluation creates the baseline; `--update-baseline` accepts the current set after showing its differences. Findings include repair hints. JSON lists are bounded unless `--all` is used; exit status always considers every selected finding, regardless of baseline or truncation.
@@ -204,7 +233,24 @@ Broken links, missing all entrypoints and invalid schema syntax are errors. No d
 
 **When to use**: after doc changes to verify consistency, or when the user asks about doc health. Always add `--json` for structured output. Use `--strict` to treat warnings as errors (exit code 1).
 
-Summarize findings grouped by rule id and path. Focus on errors first, then warnings.
+`--ack <doc>` re-seals reviewed anchors (it may be repeated and accepts globs);
+`--fix` rewrites uniquely moved anchors and refreshes their seals. Summarize
+findings grouped by rule id and path. Focus on errors first, then warnings.
+
+#### Structured migration
+
+```bash
+harnesskit migrate --plan [target_dir] [--only <category>] [--json]
+harnesskit migrate --apply [target_dir] [--only <category>] [--json]
+```
+
+`migrate --plan` reports schema, layout, lifecycle, anchor, gitignore and
+knowledge-lock work with evidence. `--apply` snapshots managed documents and
+only edits schema/frontmatter-shaped metadata, `.gitignore` and
+`.harnesskit/knowledge.lock`; it is idempotent. Review semantic items using
+[the migration guide](migration.md). Keep `knowledge.lock` in Git when it is
+used as the repository's durable code-anchor source; `.harnesskit/state/` is
+derived and can remain ignored.
 
 #### History
 

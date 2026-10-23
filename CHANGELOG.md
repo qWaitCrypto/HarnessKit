@@ -12,6 +12,35 @@
   future cleanup of redundant legacy fields is tracked here for the 0.2.0
   migration notes.
 
+## 0.2.0
+
+### Added
+
+- Weave connects managed document chapters to code files and symbols through
+  explicit anchors, same-commit evidence, identifier mentions and durable
+  `.harnesskit/knowledge.lock` seals.
+- Mixed `query` bundles, code-aware `context --for`/`--diff`,
+  `suggest-anchors`, migration planning/application and opt-in edit hooks are
+  available through the existing CLI surface.
+- The shared skill and CLI reference document the 0.2.0 workflow; a dedicated
+  [migration guide](docs/migration-0.2.0.md) covers compatibility and upgrades.
+
+### Changed
+
+- Retrieval and rendering use bounded, signal-first bundles with relevance
+  floors, merged symbols, KWIC excerpts, paging and expansion. Weak inferred
+  associations are omitted when they fall below the documented threshold.
+- `check --ack` re-seals reviewed anchors and `check --fix` repairs uniquely
+  moved anchors. Hooks remain disabled unless explicitly installed.
+
+### Compatibility and migration
+
+- `schema_version: 0` and zero-config repositories continue to work. Run
+  `harnesskit migrate --plan` to review optional schema, layout and lock work,
+  then `migrate --apply` for the safe structured changes.
+- Commit `.harnesskit/knowledge.lock` when using code anchors; keep derived
+  `.harnesskit/state/` ignored. Existing history snapshots remain readable.
+
 ## 0.1.0-alpha.7
 
 ### Breaking and behavior changes

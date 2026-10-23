@@ -1,6 +1,6 @@
 # Commands
 
-Commands below use HarnessKit 0.1.0-alpha.7. From a source checkout, replace
+Commands below use HarnessKit 0.2.0. From a source checkout, replace
 `harnesskit` with `cargo run --`, or build once and use `target/release/harnesskit`.
 Use each command's `--help` for its complete option list.
 
@@ -259,7 +259,7 @@ preview without `--apply`. Import merges history without restoring documents or
 replacing existing snapshot IDs; export refuses to overwrite a file. For an
 ambiguous two-argument diff, append `.` as the explicit third argument to select
 two snapshots in the current repository. Keep `.harnesskit/history`; state alone
-is disposable. See the [migration guide](migration-alpha.7.md).
+is disposable. See the [migration guide](migration-0.2.0.md).
 
 ## Local usage
 

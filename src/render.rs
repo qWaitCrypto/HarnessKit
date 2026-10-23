@@ -688,7 +688,7 @@ pub(crate) fn print_query_bundles_with_options(
                     compact(&node.summary, 600)
                 )));
             }
-            if !node.signature.is_empty() {
+            if !node.signature.is_empty() && !rendered_text_matches(&detail, &node.signature) {
                 lines.push(RenderLine::content(format!(
                     "   {}",
                     compact(&node.signature, 600)
@@ -798,18 +798,10 @@ fn merge_document_bundles(bundles: &[QueryBundle]) -> Vec<QueryBundle> {
                         [existing.primary.name.clone(), bundle.primary.name.clone()],
                         usize::MAX,
                     );
-                    if !bundle.primary.signature.is_empty()
-                        && !existing
-                            .primary
-                            .signature
-                            .contains(&bundle.primary.signature)
-                    {
-                        existing.primary.signature.push_str("; ");
-                        existing
-                            .primary
-                            .signature
-                            .push_str(&bundle.primary.signature);
-                    }
+                    append_signature(
+                        &mut existing.primary.signature,
+                        &bundle.primary.signature,
+                    );
                 }
                 if !bundle.primary.heading.is_empty()
                     && !existing.primary.heading.contains(&bundle.primary.heading)
@@ -873,6 +865,31 @@ fn merge_document_bundles(bundles: &[QueryBundle]) -> Vec<QueryBundle> {
         bundle.related = related;
     }
     merged
+}
+
+fn append_signature(existing: &mut String, signature: &str) {
+    let signature = signature.trim();
+    if signature.is_empty()
+        || existing
+            .split("; ")
+            .any(|part| part.trim() == signature)
+    {
+        return;
+    }
+    if !existing.is_empty() {
+        existing.push_str("; ");
+    }
+    existing.push_str(signature);
+}
+
+fn rendered_text_matches(rendered: &str, source: &str) -> bool {
+    let normalize = |text: &str| {
+        text.replace(['«', '»'], "")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    normalize(rendered) == normalize(source)
 }
 
 pub(crate) fn print_context_packet(label: &str, input: &str, packet: &ContextPacket) {
