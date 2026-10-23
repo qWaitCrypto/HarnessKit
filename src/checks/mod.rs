@@ -136,6 +136,9 @@ fn repair_hint(rule: &str, path: &str, evidence: &str) -> String {
         "wrong-docs-navigation-target" => format!("Point navigation in {} to a Markdown document instead of {}.", path, target),
         "orphan-managed-doc" => format!("Link the documents in {} from an entrypoint or a nearby index.", path),
         "stale-explicit-anchor" => format!("Review the newer scoped code against {} and update the document if its contract changed.", path),
+        "code-drift" => format!("Review the changed code, then update {} or run `harnesskit check --ack {}` when the document remains correct.", path, path),
+        "anchor-moved" => format!("Run `harnesskit check --fix` to rewrite the moved anchor in {}.", path),
+        "anchor-broken" => format!("Restore the target or update/remove the broken anchor in {}.", path),
         "missing-scope-path" => format!("Correct or remove the missing scope_paths entry in {}.", path),
         "duplicate-content" | "overlap-heading-fingerprint" => format!("Compare {} with the related paths in evidence; consolidate repeated content or clarify each document's scope.", path),
         "canonical-links-generated" | "canonical-links-reference" => format!("Review {}: link to the source contract for {}, and label supporting evidence as such.", path, target),
@@ -206,6 +209,7 @@ pub(crate) fn filter_and_suppress_checks(
                                 .unwrap_or(false))
                 })
                 .map(|(item, _)| *item);
+            let evidence: serde_json::Value = serde_json::from_str(cell(row, 4)).unwrap_or_default();
             Some(CheckView {
                 severity: cell(row, 0).to_string(),
                 rule_id,
@@ -215,7 +219,10 @@ pub(crate) fn filter_and_suppress_checks(
                     hint_from_evidence(cell(row, 4))
                         .unwrap_or_else(|| repair_hint(cell(row, 1), cell(row, 2), cell(row, 4))),
                 ),
-                fixable: false,
+                fixable: evidence
+                    .get("fixable")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false),
                 evidence_json: cell(row, 4).to_string(),
                 suppressed: suppression.is_some(),
                 suppression_reason: suppression.map(|item| item.reason.clone()),
@@ -236,7 +243,12 @@ pub(crate) fn rule_group(rule_id: &str) -> String {
         | "wrong-docs-navigation-target"
         | "orphan-managed-doc" => "manifest".to_string(),
         "stale-explicit-anchor" | "missing-scope-path" => "stale".to_string(),
-        "anchor-unresolved" | "anchor-ambiguous" | "anchor-line-number" => "anchors".to_string(),
+        "anchor-unresolved"
+        | "anchor-ambiguous"
+        | "anchor-line-number"
+        | "code-drift"
+        | "anchor-moved"
+        | "anchor-broken" => "anchors".to_string(),
         "duplicate-content" | "overlap-heading-fingerprint" => "duplicate".to_string(),
         "canonical-links-generated" | "canonical-links-reference" => "contamination".to_string(),
         "frontmatter-field-not-allowed" | "frontmatter-parse-error" => "frontmatter".to_string(),

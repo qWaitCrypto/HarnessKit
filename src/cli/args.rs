@@ -131,6 +131,12 @@ pub(super) struct CheckArgs {
     /// Replace the derived baseline after reporting changes against it.
     #[arg(long)]
     pub(super) update_baseline: bool,
+    /// Re-seal anchors in a document; may be repeated and accepts globs.
+    #[arg(long, value_name = "DOC", action = clap::ArgAction::Append)]
+    pub(super) ack: Vec<String>,
+    /// Rewrite uniquely moved anchors and refresh their seals.
+    #[arg(long)]
+    pub(super) fix: bool,
 }
 
 #[derive(Args)]

@@ -298,8 +298,23 @@ pub(crate) fn refresh_fact_store(context: &EngineContext) -> Result<()> {
     let db = open_fact_store(&context.target_dir)?;
     crate::code::refresh_code_facts(&db, &context.target_dir, &context.schema)?;
     let mut artifact = read_index_artifact_from_fact_store(&db)?;
-    let anchor_checks =
+    let mut anchor_checks =
         crate::anchors::refresh_anchor_facts(&db, &context.target_dir, &artifact.docs)?;
+    let knowledge = crate::knowledge::refresh(&context.target_dir, &db)?;
+    anchor_checks.retain(|check| {
+        if check.rule_id != "anchor-unresolved" {
+            return true;
+        }
+        let evidence: serde_json::Value =
+            serde_json::from_str(&check.evidence_json).unwrap_or_default();
+        let key = evidence
+            .get("doc")
+            .and_then(serde_json::Value::as_str)
+            .zip(evidence.get("anchor").and_then(serde_json::Value::as_str))
+            .map(|(doc, anchor)| (doc.to_string(), anchor.to_string()));
+        key.map(|key| !knowledge.locked_unresolved.contains(&key))
+            .unwrap_or(true)
+    });
     let coverage = discover_docs(&context.target_dir, &context.schema)?;
     let (external_refs, external_checks) = crate::external_refs::refresh_external_refs(
         &db,
@@ -340,6 +355,7 @@ pub(crate) fn refresh_fact_store(context: &EngineContext) -> Result<()> {
     )?;
     checks.extend(external_checks);
     checks.extend(anchor_checks);
+    checks.extend(knowledge.checks);
     checks.sort_by(|left, right| {
         (&left.subject_path, &left.rule_id).cmp(&(&right.subject_path, &right.rule_id))
     });

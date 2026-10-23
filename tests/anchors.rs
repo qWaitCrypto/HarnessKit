@@ -45,6 +45,14 @@ fn findings(repo: &TestRepo) -> Vec<Value> {
     report["checks"].as_array().unwrap().clone()
 }
 
+fn findings_allow_warnings(repo: &TestRepo) -> Vec<Value> {
+    let report: Value = serde_json::from_str(
+        &repo.run(&["check", "--rules", "anchors", "--json", "--all"]),
+    )
+    .unwrap();
+    report["checks"].as_array().unwrap().clone()
+}
+
 fn git(repo: &TestRepo, args: &[&str]) {
     let mut command = Command::new("git");
     for (key, _) in std::env::vars_os() {
@@ -121,7 +129,7 @@ fn paths_directories_file_symbols_and_unique_qualified_symbols_have_source_evide
         "inner::Session::renew"
     );
     assert!(findings(&repo).is_empty());
-    assert!(!repo.root.join(".harnesskit/knowledge.lock").exists());
+    assert!(repo.root.join(".harnesskit/knowledge.lock").is_file());
 }
 
 #[test]
@@ -388,8 +396,8 @@ fn incremental_refresh_re_resolves_code_changes_and_removes_deleted_doc_edges() 
     );
     assert_eq!(edges(&repo).len(), 1);
     fs::remove_file(repo.root.join("src/a.rs")).unwrap();
-    let checks = findings(&repo);
-    assert!(checks.is_empty());
+    let checks = findings_allow_warnings(&repo);
+    assert!(checks.iter().any(|check| check["rule_id"] == "anchor-moved"));
     assert_eq!(edges(&repo).len(), 1);
     assert_eq!(edges(&repo)[0]["path"], "src/b.rs");
     write(
@@ -553,13 +561,13 @@ fn w0_retrieval_and_drift_cases_have_real_anchor_edges_at_the_applicable_revisio
                 );
             assert_eq!(found, !unresolved, "{} {revision_key}", case["id"]);
             if unresolved {
-                assert!(findings(&repo)
-                    .iter()
-                    .any(|check| check["rule_id"] == "anchor-unresolved"
+                assert!(findings_allow_warnings(&repo).iter().any(|check| {
+                    check["rule_id"] == case["expected_rule"]
                         && check["evidence_json"]["doc"] == case["doc"]
-                        && check["evidence_json"]["anchor"] == case["anchor"]));
+                        && check["evidence_json"]["anchor"] == case["anchor"]
+                }));
             }
         }
     }
-    assert!(!repo.root.join(".harnesskit/knowledge.lock").exists());
+    assert!(repo.root.join(".harnesskit/knowledge.lock").is_file());
 }

@@ -10,6 +10,7 @@ mod fs_utils;
 mod git;
 mod history;
 mod index;
+mod knowledge;
 mod lifecycle;
 mod output;
 mod parse;

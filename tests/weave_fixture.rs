@@ -262,7 +262,7 @@ fn cochange_expectations_have_small_commit_evidence_and_bulk_only_negative_contr
 }
 
 #[test]
-fn runner_validates_all_three_corpora_and_reports_pending_without_scores() {
+fn runner_validates_all_three_corpora_and_executes_w3_drift_cases() {
     let output = python("evaluate-weave.py").output().unwrap();
     assert_success(&output, &["evaluate-weave.py"]);
     let report: Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -270,7 +270,7 @@ fn runner_validates_all_three_corpora_and_reports_pending_without_scores() {
     assert_eq!(report["fixture_commits"], 10);
     assert_eq!(
         report["summary"],
-        json!({"total": 37, "executed": 0, "pending": 37,
+        json!({"total": 37, "executed": 20, "pending": 17,
             "by_kind": {"retrieval": 8, "drift": 20, "cochange": 9}})
     );
     let cases = report["cases"].as_array().unwrap();
@@ -280,7 +280,11 @@ fn runner_validates_all_three_corpora_and_reports_pending_without_scores() {
         .collect::<BTreeSet<_>>();
     assert_eq!(ids.len(), 37);
     for case in cases {
-        assert_eq!(case["status"], "pending");
+        if case["kind"] == "drift" {
+            assert_eq!(case["status"], "passed");
+        } else {
+            assert_eq!(case["status"], "pending");
+        }
         assert!(!case["required_steps"].as_array().unwrap().is_empty());
         assert!(case.get("score").is_none());
     }

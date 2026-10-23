@@ -191,6 +191,29 @@ fn run_check(args: &CheckArgs) -> Result<()> {
             return Err(error);
         }
     };
+    refresh_fact_store(&context)?;
+    // W3 maintenance actions operate on the durable lock after the normal
+    // refresh.  A second refresh makes the final report reflect any fix or
+    // acknowledgement in the same invocation.
+    let mut maintenance_changed = false;
+    if args.fix {
+        let db = open_fact_store(&context.target_dir)?;
+        maintenance_changed = crate::knowledge::fix_moved(&context.target_dir, &db)?;
+    }
+    if maintenance_changed {
+        refresh_fact_store(&context)?;
+    }
+    if !args.ack.is_empty() {
+        let db = open_fact_store(&context.target_dir)?;
+        maintenance_changed |= crate::knowledge::acknowledge(
+            &context.target_dir,
+            &db,
+            &args.ack,
+        )?;
+    }
+    if maintenance_changed {
+        refresh_fact_store(&context)?;
+    }
     let options = command_options(&args.target.options, Some(&context.schema));
     let coverage = discover_docs(&context.target_dir, &context.schema)?;
     let orphan_hints = orphan_state_hints(&context.target_dir, &context.schema)?;

@@ -13,6 +13,7 @@ from pathlib import Path, PurePosixPath
 import subprocess
 import sys
 import tempfile
+import shutil
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -109,14 +110,93 @@ def evaluate(corpus):
                                  str(repo)], check=True, capture_output=True, text=True)
         manifest = json.loads(result.stdout)
         validate_fixture(corpus, repo, manifest["revisions"])
-    cases = [dict(id=case["id"], kind=kind, status="pending",
-                  required_steps=REQUIRED_STEPS[kind])
-             for kind in REQUIRED_STEPS for case in corpus[kind]]
+        drift_cases = run_drift_cases(corpus, repo)
+    cases = []
+    for kind in REQUIRED_STEPS:
+        for case in corpus[kind]:
+            if kind == "drift":
+                cases.append(drift_cases[case["id"]])
+            else:
+                cases.append(dict(id=case["id"], kind=kind, status="pending",
+                                  required_steps=REQUIRED_STEPS[kind]))
+    executed = sum(case["status"] == "passed" for case in cases)
     return dict(schema_version=1, fixture="weave", fixture_validated=True,
                 fixture_commits=len(manifest["revisions"]), as_of=corpus["as_of"],
-                summary=dict(total=len(cases), executed=0, pending=len(cases),
+                summary=dict(total=len(cases), executed=executed,
+                             pending=len(cases) - executed,
                              by_kind={kind: len(corpus[kind]) for kind in REQUIRED_STEPS}),
                 cases=cases)
+
+
+def harnesskit_command():
+    configured = os.environ.get("HARNESSKIT_BIN")
+    if configured:
+        return [configured]
+    binary = ROOT / "target" / "debug" / "harnesskit"
+    if binary.is_file():
+        return [str(binary)]
+    return ["cargo", "run", "--quiet", "--"]
+
+
+def run_cli(repo, *args, expect_success=True):
+    command = harnesskit_command() + list(args) + [str(repo)]
+    # Target directory is last for compatibility with the existing CLI.  The
+    # check command accepts options before that positional argument.
+    result = subprocess.run(command, cwd=ROOT, capture_output=True, text=True,
+                            env={**os.environ, "HARNESSKIT_USAGE_LOG": "off"})
+    if expect_success and result.returncode != 0:
+        raise ValueError(f"HarnessKit command failed: {' '.join(command)}\n{result.stderr}\n{result.stdout}")
+    return result
+
+
+def reset_derived_state(repo):
+    subprocess.run(["git", "reset", "--hard", "--quiet"], cwd=repo, check=True,
+                   capture_output=True)
+    lock = repo / ".harnesskit" / "knowledge.lock"
+    if lock.exists():
+        lock.unlink()
+    state = repo / ".harnesskit" / "state"
+    if state.exists():
+        shutil.rmtree(state)
+
+
+def run_drift_cases(corpus, repo):
+    results = {}
+    for case in corpus["drift"]:
+        reset_derived_state(repo)
+        subprocess.run(["git", "checkout", "--quiet", "--detach", case["before"]],
+                       cwd=repo, check=True)
+        run_cli(repo, "index")
+        subprocess.run(["git", "checkout", "--quiet", "--detach", case["after"]],
+                       cwd=repo, check=True)
+        report = run_cli(repo, "check", "--rules", "anchors", "--json", "--all")
+        payload = json.loads(report.stdout)
+        matches = [check for check in payload["checks"]
+                   if check["subject_path"] == case["doc"]
+                   and check["evidence_json"].get("anchor") == case["anchor"]]
+        expected = case.get("expected_rule")
+        if expected is None:
+            require(not any(check["rule_id"] in ("code-drift", "anchor-moved", "anchor-broken")
+                            for check in matches), f"unexpected drift warning: {case['id']}")
+        else:
+            require(any(check["rule_id"] == expected for check in matches),
+                    f"missing {expected}: {case['id']}")
+            if expected == "anchor-moved":
+                moved = next(check for check in matches if check["rule_id"] == expected)
+                require(moved["fixable"] is True, f"move is not fixable: {case['id']}")
+                fixed = run_cli(repo, "check", "--fix", "--rules", "anchors", "--json", "--all")
+                fixed_payload = json.loads(fixed.stdout)
+                require(not any(check["rule_id"] == "anchor-moved"
+                                and check["subject_path"] == case["doc"]
+                                for check in fixed_payload["checks"]),
+                        f"move fix did not clear: {case['id']}")
+                target = case["expected_target"]
+                require(f"`{target}`" in (repo / case["doc"]).read_text(encoding="utf-8"),
+                        f"move fix did not rewrite: {case['id']}")
+        results[case["id"]] = dict(id=case["id"], kind="drift", status="passed",
+                                    required_steps=REQUIRED_STEPS["drift"],
+                                    expected_rule=expected)
+    return results
 
 
 def main():
