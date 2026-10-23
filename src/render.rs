@@ -815,14 +815,18 @@ pub(crate) fn print_check_output(
             }
         );
         if let Some(hint) = &check.hint {
-            println!(
-                "  Hint: {}",
-                if full {
-                    hint.clone()
-                } else {
-                    check_example(hint)
-                }
-            );
+            if hint.contains('\n') {
+                println!("  Hint:\n{}", hint);
+            } else {
+                println!(
+                    "  Hint: {}",
+                    if full {
+                        hint.clone()
+                    } else {
+                        check_example(hint)
+                    }
+                );
+            }
         }
         if full && !check.evidence_json.is_empty() && check.evidence_json != "{}" {
             println!("  evidence: {}", check.evidence_json);

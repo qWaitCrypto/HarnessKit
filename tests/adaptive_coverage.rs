@@ -288,6 +288,173 @@ fn unknown_directories_are_aggregated_live_and_hint_can_be_pasted() {
 }
 
 #[test]
+fn adding_docs_keeps_referenced_repository_markdown_in_shared_coverage() {
+    let repo = TestRepo::new(None);
+    for path in [
+        "README.md",
+        "CHANGELOG.md",
+        "ITERATION_PLAN.md",
+        "UNLINKED.md",
+    ] {
+        write(&repo, path, "# Repository document\n");
+    }
+    let before = json(&repo, &["list-docs", "--json"]);
+    assert_eq!(before["coverage"]["scan_root"], ".");
+    assert_eq!(before["coverage"]["managed"], 4);
+
+    write(
+        &repo,
+        "docs/index.md",
+        "# Docs\n\n[README](../README.md) [Changes](../CHANGELOG.md)\n\nSee `../ITERATION_PLAN.md` and `README.md`.\n",
+    );
+    write(&repo, "docs/note.md", "# Note\n\n[README](../README.md)\n");
+    let args = ["check", "--json", "--all", "--rules", "unmanaged-docs"];
+    let report = json(&repo, &args);
+    let coverage = &report["coverage"];
+    assert_eq!(coverage["scan_root"], "docs");
+    assert_eq!(coverage["managed"], 2);
+    assert_eq!(coverage["unmanaged"], 3);
+    assert_eq!(coverage["markdown_total"], 5);
+    assert_eq!(coverage["ratio"], 2.0 / 5.0);
+    let checks = report["checks"].as_array().unwrap();
+    assert_eq!(checks.len(), 1);
+    assert_eq!(checks[0]["subject_path"], ".");
+    assert_eq!(
+        checks[0]["evidence_json"]["paths"],
+        serde_json::json!(["CHANGELOG.md", "ITERATION_PLAN.md", "README.md"])
+    );
+    for path in ["README.md", "CHANGELOG.md", "ITERATION_PLAN.md"] {
+        assert_eq!(mapping(&report, path)["status"], "unmanaged");
+    }
+    assert!(!coverage["mappings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|item| item["path"] == "UNLINKED.md"));
+    for command in [
+        vec!["index", "--json"],
+        vec!["list-docs", "--json"],
+        vec!["history", "snapshot", "--json"],
+        vec!["doctor", "--layout", "--json"],
+    ] {
+        let result = json(&repo, &command);
+        assert_eq!(&result["coverage"], coverage, "{:?}", command);
+        if command[0] == "history" {
+            assert_eq!(result["files"].as_array().unwrap().len(), 2);
+        }
+    }
+    assert!(repo
+        .run(&["check", "--rules", "unmanaged-docs"])
+        .contains("Coverage: 2/5 eligible Markdown managed (40.0%), 5 total, 3 unmanaged"));
+
+    // Referenced-file existence changes coverage even when managed docs are untouched.
+    fs::remove_file(repo.root.join("CHANGELOG.md")).unwrap();
+    let removed = json(&repo, &args);
+    assert_eq!(removed["coverage"]["unmanaged"], 2);
+    assert_eq!(
+        removed["checks"][0]["evidence_json"]["paths"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    write(&repo, "CHANGELOG.md", "# Changes restored\n");
+    assert_eq!(json(&repo, &args)["coverage"], *coverage);
+}
+
+#[test]
+fn referenced_markdown_outside_root_obeys_exclusions_and_ignore() {
+    let repo = TestRepo::new(None);
+    let excluded = [
+        ("research/ignored.md", "schema.ignore:"),
+        ("projects/child/AGENTS.md", "nested-project"),
+        ("tests/fixtures/sample/guide.md", "fixture-dir"),
+    ];
+    let skipped = [
+        ".hidden/guide.md",
+        "templates/guide.md",
+        "target/guide.md",
+        "node_modules/guide.md",
+    ];
+    let mut text = "# References\n\n".to_string();
+    for path in excluded.iter().map(|(path, _)| *path).chain(skipped) {
+        write(&repo, path, "# Excluded evidence\n");
+        text.push_str(&format!("[Evidence](../{}) `../{}`\n", path, path));
+    }
+    write(&repo, "research/field.MARKDOWN", "# Field evidence\n");
+    text.push_str("[Field](../research/field.MARKDOWN) `research/field.MARKDOWN`\n");
+    write(&repo, "research/unlinked.md", "# Unrelated evidence\n");
+    write(&repo, "docs/note.md", &text);
+    schema(&repo, "ignore:\n  - 'research/ignored.md'\n");
+    let report = json(
+        &repo,
+        &["check", "--json", "--all", "--rules", "unmanaged-docs"],
+    );
+    assert_eq!(report["coverage"]["managed"], 1);
+    assert_eq!(report["coverage"]["unmanaged"], 1);
+    assert_eq!(report["coverage"]["excluded"], excluded.len());
+    assert_eq!(report["coverage"]["markdown_total"], 2 + excluded.len());
+    assert_eq!(report["checks"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        report["checks"][0]["evidence_json"]["paths"],
+        serde_json::json!(["research/field.MARKDOWN"])
+    );
+    for (path, reason) in excluded {
+        assert_eq!(mapping(&report, path)["status"], "excluded");
+        assert!(mapping(&report, path)["reason"]
+            .as_str()
+            .unwrap()
+            .starts_with(reason));
+    }
+}
+
+#[test]
+fn unmanaged_hints_remain_pasteable_yaml_in_every_text_format() {
+    for (path, link) in [
+        ("README.md", "../README.md"),
+        ("docs/misc/guide.md", "misc/guide.md"),
+    ] {
+        let repo = TestRepo::new(None);
+        write(&repo, path, "# Unmanaged document\n");
+        write(
+            &repo,
+            "docs/index.md",
+            &format!("# Docs\n\n[Document]({})\n", link),
+        );
+        let report = json(
+            &repo,
+            &["check", "--json", "--all", "--rules", "unmanaged-docs"],
+        );
+        let hint = report["checks"][0]["hint"].as_str().unwrap();
+        assert_eq!(hint, report["checks"][0]["evidence_json"]["hint"]);
+        let yaml: serde_yaml::Value = serde_yaml::from_str(hint).unwrap();
+        assert!(yaml["include"].is_mapping());
+        for flags in [
+            vec![],
+            vec!["--format", "summary"],
+            vec!["--format", "full"],
+            vec!["--all"],
+        ] {
+            let mut args = vec!["check", "--rules", "unmanaged-docs"];
+            args.extend_from_slice(&flags);
+            let output = repo.run(&args);
+            assert!(
+                output.contains(&format!("  Hint:\n{}\n", hint)),
+                "{}",
+                output
+            );
+        }
+        schema(&repo, hint);
+        let fixed = json(
+            &repo,
+            &["check", "--json", "--rules", "unmanaged-docs", "--strict"],
+        );
+        assert_eq!(fixed["coverage"]["unmanaged"], 0);
+        assert!(fixed["checks"].as_array().unwrap().is_empty());
+    }
+}
+
+#[test]
 fn broken_links_are_errors_and_existing_unmanaged_links_are_not_duplicated() {
     let repo = TestRepo::new(Some("flat"));
     write(&repo, "docs/misc/evidence.md", "# Evidence\n");
@@ -710,6 +877,70 @@ fn repository_dogfood_needs_no_init_or_schema_and_explains_every_mapping() {
         report["coverage"]["excluded"]
     );
     assert_eq!(after["coverage"]["unmanaged"], 0);
+}
+
+#[test]
+fn repository_schema_keeps_s11_dogfood_clean_with_docs_and_root_documents() {
+    let repo = TestRepo::new(None);
+    let source = Path::new(env!("CARGO_MANIFEST_DIR"));
+    for file in [
+        "README.md",
+        "CHANGELOG.md",
+        "ITERATION_PLAN.md",
+        "install.sh",
+        "LICENSE",
+    ] {
+        fs::copy(source.join(file), repo.root.join(file)).unwrap();
+    }
+    for dir in ["docs", "agent-surfaces", "examples", "tests/fixtures", "schemas"] {
+        copy_tree(&source.join(dir), &repo.root.join(dir));
+    }
+    write(
+        &repo,
+        ".harnesskit/schema.yaml",
+        &fs::read_to_string(source.join(".harnesskit/schema.yaml")).unwrap(),
+    );
+    let report = json(&repo, &["check", "--strict", "--json", "--all"]);
+    assert_eq!(report["summary"]["error"], 0, "{}", report);
+    assert_eq!(report["summary"]["warning"], 0, "{}", report);
+    assert_eq!(report["summary"]["suppressed"], 1);
+    assert_eq!(report["coverage"]["scan_root"], "docs");
+    assert_eq!(report["coverage"]["unmanaged"], 0);
+    assert_eq!(report["coverage"]["ratio"], 1.0);
+    for (path, role) in [
+        ("README.md", "notes"),
+        ("CHANGELOG.md", "notes"),
+        ("ITERATION_PLAN.md", "exec_plans"),
+    ] {
+        assert_eq!(mapping(&report, path)["status"], "managed");
+        assert_eq!(mapping(&report, path)["collection"], role);
+        assert!(mapping(&report, path)["reason"]
+            .as_str()
+            .unwrap()
+            .starts_with("schema.include:"));
+    }
+    assert!(report["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|check| check["suppressed"] == true)
+        .all(|check| check["rule_id"] == "history-missing"));
+    let listed = json(&repo, &["list-docs", "--json"]);
+    assert_eq!(listed["coverage"], report["coverage"]);
+    assert_eq!(
+        paths(&listed),
+        BTreeSet::from([
+            "README.md",
+            "CHANGELOG.md",
+            "ITERATION_PLAN.md",
+            "docs/index.md",
+            "docs/commands.md",
+            "docs/migration-alpha.7.md",
+            "agent-surfaces/README.md",
+            "agent-surfaces/skills/harnesskit/SKILL.md",
+            "agent-surfaces/skills/harnesskit/references/cli.md",
+        ])
+    );
 }
 
 #[test]

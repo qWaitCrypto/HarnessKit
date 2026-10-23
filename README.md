@@ -15,6 +15,8 @@ HarnessKit is the bridge.
 
 </div>
 
+Source version: **0.1.0-alpha.7** · [Changelog](CHANGELOG.md) · [Migration guide](docs/migration-alpha.7.md) · [Commands](docs/commands.md)
+
 ---
 
 ## The Problem
@@ -119,17 +121,26 @@ By default, init uses **local mode**. In a git repository, generated docs are ad
 > Snapshot the current docs before I refactor.
 ```
 
-The agent calls the CLI behind the scenes. You never need to.
+The agent calls the CLI behind the scenes. Commands record local usage metrics by
+default; `export HARNESSKIT_USAGE_LOG=off` disables logging. No metrics are uploaded.
 
 ## 30-Second Demo
 
-When an agent needs project context, it should not scan every doc. It asks HarnessKit for a context packet:
+For a handoff, start with the current state packet. It includes entrypoint routes,
+the project map, active plans, recent decisions, snapshot changes and unchecked
+acceptance items:
+
+```bash
+harnesskit context --current --json
+```
+
+Then request focused context for the task:
 
 ```bash
 harnesskit context auth --json
 ```
 
-Shape of the answer:
+Excerpt of the answer (JSON also includes `coverage` and `hints`):
 
 ```json
 {
@@ -195,35 +206,56 @@ Creates the docs scaffold. Existing files are skipped unless `--force` is passed
 #### Indexing
 
 ```bash
-harnesskit index
+harnesskit index [target_dir] [--json]
 ```
 
-Refreshes the SQLite fact store from current docs. Incremental — only processes changed files.
+Refreshes the SQLite fact store from current docs. Incremental — only processes changed files. Query, context and check refresh it automatically; ordinary doc edits need one check, without a preceding index.
 
 #### Search & Context
 
 ```bash
-harnesskit query "<terms>" [--json]       # Full-text search across all docs
-harnesskit context "<terms-or-path>"      # Context packet with relation graph
-harnesskit graph <doc_path> [--json]      # Context packet for a specific doc
+harnesskit query "<terms>" [target_dir] [--limit N] [--json]
+harnesskit context --current [target_dir] [--json]
+harnesskit context --since <snapshot|latest|YYYY-MM-DD> [target_dir] [--json]
+harnesskit context "<terms-or-path>" [target_dir] [--json]
+harnesskit graph <doc_path> [target_dir] [--json]
 ```
+
+Put query terms before the optional target: `harnesskit query "auth session" /path/to/repo --json`.
+Use 1–3 distinctive keywords; `--limit` defaults to 8. Search combines Unicode
+full-text and trigram indexes, with a substring fallback for short CJK terms.
+Fewer than three strict matches adds partial matches; each candidate reports
+`match.matched_terms`, `missing_terms` and `mode`. Title and path matches rank
+above headings, summaries and body text; historical evidence ranks below current
+documents with equal term coverage. Results identify `lifecycle` and
+`superseded_by`, show snippets only from matching lines, and limit neighbors to
+five focused documents. Zero hits still exit 0 and include per-term diagnostics,
+unmanaged-file matches, title suggestions and hints for changing the query.
+
+Bare `context` is the same as `context --current`. With `--current` or `--since`,
+the optional positional is the target; in focused mode, input comes first.
+Snapshot handoffs compare content hashes, including additions, edits and removals.
+Date handoffs use UTC mtimes and group additions under modified documents.
 
 #### Inspection
 
 ```bash
-harnesskit inspect <doc_path>    # Full metadata, relations, and checks for a doc
-harnesskit refs <doc_path>       # All incoming references to a doc
+harnesskit inspect <doc_path> [target_dir]    # Metadata, relations and checks
+harnesskit refs <doc_path> [target_dir]       # Incoming references
 ```
 
 #### Discovery
 
 ```bash
-harnesskit list-docs    # All managed docs with metadata
-harnesskit rank         # Top 20 most-referenced docs
+harnesskit list-docs [target_dir] [--json]    # Managed docs with metadata
+harnesskit rank [target_dir]                  # Top 20 most-referenced docs
 ```
 
-Discovery scans all Markdown under `managed_root`, plus configured core files and
-entrypoints. It skips templates, hidden directories (including `.harnesskit`),
+Discovery scans all Markdown under `managed_root`, plus configured core files,
+entrypoints, explicit includes and existing Markdown referenced by managed docs.
+Referenced Markdown outside the scan root is counted in coverage and
+`unmanaged-docs` together; references alone do not make those files managed.
+It skips templates, hidden directories (including `.harnesskit`),
 symlinks, `target`, and `node_modules`. Flat documents become supporting `notes`;
 `reference`, `adr`/`adrs`, `plans`, `design`, `specs`, and `runbooks` map to the
 corresponding collection roles. Filenames containing `decision` or `plan`, or
@@ -259,8 +291,8 @@ support `--json`. Coverage reports Markdown totals, managed/unmanaged/excluded
 counts, directory counts by status, and every mapping with its reason. Its ratio
 is `managed / (managed + unmanaged)` (0 for an empty scope); skipped trees are
 outside the total, and excluded counts default exclusions and explicit ignore
-matches. `hints` explain the scope and provide schema include snippets for unmanaged
-directories.
+matches. `hints` explain the scope and provide multiline YAML include snippets for
+unmanaged directories, preserving indentation even in the default check summary.
 
 `check` reports missing local link targets as `broken-link` errors, and existing
 unmanaged Markdown as one `unmanaged-docs` warning per directory. Existing files
@@ -273,7 +305,7 @@ references are never added to history unless explicitly included as managed Mark
 #### Health Check
 
 ```bash
-harnesskit check [--format summary|full|json] [--all] [--update-baseline]
+harnesskit check [target_dir] [--format summary|full|json] [--all] [--update-baseline]
                 [--json] [--strict] [--rules <rule-list>]
 ```
 
@@ -281,7 +313,7 @@ Validates all managed docs — missing required files, broken links, stale ancho
 
 The default summary groups counts by rule and shows at most three current examples
 and three new/resolved examples each. `--all` or `--format full` expands the text;
-`--json` remains an alias for `--format json`. Every finding includes a repair
+`--json` remains an alias for `--format json` (choose one, not both). Every finding includes a repair
 `hint` and a `fixable` boolean. Automatic repairs are not currently implemented,
 so `fixable` is false; suggested edits require review.
 
@@ -334,10 +366,11 @@ suppressions:
 #### Environment Diagnostics
 
 ```bash
-harnesskit doctor [--json] [--layout] [--write-schema] [--force]
+harnesskit doctor [target_dir] [--json] [--layout] [--write-schema] [--force]
+harnesskit doctor [target_dir] --usage [--days N] [--json]
 ```
 
-Checks the CLI, git, target path, `.harnesskit/state`, `.harnesskit/history`, installed agent skills, and PATH status. SQLite is bundled. Use this when first installing or when a sandboxed environment reports a read-only fact store.
+Checks the CLI, git, target path, `.harnesskit/state`, `.harnesskit/history`, installed agent skills, and PATH status. SQLite is bundled. Installed skill metadata is compared with the bundled version; mismatches include update or sync instructions. Use this when first installing or when a sandboxed environment reports a read-only fact store.
 
 `--layout` explains the inferred mappings and coverage without creating an index.
 `--write-schema` saves them to `.harnesskit/schema.yaml`; when that file exists it
@@ -406,16 +439,53 @@ For `history diff <a> <b> [target_dir]`, an explicit third argument is always th
 
 JSON reports from `index`, `check`, `list-docs`, `history`, `doctor`, `query`, `graph`, and `context` include structured `coverage` and `hints`. Query, graph and context still use only managed documents. Diagnostics on stderr do not invalidate JSON on stdout. New history snapshots add coverage metadata without requiring it in older snapshots; coverage on `history snapshot --json` describes the current invocation, including when creation is skipped.
 
+## Local Usage Metrics
+
+Each command appends local metrics to `~/.harnesskit/usage.jsonl`, or
+`$HARNESSKIT_HOME/usage.jsonl` when configured. Logging is **on by default** and
+records time, version, command, a project-root hash, elapsed time, exit code and
+available query/check/coverage counts. It omits raw paths, document contents and
+query text. Nothing is sent to a server. Log write failures do not fail commands.
+
+```bash
+export HARNESSKIT_USAGE_LOG=off       # Disable logging for this shell
+harnesskit doctor --usage --days 30  # Summarize existing local records
+```
+
+`HARNESSKIT_USAGE_LOG=full` additionally records query text. Unset the variable to
+return to minimal logging. Disabling logging leaves existing records in place.
+Usage summaries show per-project counts, zero-hit and relaxed-hit rates, and
+redundant index/check or repeated version calls. Exit-2 invocations count as
+invalid usage and are excluded from project aggregates.
+
+## Upgrading to 0.1.0-alpha.7
+
+Existing schema files work unchanged; `schema_version` remains 0. Incompatible
+derived `facts.sqlite` indexes rebuild automatically on the next indexed command.
+Keep `.harnesskit/history`: old snapshots still support list, diff and restore.
+New optional schema fields cover include/ignore globs, suppression globs and
+lifecycle thresholds; no document relocation or reinitialization is required.
+
+Review the [migration guide](docs/migration-alpha.7.md) before updating scripts:
+check now uses summary output and meaningful failure codes, nonexistent targets
+fail instead of being created, search may include partial matches, and usage
+logging defaults to on. The [changelog](CHANGELOG.md) lists the user-visible changes.
+
 ## How the Skill Works
 
-The agent skill is a single shared file that teaches Codex and Claude Code the HarnessKit workflow:
+The agent skill is a short, versioned shared file with an on-demand CLI reference:
 
 1. **When to trigger** — Any task involving project docs, architecture, design, plans, or specs
 2. **How to orient** — Read `AGENTS.md` or `CLAUDE.md` first, then follow progressive disclosure
-3. **When to use the CLI** — Prefer `query` / `context` over manual file search; run `check` after doc changes; use `history` before risky edits
+3. **When to use the CLI** — Start handoffs with `context --current`; use 1–3 keywords in `query` and follow zero-hit hints; run one `check` after edits and snapshot at phase boundaries
 4. **How to update docs** — Edit the narrowest relevant doc, create from templates when needed, keep entrypoints thin
 
-The skill lives at `agent-surfaces/skills/harnesskit/SKILL.md` — one source of truth for both Codex and Claude Code.
+The source is `agent-surfaces/skills/harnesskit/SKILL.md`; install the entire
+directory, including `references/`. `doctor` detects installed version drift;
+use `harnesskit update` for release installs or the checkout's skill install
+scripts to sync. Current state belongs only in `docs/project.md`; entrypoints
+remain routing tables. A successful docs check does not replace project tests,
+runtime checks or owner acceptance, and CLI statistics do not belong in worklogs.
 
 ## Project Structure
 
@@ -426,7 +496,8 @@ templates/         Entrypoint, core doc, and collection templates
 agent-surfaces/    Shared agent skill + Codex / Claude Code packaging
 scripts/           Install, uninstall, sync, and release scripts
 examples/          Example initialized repos
-docs/              Internal development docs
+docs/              Commands and migration notes
+tests/fixtures/    Synthetic repositories and frozen compatibility evidence
 ```
 
 ## Examples
@@ -436,7 +507,8 @@ docs/              Internal development docs
 Try it after building or installing HarnessKit:
 
 ```bash
-harnesskit index examples/web-app-with-auth
+harnesskit context --current examples/web-app-with-auth --json
+harnesskit query "auth session" examples/web-app-with-auth --limit 5 --json
 harnesskit context auth examples/web-app-with-auth --json
 ```
 
@@ -444,7 +516,7 @@ harnesskit context auth examples/web-app-with-auth --json
 
 - **Not an agent runtime.** It doesn't run models, manage threads, or call tools.
 - **Not a RAG pipeline.** No embeddings, no vector stores. Just FTS5 and file structure.
-- **Not a SaaS product.** Everything runs locally. No accounts, no cloud, no telemetry.
+- **Not a SaaS product.** Everything runs locally. No accounts or uploaded telemetry; local usage logging can be disabled.
 - **Not a replacement for git.** The history feature is for doc-level checkpoints, not source control.
 
 ---

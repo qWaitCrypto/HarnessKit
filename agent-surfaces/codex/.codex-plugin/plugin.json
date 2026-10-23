@@ -1,6 +1,6 @@
 {
   "name": "harnesskit",
-  "version": "0.1.0",
+  "version": "0.1.0-alpha.7",
   "description": "Use HarnessKit's file-first project memory workflow through a lightweight Codex skill and the local harnesskit CLI.",
   "author": {
     "name": "HarnessKit contributors"

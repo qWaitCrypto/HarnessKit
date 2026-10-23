@@ -44,6 +44,12 @@ or, when `CODEX_HOME` is unset:
 ~/.codex/skills/harnesskit/SKILL.md
 ```
 
+Copy the whole `agent-surfaces/skills/harnesskit/` directory, including
+`references/cli.md`. The skill metadata and CLI version are both
+`0.1.0-alpha.7`; `harnesskit doctor --json` reports installed version drift.
+Use `harnesskit update` for release installations or the source checkout's
+`scripts/install-codex-skill.sh` / `scripts/install-claude-skill.sh` to sync.
+
 For optional Codex plugin packaging, generate a copy of the shared skill into the plugin package as:
 
 ```text

@@ -2,7 +2,7 @@
 name: harnesskit
 description: Use for project documentation, architecture, plans, decisions, and durable repo knowledge; follow existing AGENTS.md, CLAUDE.md, or .harnesskit conventions.
 metadata:
-  version: "0.1.0-alpha.6"
+  version: "0.1.0-alpha.7"
 ---
 
 # HarnessKit

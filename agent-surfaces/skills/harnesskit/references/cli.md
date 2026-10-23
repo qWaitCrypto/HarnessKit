@@ -113,7 +113,7 @@ When entering a repo that already has `.harnesskit/` or `AGENTS.md` / `CLAUDE.md
 
 ### Target Directory Discipline
 
-All commands accept optional `[target_dir]`, `[--schema <path>]`, `[--docs-root <path>]` arguments. Defaults: target_dir = `.`, schema = bundled `file-first-v0.yaml`.
+Project commands accept optional `[target_dir]`, `[--schema <path>]`, `[--docs-root <path>]` arguments. The target defaults to `.`; schema selection uses `.harnesskit/schema.yaml` when present, otherwise bundled `file-first-v0.yaml`. Help, version and update do not take a project target. Query/context inputs come before the target.
 
 In most cases, the default `.` is fine. If HarnessKit diagnostics show that `target_dir`, `current_dir`, `PWD`, or `.harnesskit/state` do not refer to the intended writable project root, pass the project root explicitly:
 
@@ -130,7 +130,7 @@ Use this to correct target selection before treating state as corrupt. Do not de
 #### Indexing
 
 ```bash
-harnesskit index
+harnesskit index [target_dir] [--json]
 ```
 
 Explicitly refreshes the derived fact store. Query, context and check refresh it automatically; do not run index before check. Indexing is incremental.
@@ -138,39 +138,41 @@ Explicitly refreshes the derived fact store. Query, context and check refresh it
 #### Querying
 
 ```bash
-harnesskit query "<terms>" --json
+harnesskit query "<terms>" [target_dir] [--limit N] [--json]
 ```
 
-Search with 1–3 distinctive keywords. The CLI combines strict and relaxed matches, CJK/substring retrieval and lifecycle-aware ranking. Read coverage, match metadata and hints; on zero results, adjust terms using diagnostics before falling back to rg. Use `--limit N` to control candidate count.
+Search with 1–3 distinctive keywords. Terms precede the optional target: `harnesskit query "auth session" /absolute/project/path --json`. The CLI combines strict and relaxed matches, CJK/substring retrieval and lifecycle-aware ranking. Read coverage, match metadata and hints; on zero results (exit 0), adjust terms using diagnostics before falling back to rg. `--limit N` controls candidate count (default 8); a positional number is a target directory.
 
 **When to use**: before manually searching docs for project context, design rationale, or prior decisions. Let the index do the work.
 
 #### Context Retrieval
 
 ```bash
-harnesskit context "<terms-or-doc-path>" --json
+harnesskit context --current [target_dir] [--json]
+harnesskit context --since <snapshot|latest|YYYY-MM-DD> [target_dir] [--json]
+harnesskit context "<terms-or-doc-path>" [target_dir] [--json]
 ```
 
-With terms or a path, returns that doc and its relevant neighbors in reading order. `harnesskit context --current` (also the default without input) returns entrypoints, the project map, active plans, recent decisions, snapshot changes and unchecked acceptance items. Use `context --since <snapshot|latest|YYYY-MM-DD> --json` for a handoff of changed docs.
+With terms or a path, returns that doc and its relevant neighbors in reading order. `harnesskit context --current` (also the default without input) returns entrypoints, the project map, active plans, recent decisions, snapshot changes and unchecked acceptance items. In current/since modes, the sole positional is the target. Snapshot handoffs compare contents; date handoffs use UTC mtimes and group additions under modified files.
 
 **When to use**: when you need to understand a doc in context — what it links to, what references it, what code it scopes.
 
 #### Inspection
 
 ```bash
-harnesskit inspect <doc_path>
+harnesskit inspect <doc_path> [target_dir]
 ```
 
 Shows full metadata, relations (both incoming and outgoing), and checks for a single doc. Useful for understanding a doc's role in the knowledge graph.
 
 ```bash
-harnesskit refs <doc_path>
+harnesskit refs <doc_path> [target_dir]
 ```
 
 Shows all incoming references (other docs that link to, index, or mention this doc).
 
 ```bash
-harnesskit graph <doc_path> [--json]
+harnesskit graph <doc_path> [target_dir] [--json]
 ```
 
 Like `context`, but anchored on a specific doc path (no search fallback).
@@ -178,13 +180,13 @@ Like `context`, but anchored on a specific doc path (no search fallback).
 #### Discovery
 
 ```bash
-harnesskit list-docs
+harnesskit list-docs [target_dir] [--json]
 ```
 
 Lists all managed docs with path, title, role, status, authority, link counts, and collection. Use for broad orientation.
 
 ```bash
-harnesskit rank
+harnesskit rank [target_dir]
 ```
 
 Shows the top 20 docs by incoming-link score. Useful for finding anchor documents — the high-value docs that other docs reference most.
@@ -192,10 +194,11 @@ Shows the top 20 docs by incoming-link score. Useful for finding anchor document
 #### Health Check
 
 ```bash
-harnesskit check [--json] [--strict] [--rules <rule-list>]
+harnesskit check [target_dir] [--format summary|full|json] [--all]
+                [--update-baseline] [--json] [--strict] [--rules <rule-list>]
 ```
 
-Refreshes the index and checks managed docs. The default summary groups rules and shows changes against the derived baseline. Use `--all` or `--format full` for every finding, `--format json` as an alias for `--json`, and `--update-baseline` to accept the current set after reviewing it. Findings include repair hints. JSON lists are bounded unless `--all` is used.
+Refreshes the index and checks managed docs. The default summary groups rules and shows changes against the derived baseline. Use `--all` or `--format full` for every finding, and choose either `--format json` or `--json` for structured output. First evaluation creates the baseline; `--update-baseline` accepts the current set after showing its differences. Findings include repair hints. JSON lists are bounded unless `--all` is used; exit status always considers every selected finding, regardless of baseline or truncation.
 
 Broken links, missing all entrypoints and invalid schema syntax are errors. No documentation errors does not mean delivery is verified: project tests, runtime checks and owner acceptance remain separate. Do not copy CLI statistics into worklogs.
 
@@ -250,7 +253,7 @@ Explicit schema configurations keep their behavior. Use `doctor --layout --write
 
 `harnesskit doctor --json` reports the environment and compares installed skill headers with the bundled version. It checks Codex (`CODEX_HOME` or `~/.codex`), Claude (`CLAUDE_CONFIG_DIR` or `~/.claude`), shared `~/.agents/skills`, and the optional local Codex plugin. Missing or different version headers on installed skills require synchronization. Use `harnesskit update` for a release install, or the checkout's `scripts/install-codex-skill.sh`, `scripts/install-claude-skill.sh` or `scripts/install-codex-plugin-local.sh`. `scripts/sync-agent-surfaces.sh` refreshes the plugin packaging copy. Copy the whole skill directory, including `references/`.
 
-`doctor --usage [--days N]` summarizes local metrics. Logs live under `HARNESSKIT_HOME` or `~/.harnesskit`; `HARNESSKIT_USAGE_LOG=off` disables them and `full` includes query text. Default logs omit raw queries and paths. Usage/environment errors (exit 2) have `invalid: true` with no project-root hash; `usage.invalid` counts them separately from project aggregates, including older exit-2 records. Total calls still include invalid invocations.
+`doctor --usage [--days N]` summarizes local metrics. Logging is on by default at `$HARNESSKIT_HOME/usage.jsonl` or `~/.harnesskit/usage.jsonl`; `export HARNESSKIT_USAGE_LOG=off` disables future writes and `HARNESSKIT_USAGE_LOG=full` opts into query text. Default logs omit raw queries, paths and document contents; nothing is uploaded. Disabling logging leaves existing records in place. Usage/environment errors (exit 2) have `invalid: true` with no project-root hash; `usage.invalid` counts them separately from project aggregates, including older exit-2 records. Total calls still include invalid invocations.
 
 Exit codes: 0 normal; 1 documentation errors (or warnings under `--strict`); 2 usage/environment errors, including nonexistent target directories. Only init creates a missing target. Broken output pipes exit silently with 0.
 

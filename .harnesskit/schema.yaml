@@ -1,0 +1,31 @@
+schema_version: 0
+managed_root: docs
+
+entrypoints:
+  manifest: docs/index.md
+  project_map: README.md
+
+# Keep release and agent documentation in place rather than moving it into docs/.
+include:
+  "README.md": notes
+  "CHANGELOG.md": notes
+  "ITERATION_PLAN.md": exec_plans
+  "agent-surfaces/**/*.md": notes
+
+rules:
+  path_defines_doc_type: true
+  h1_is_title: true
+  first_paragraph_is_summary: true
+  index_required: true
+  prefer_directory_defaults: true
+  minimal_frontmatter_only: true
+  stale_explicit_anchor: true
+  duplicate_detection: true
+  contamination_checks: true
+  strict_checks: false
+
+suppressions:
+  repository_git_history:
+    rule_id: history-missing
+    path: .harnesskit/history
+    reason: 'Repository documentation is versioned in Git; local HarnessKit snapshots are optional.'

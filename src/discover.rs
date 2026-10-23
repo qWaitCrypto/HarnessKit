@@ -2,7 +2,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 
-use crate::fs_utils::normalize_path;
+use crate::external_refs::resolve_mention;
+use crate::fs_utils::{normalize_path, read_text_lossy};
+use crate::parse::parse_doc_text;
 use crate::schema::{
     configured_architecture_path, core_file_rel_path, glob_matcher, parse_schema,
     DocCollectionSpec, Schema, BUNDLED_SCHEMA_TEXT,
@@ -150,7 +152,7 @@ impl Coverage {
 
     pub(crate) fn explanation_hints(&self) -> Vec<String> {
         let mut hints = vec![format!(
-            "Coverage scans Markdown under {:?}, configured core/entrypoint files and explicit include matches. Templates, hidden directories, symlinks, target and node_modules are skipped. Nested projects (subdirectories with AGENTS.md, CLAUDE.md or .harnesskit) and fixture directories (tests/fixtures, testdata, fixture/fixtures under examples) are excluded by default, alongside schema ignore matches. Ratio = managed / (managed + unmanaged); an empty scope has ratio 0. Use --json (coverage.mappings) or doctor --layout for each classification; include overrides default exclusions and inference, ignore takes precedence.", self.scan_root
+            "Coverage scans Markdown under {:?}, configured core/entrypoint files, explicit include matches and existing Markdown referenced by managed documents, including outside the scan root. Templates, hidden directories, symlinks, target and node_modules are skipped. Nested projects (subdirectories with AGENTS.md, CLAUDE.md or .harnesskit) and fixture directories (tests/fixtures, testdata, fixture/fixtures under examples) are excluded by default, alongside schema ignore matches. Ratio = managed / (managed + unmanaged); an empty scope has ratio 0. Use --json (coverage.mappings) or doctor --layout for each classification; include overrides default exclusions and inference, ignore takes precedence.", self.scan_root
         )];
         if self.root_reason.is_some() {
             hints.push("No default docs/ directory or explicit schema/docs-root was supplied: inferred managed_root '.' and supporting notes for otherwise unclassified repository Markdown. Use doctor --layout to review, --write-schema to persist, or include/ignore to refine the scope.".to_string());
@@ -224,6 +226,30 @@ pub(crate) fn discover_docs(repo_root: &Path, schema: &Schema) -> Result<Coverag
         .iter()
         .map(|pattern| Ok((pattern, glob_matcher(pattern)?)))
         .collect::<Result<Vec<_>>>()?;
+    // Referenced Markdown outside managed_root belongs to the same coverage
+    // used by unmanaged-docs. Only managed sources expand the scan scope.
+    let mut references = BTreeSet::new();
+    for path in &paths {
+        if ignores.iter().any(|(_, matcher)| matcher.is_match(path))
+            || (!includes.iter().any(|matcher| matcher.is_match(path))
+                && default_exclusion_reason(repo_root, path).is_some())
+            || (classify_path(schema, path).0.is_none() && !is_configured_doc(schema, path))
+        {
+            continue;
+        }
+        let parsed = parse_doc_text(path, &read_text_lossy(&repo_root.join(path))?);
+        for target in parsed.links.iter().cloned().chain(
+            parsed
+                .path_mentions
+                .iter()
+                .filter_map(|mention| resolve_mention(repo_root, path, mention)),
+        ) {
+            if is_markdown(&target) && !skipped_path(&target) && regular_file(repo_root, &target) {
+                references.insert(target);
+            }
+        }
+    }
+    paths.extend(references);
     let mut mappings = Vec::new();
     let mut counts = BTreeMap::<(String, String), usize>::new();
     for path in paths {

@@ -13,11 +13,10 @@ commands must never index or snapshot these source directories in place.
 | `external` | Both a Markdown link and an inline path to `research_runs/x/result.json` outside docs. |
 
 `init_baseline.rs`, `index_baseline.rs`, and `history_baseline.rs` protect existing
-CLI behavior. They do not assert that flat documents are currently discovered or
-that CJK body fragments and historical ranking already work.
+CLI behavior. Adaptive coverage, CJK body fragments and historical ranking have
+separate regression tests in `adaptive_coverage.rs` and `query_retrieval.rs`.
 
-`queries.json` is a future evaluation corpus for S5, not a passing-query golden
-file for the current CLI. Each record has:
+`queries.json` is the 35-query retrieval evaluation corpus. Each record has:
 
 - `fixture`: one of the five repositories above.
 - `query`: the complete query string to replay.
@@ -27,10 +26,12 @@ file for the current CLI. Each record has:
 - `not_first_paths` (optional): historical paths that must not rank first; check
   this constraint separately from top-3 relevance.
 
-S0 validates the corpus structure and target paths and runs one existing managed
-query control per fixture. S5 will replay the whole corpus and set regression
-thresholds from the implemented retrieval behavior. Do not turn known current
-failures into expected empty results or weaken the target paths to make S0 pass.
+`fixture_corpus.rs` validates structure and target paths. `query_retrieval.rs`
+replays the corpus against the frozen S4 baseline: zero zero-hit queries, all
+queries hitting an expected path in the top three, and at least 34/35 top-one
+hits. Do not weaken expected target paths to make regressions pass. Release
+smoke runs should also copy each of the five repositories before running index,
+check, `context --current` and query.
 
 `compat/` contains serialized compatibility assets, not a sixth project fixture:
 
