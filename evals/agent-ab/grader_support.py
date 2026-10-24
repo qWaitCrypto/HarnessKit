@@ -547,8 +547,11 @@ def grade_s6(root: Path, *, baseline=None, **_: Any) -> GradeResult:
                    for paragraph in fact_paragraphs)
     ]
     checks = [
-        (_exists(root, "AGENTS.md") and "AGENTS.md" in changed, "没有修改 AGENTS.md 文档入口"),
+        # Which file becomes the human entry is a layout choice; both entries
+        # must stay lean, and whether AGENTS.md was touched is only a metric.
+        (_exists(root, "AGENTS.md"), "缺少 AGENTS.md 入口"),
         (len(_read(root, "AGENTS.md").splitlines()) <= 120, "AGENTS.md 超过 120 行"),
+        (len(_read(root, "README.md").splitlines()) <= 120, "README.md 入口超过 120 行"),
         (not missing_facts, f"关键产品事实没有从 AGENTS 可达: {missing_facts}"),
         (not duplicates, "入口可达文档包含高度相似的重复段落"),
         (not missing, f"入口可达文档有失效链接: {missing[:3]}"),
@@ -556,7 +559,8 @@ def grade_s6(root: Path, *, baseline=None, **_: Any) -> GradeResult:
     ]
     return _result("S6", checks, changed_files=changed,
                    changed_docs=[p for p in changed if p.endswith(".md")],
-                   tests_passed=tests, hidden_tests_run=tests_run)
+                   tests_passed=tests, hidden_tests_run=tests_run,
+                   process_metrics={"agents_entry_updated": "AGENTS.md" in changed})
 
 
 def _check_json_errors(root: Path, binary_override: str | None = None) -> tuple[bool, str]:
@@ -615,16 +619,20 @@ def grade_s7(
     changed = _changed_files(root, baseline)
     schema = _read(root, ".harnesskit/schema.yaml")
     def product_doc(path: str) -> bool:
-        return (path.endswith(".md") and path != "AGENTS.md"
+        # Entrypoints and collection indexes are routing tables that an upgrade
+        # may legitimately touch; every other Markdown file is product prose.
+        return (path.endswith(".md") and path not in ("AGENTS.md", "CLAUDE.md")
+                and Path(path).name != "index.md"
                 and not path.startswith(("agent-surfaces/skills/", ".harnesskit/", "release/")))
     current_docs = sorted(path for path in snapshot_hashes(root) if product_doc(path))
     baseline_docs = sorted(path for path in _baseline_hashes(baseline) if product_doc(path))
     new_docs = sorted(path for path in set(current_docs) - set(baseline_docs) if path.startswith("docs/"))
-    prose_unchanged = bool(baseline_docs) and all(
-        (root / path).is_file()
-        and _frontmatter_body(_baseline_text(root, path, baseline)) == _frontmatter_body(_read(root, path))
-        for path in baseline_docs
-    )
+    rewritten = [
+        path for path in baseline_docs
+        if not (root / path).is_file()
+        or _frontmatter_body(_baseline_text(root, path, baseline)) != _frontmatter_body(_read(root, path))
+    ]
+    prose_unchanged = bool(baseline_docs) and not rewritten
     installed = _read(codex_home, "skills/harnesskit/SKILL.md") if codex_home else ""
     references_ok = codex_home is not None and all(
         bool(_read(codex_home, f"skills/harnesskit/references/{name}.md").strip())
@@ -650,7 +658,7 @@ def grade_s7(
         (_skill_version(installed) == "0.2.0" and references_ok,
          "CODEX_HOME 中没有 0.2.0 skill 与 references"),
         (cli_version == "harnesskit 0.2.0", f"安装前缀中的 CLI 不是 0.2.0: {cli_version or '未知'}"),
-        (prose_unchanged, "迁移改写了产品文档正文"),
+        (prose_unchanged, f"迁移改写了产品文档正文: {rewritten[:5]}"),
         (release_ok, "场景没有可用的离线 release 资产"),
         (check_ok, check_detail),
         (tests, detail or "隐藏测试未运行"),

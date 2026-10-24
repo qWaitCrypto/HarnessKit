@@ -501,6 +501,22 @@ def test_s6_accepts_a_layout_without_docs_index_or_project(tmp_path, repositorie
     assert result.success, result.reasons
 
 
+def test_s6_entry_can_be_readme_but_entries_stay_lean(tmp_path, repositories):
+    # pilot2/A/S6 rebuilt README as the entry and left AGENTS.md untouched.
+    root = _copy_repo(repositories, 'S6', tmp_path / 'repo')
+    baseline = snapshot_baseline(root)
+    apply_recorded_solution('S6', root)
+    (root / 'AGENTS.md').write_text(baseline['texts']['AGENTS.md'])
+    result = grade('S6', root, baseline=baseline)
+    assert result.success, result.reasons
+    assert result.process_metrics['agents_entry_updated'] is False
+    with (root / 'README.md').open('a') as handle:
+        handle.write(''.join(f'\nSection {index} keeps another onboarding detail here.\n' for index in range(70)))
+    result = grade('S6', root, baseline=baseline)
+    assert not result.success
+    assert 'README.md 入口超过 120 行' in result.reasons
+
+
 @pytest.mark.parametrize('language', ['English', 'Chinese'])
 def test_s6_accepts_natural_paraphrase_and_preserves_unique_notes(tmp_path, repositories, language):
     root = _copy_repo(repositories, 'S6', tmp_path / 'repo')
@@ -853,7 +869,7 @@ def test_pilot1_actual_results_are_accepted(tmp_path, repositories, case_name):
 
 @pytest.mark.parametrize('change,accepted', [
     ('frontmatter', True), ('new-docs', True), ('skill-release-route', True),
-    ('body', False), ('deleted-doc', False),
+    ('routing-docs', True), ('body', False), ('readme-install-guide', False), ('deleted-doc', False),
 ])
 def test_s7_protects_existing_product_prose_and_records_new_docs(tmp_path, repositories, change, accepted):
     root = _copy_repo(repositories, 'S7', tmp_path / 'repo')
@@ -871,8 +887,17 @@ def test_s7_protects_existing_product_prose_and_records_new_docs(tmp_path, repos
         (root / 'release/README.md').write_text('# Local release cache\n\nInstalled 0.2.0.\n')
         with (root / 'AGENTS.md').open('a') as handle:
             handle.write('\nUse `harnesskit context --current` for documentation routes.\n')
+    elif change == 'routing-docs':
+        # pilot2/B/S7: CLAUDE.md and collection indexes are routing tables.
+        (root / 'CLAUDE.md').write_text('See [AGENTS.md](AGENTS.md) for the repository route.\n')
+        with (root / 'docs/index.md').open('a') as handle:
+            handle.write('\n- [Archived worklog](worklog/archive/index.md)\n')
     elif change == 'body':
         _replace(root, 'README.md', 'integer minor units', 'floating point amounts')
+    elif change == 'readme-install-guide':
+        # pilot2/B/S7 appended tool installation steps to the product README.
+        with (root / 'README.md').open('a') as handle:
+            handle.write('\nInstall the CLI with `bash release/install.sh --version v0.2.0`.\n')
     elif change == 'deleted-doc':
         (root / 'docs/decisions/002-session-renewal.md').unlink()
     result = grade('S7', root, baseline=baseline, codex_home=home,
@@ -883,7 +908,7 @@ def test_s7_protects_existing_product_prose_and_records_new_docs(tmp_path, repos
     assert result.process_metrics['new_product_docs'] == expected
     assert result.process_metrics['new_product_docs_count'] == len(expected)
     if not accepted:
-        assert '迁移改写了产品文档正文' in result.reasons
+        assert any(reason.startswith('迁移改写了产品文档正文') for reason in result.reasons)
 
 
 def test_metrics_count_failed_harnesskit_commands_and_first_error():
