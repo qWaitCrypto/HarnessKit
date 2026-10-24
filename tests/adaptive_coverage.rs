@@ -843,11 +843,12 @@ fn repository_dogfood_needs_no_init_or_schema_and_explains_every_mapping() {
             "ITERATION_PLAN.md",
             "agent-surfaces/README.md",
             "agent-surfaces/skills/harnesskit/SKILL.md",
+            "agent-surfaces/skills/harnesskit/references/adoption.md",
             "agent-surfaces/skills/harnesskit/references/cli.md",
             "agent-surfaces/skills/harnesskit/references/migration.md",
         ])
     );
-    assert_eq!(report["coverage"]["managed"], 6);
+    assert_eq!(report["coverage"]["managed"], 7);
     assert!(report["coverage"]["excluded"].as_u64().unwrap() > 0);
     assert_eq!(report["coverage"]["ratio"], 1.0);
     assert!(report["coverage"]["mappings"]
@@ -938,6 +939,7 @@ fn repository_schema_keeps_s11_dogfood_clean_with_docs_and_root_documents() {
             "docs/migration-alpha.7.md",
             "agent-surfaces/README.md",
             "agent-surfaces/skills/harnesskit/SKILL.md",
+            "agent-surfaces/skills/harnesskit/references/adoption.md",
             "agent-surfaces/skills/harnesskit/references/cli.md",
             "agent-surfaces/skills/harnesskit/references/migration.md",
         ])

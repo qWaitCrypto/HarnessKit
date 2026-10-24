@@ -254,6 +254,73 @@ fn commands_options_unknown_symbols_and_markdown_examples_are_not_anchors() {
 }
 
 #[test]
+fn prose_file_and_symbol_references_find_decisions_without_indexing_examples_or_urls() {
+    let repo = TestRepo::new(Some("standard"));
+    write(&repo, "src/auth/refresh.rs", "pub fn refresh_token() {}\n");
+    write(&repo, "src/auth/session.rs", "pub fn renew_session() {}\n");
+    write(&repo, "src/other.rs", "pub fn unrelated() {}\n");
+    write(&repo, "Dockerfile", "FROM scratch\n");
+    let decision = "docs/decisions/002-session-renewal.md";
+    write(&repo, decision, concat!(
+        "---\nstatus: accepted\n---\n# Session renewal\n\n## Ownership\n\n",
+        "The operation src/auth/refresh.rs#refresh_token returns failure to its caller.\n",
+        "Its coordinator is src/auth/session.rs#renew_session; see (../../src/auth/session.rs).\n",
+        "Missing src/missing.rs#unknown stays prose.\n",
+        "The service image is defined by Dockerfile.\n",
+        "https://example.invalid/src/other.rs#unrelated and //example.invalid/src/other.rs are URLs.\n",
+        "[src/other.rs](https://example.invalid/src/other.rs) is an external link.\n\n",
+        "```rust\nsrc/other.rs#unrelated\n```\n\n",
+        "    src/other.rs\n\n<!-- src/other.rs -->\n",
+    ));
+    let packet: Value = serde_json::from_str(&repo.run(&[
+        "context", "--for", "src/auth/session.rs", "--json",
+    ])).unwrap();
+    assert!(packet["decisions"].as_array().unwrap().iter().any(|path| path == decision));
+    let extracted = edges(&repo).into_iter().filter(|edge| edge["evidence"]["doc"] == decision).collect::<Vec<_>>();
+    assert_eq!(extracted.len(), 4, "{extracted:?}");
+    assert!(extracted.iter().all(|edge| edge["kind"] == "anchor" && edge["evidence"]["prose"] == true));
+    assert_eq!(extracted.iter().find(|edge| edge["name"] == "refresh_token").unwrap()["evidence"]["line"], 8);
+    let lock = fs::read_to_string(repo.root.join(".harnesskit/knowledge.lock")).unwrap();
+    assert!(lock.contains("src/auth/session.rs#renew_session"), "{lock}");
+    assert!(!lock.contains("src/other.rs") && !lock.contains("src/missing.rs"), "{lock}");
+}
+
+#[test]
+fn prose_references_obey_explicit_collection_mention_policy() {
+    let repo = TestRepo::new(Some("standard"));
+    write(&repo, "src/policy.rs", "pub fn policy() {}\n");
+    write(&repo, ".harnesskit/schema.yaml", &include_str!("../schemas/file-first-v0.yaml")
+        .replace("anchors: seal\n    template: decision", "anchors: mention\n    template: decision"));
+    write(&repo, "docs/decisions/policy.md", "---\nstatus: accepted\n---\n# Policy\n\nThe policy owns src/policy.rs#policy.\n");
+    repo.run(&["index"]);
+    let extracted = edges(&repo);
+    assert_eq!(extracted.len(), 1, "{extracted:?}");
+    assert_eq!(extracted[0]["kind"], "mention");
+    assert!(!repo.root.join(".harnesskit/knowledge.lock").exists());
+}
+
+#[test]
+fn moved_prose_anchors_are_repaired_without_rewriting_examples_or_crlf() {
+    let repo = TestRepo::new(Some("standard"));
+    write(&repo, "src/old.rs", "pub fn refresh_token() {}\n");
+    let original = concat!(
+        "# Anchor recovery\r\n\r\n",
+        "实际规则 src/old.rs#refresh_token must return its failure.\r\n\r\n",
+        "```text\r\nsrc/old.rs#refresh_token\r\n```\r\n",
+    );
+    write(&repo, "docs/anchors.md", original);
+    repo.run(&["index"]);
+    fs::rename(repo.root.join("src/old.rs"), repo.root.join("src/new.rs")).unwrap();
+    assert!(findings_allow_warnings(&repo).iter().any(|check| check["rule_id"] == "anchor-moved"));
+    repo.run(&["check", "--rules", "anchors", "--fix", "--json", "--all"]);
+    let updated = fs::read_to_string(repo.root.join("docs/anchors.md")).unwrap();
+    assert_eq!(updated, original.replacen("src/old.rs#refresh_token", "src/new.rs#refresh_token", 1));
+    assert!(findings(&repo).is_empty());
+    let packet: Value = serde_json::from_str(&repo.run(&["context", "--for", "src/new.rs", "--json"])).unwrap();
+    assert_eq!(packet["documents"][0]["path"], "docs/anchors.md");
+}
+
+#[test]
 fn relative_paths_prefer_the_document_directory_and_missing_paths_are_prose() {
     let repo = TestRepo::new(Some("standard"));
     write(&repo, "local.rs", "fn root() {}\n");

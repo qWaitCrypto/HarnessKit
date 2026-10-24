@@ -15,7 +15,7 @@ use crate::fs_utils::normalize_path;
 use crate::index::cell;
 use crate::knowledge::{read_anchor_lock, LockEntry};
 use crate::output::println;
-use crate::render::compact;
+use crate::parse::parse_doc_text;
 use crate::sqlite::SqliteConnection;
 use crate::Result;
 
@@ -52,7 +52,11 @@ pub(crate) fn run_hook_pre_edit(path_arg: Option<&str>) -> Result<()> {
     if marker.as_ref().map(|marker| marker.exists()).unwrap_or(false) {
         return Ok(());
     }
-    let constraints = hook_constraints(&db, &context.path)?;
+    let constraints = if accepted_decision(&db, &context.path)? {
+        vec![crate::lifecycle::ACCEPTED_DECISION_CHANGED.to_string()]
+    } else {
+        hook_constraints(&db, &context.path)?
+    };
     if constraints.is_empty() {
         return Ok(());
     }
@@ -68,26 +72,68 @@ pub(crate) fn run_hook_pre_edit(path_arg: Option<&str>) -> Result<()> {
 
 pub(crate) fn run_hook_post_edit(path_arg: Option<&str>) -> Result<()> {
     let Some(context) = hook_context(path_arg)? else { return Ok(()); };
+    let db_path = context.root.join(".harnesskit/state/facts.sqlite");
+    let db = db_path.exists().then(|| SqliteConnection::open(&db_path)).transpose()?;
     let lock = read_anchor_lock(&context.root)?;
-    if lock.is_empty() {
-        return Ok(());
-    }
     let source = context.root.join(&context.path);
     let text = fs::read_to_string(&source).ok();
-    let Some(text) = text else { return Ok(()); };
-    let regions = regions_for_text(&context.path, &text)?;
     let mut messages = Vec::new();
-    for entry in lock.iter().filter(|entry| entry_affects_path(entry, &context.path)) {
-        if anchor_drifted(entry, &regions) {
-            messages.push(limit_hook_line(&format!(
-                "Anchor drift: code changed since review; update the document or confirm unchanged requirements with `harnesskit check --ack {}`.",
-                entry.doc
-            )));
-            break;
+    if let (Some(db), Some(text)) = (db.as_ref(), text.as_deref()) {
+        if accepted_decision_body_changed(db, &context.root, &context.path, text)? {
+            messages.push(
+                crate::lifecycle::ACCEPTED_DECISION_CHANGED.to_string(),
+            );
+        }
+    }
+    if !lock.is_empty() {
+        if let Some(text) = text {
+            let regions = regions_for_text(&context.path, &text)?;
+            for entry in lock.iter().filter(|entry| entry_affects_path(entry, &context.path)) {
+                if anchor_drifted(entry, &regions) {
+                    messages.push(limit_hook_line(&format!(
+                        "Anchor drift: code changed since review; update the document or confirm unchanged requirements with `harnesskit check --ack {}`.",
+                        entry.doc
+                    )));
+                    break;
+                }
+            }
         }
     }
     emit_hook_output(&context, "PostToolUse", &messages)?;
     Ok(())
+}
+
+fn accepted_decision(db: &SqliteConnection, path: &str) -> Result<bool> {
+    let rows = db.query(
+        "SELECT role, COALESCE(status, '') FROM docs WHERE path = ?1 LIMIT 1;",
+        [path],
+    )?;
+    Ok(rows.rows.first().map(|row| {
+        matches!(cell(row, 0), "decisions" | "decision")
+            && cell(row, 1).eq_ignore_ascii_case("accepted")
+    }) == Some(true))
+}
+
+fn accepted_decision_body_changed(db: &SqliteConnection, root: &Path, path: &str, current: &str) -> Result<bool> {
+    let rows = db.query("SELECT role, COALESCE(status, ''), body_tokens FROM docs WHERE path = ?1", [path])?;
+    let Some(row) = rows.rows.first().filter(|row| matches!(cell(row, 0), "decisions" | "decision")) else {
+        return Ok(false);
+    };
+    let prefix = crate::git::run_git_capture(root, &["rev-parse", "--show-prefix"]).unwrap_or_default();
+    let old = std::process::Command::new("git")
+        .args(["show", &format!("HEAD:{prefix}{path}")])
+        .current_dir(root)
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok());
+    let old = old.as_deref().unwrap_or(cell(row, 2));
+    let before = parse_doc_text(path, old);
+    let after = parse_doc_text(path, current);
+    let accepted = cell(row, 1).eq_ignore_ascii_case("accepted")
+        || before.frontmatter.get("status").map(|status| status.eq_ignore_ascii_case("accepted")).unwrap_or(false)
+        || after.frontmatter.get("status").map(|status| status.eq_ignore_ascii_case("accepted")).unwrap_or(false);
+    Ok(accepted && before.body_text.trim_start_matches('\n') != after.body_text.trim_start_matches('\n'))
 }
 
 fn hook_constraints(db: &SqliteConnection, path: &str) -> Result<Vec<String>> {
@@ -121,8 +167,13 @@ fn hook_constraints(db: &SqliteConnection, path: &str) -> Result<Vec<String>> {
             3
         };
         let section = evidence["section"].as_str().unwrap_or_default();
-        let snippet = crate::render::local_anchor_names(&hook_kwic(cell(row, 9), cell(row, 8)), path);
-        let snippet = if cell(row, 10).is_empty() { snippet } else { format!("{}; {}", snippet, cell(row, 10)) };
+        let snippet = crate::render::local_anchor_names(
+            &crate::render::preferred_excerpt(cell(row, 9), "", &[path, cell(row, 5)], cell(row, 8), 180),
+            path,
+        );
+        let snippet = if cell(row, 10).is_empty() { snippet } else {
+            format!("{}; {}", snippet.trim_end_matches(['.', '。', '!', '?', '！', '？']), cell(row, 10))
+        };
         let prefix = if constraint { "Constraint:" } else { "Related ~:" };
         let line = if section.is_empty() {
             format!("{prefix} {doc}: {snippet}")
@@ -134,17 +185,6 @@ fn hook_constraints(db: &SqliteConnection, path: &str) -> Result<Vec<String>> {
     candidates.sort_by(|left, right| (&left.0, &left.1, &left.2).cmp(&(&right.0, &right.1, &right.2)));
     candidates.dedup_by(|left, right| left.1 == right.1);
     Ok(candidates.into_iter().map(|(_, _, line)| line).collect())
-}
-
-fn hook_kwic(body: &str, fallback: &str) -> String {
-    let text = if body.trim().is_empty() { fallback } else { body };
-    compact(
-        text.split(|ch| matches!(ch, '!' | '?' | '。' | '！' | '？' | '\n'))
-            .map(str::trim)
-            .find(|part| !part.is_empty() && !part.starts_with('#'))
-            .unwrap_or(text),
-        180,
-    )
 }
 
 fn limit_hook_line(line: &str) -> String {

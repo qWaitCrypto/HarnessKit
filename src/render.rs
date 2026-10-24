@@ -5,8 +5,8 @@ mod json;
 
 pub(crate) use code_context::{print_code_context_with_options, print_diff_context_with_options};
 pub(crate) use contract::{
-    compact, cursor_for_offset, cursor_offset, edge_badge, freshness_badge, highlight,
-    kwic_excerpt, local_anchor_names, merge_names, paginate_lines, short_hint, token_cost,
+    compact, constraint_score, cursor_for_offset, cursor_offset, edge_badge, freshness_badge, highlight,
+    kwic_excerpt, local_anchor_names, merge_names, paginate_lines, preferred_excerpt, short_hint, token_cost,
     RenderLine, RenderOptions, RenderedPage,
 };
 
@@ -909,7 +909,7 @@ pub(crate) fn print_context_packet_with_options(
         packet.anchor.path, packet.anchor.role, packet.anchor.title
     )));
     let excerpt = if input == packet.anchor.path && !packet.anchor.summary.is_empty() {
-        kwic_excerpt(&packet.anchor.summary, "", &packet.anchor.title, 160)
+        compact(&packet.anchor.summary, 160)
     } else if !packet.anchor.snippet.is_empty() {
         highlight(&packet.anchor.snippet, input)
     } else {

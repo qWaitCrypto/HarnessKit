@@ -205,6 +205,32 @@ fn hooks_read_claude_json_deduplicate_and_report_drift() {
 }
 
 #[test]
+fn accepted_decision_hooks_warn_on_body_edits_and_ignore_metadata_only_changes() {
+    let repo = project();
+    let path = "docs/decisions/ownership.md";
+    let original = "---\nstatus: accepted\nauthority: canonical\n---\n\n# Ownership\n\nThe caller must handle failures.\n";
+    write(&repo, path, original);
+    commit_all(&repo, "Accept ownership");
+    repo.run(&["index"]);
+    let reminder = "accepted decision changed — confirm with the user / supersede instead";
+    let pre = direct_hook(&repo, "pre-edit", path);
+    assert!(pre.contains(reminder), "{pre}");
+    assert_eq!(pre.lines().count(), 1);
+    write(&repo, path, &original.replace("authority: canonical", "authority: supporting"));
+    assert!(direct_hook(&repo, "post-edit", path).is_empty());
+    write(&repo, path, &original.replace("must handle", "must ignore"));
+    let post = hook(&repo, "post-edit", "decision-body", path, Some("PostToolUse"));
+    let post: Value = serde_json::from_str(&post).unwrap();
+    assert_eq!(post["hookSpecificOutput"]["additionalContext"], reminder);
+
+    write(&repo, path, original);
+    repo.run(&["index"]);
+    fs::remove_dir_all(repo.root.join(".git")).unwrap();
+    write(&repo, path, &original.replace("must handle", "must ignore"));
+    assert_eq!(direct_hook(&repo, "post-edit", path).trim(), reminder);
+}
+
+#[test]
 fn install_hooks_previews_then_backs_up_existing_settings() {
     let repo = project();
     let preview = repo.run(&["install", "--hooks", "."]);

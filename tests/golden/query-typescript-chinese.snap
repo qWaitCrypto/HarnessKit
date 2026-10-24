@@ -1,5 +1,5 @@
 1. symbol web/cache.ts: cacheTtl, legacyCache, normalizeKey — function cacheTtl(age: number): number; function legacyCache(): number; function normalizeKey(key: string): string
    ↳ notes docs/notes/typescript-pitfalls.md §边界检查; 旧接口; 规范化: `cacheTtl` 需要覆盖边界值。 `legacyCache` 将被删除。 `normalizeKey` 保持独立，移动时保持逻辑。
    ↳ decisions docs/decisions/typescript.md §缓存有效期: `cacheTtl` 在输入值上增加 60。
-2. decisions docs/decisions/typescript.md §缓存续期决策 — # «缓存续期»决策
-3. notes docs/notes/typescript-pitfalls.md §缓存续期经验 — # «缓存续期»经验
+2. decisions docs/decisions/typescript.md §缓存续期决策 — «缓存续期»的确定性规则。
+3. notes docs/notes/typescript-pitfalls.md §缓存续期经验 — «缓存续期»的维护经验。

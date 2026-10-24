@@ -38,12 +38,12 @@ fn changelog_mentions_do_not_seal_while_decision_anchors_still_drift() {
     write(
         &repo,
         "CHANGELOG.md",
-        "# Changelog\n\nThe release mentions `src/policy.rs#policy`.\n",
+        "# Changelog\n\nThe release mentions src/policy.rs#policy.\n",
     );
     write(
         &repo,
         "docs/decisions/policy.md",
-        "---\nstatus: accepted\n---\n\n# Policy\n\nThe current rule is `src/policy.rs#policy`.\n",
+        "---\nstatus: accepted\n---\n\n# Policy\n\nThe current rule is src/policy.rs#policy.\n",
     );
 
     repo.run(&["index"]);

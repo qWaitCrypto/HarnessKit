@@ -12,6 +12,7 @@ use crate::discover::{is_ignored, is_markdown};
 use crate::git::{git_repo_check, ignored_paths, run_git_capture};
 use crate::history::HistorySnapshot;
 use crate::knowledge::{read_anchor_lock, AnchorState, LockEntry};
+use crate::parse::parse_doc_text;
 use crate::schema::Schema;
 use crate::sqlite::SqliteConnection;
 use crate::Result;
@@ -53,6 +54,7 @@ pub(crate) struct ImpactTotals {
     pub(crate) covered: usize,
     pub(crate) uncovered: usize,
     pub(crate) drifting_anchors: usize,
+    pub(crate) accepted_decisions_changed: usize,
 }
 
 #[derive(Serialize)]
@@ -63,9 +65,16 @@ pub(crate) struct DiffContext {
     pub(crate) includes_worktree: bool,
     pub(crate) files: Vec<FileImpact>,
     pub(crate) predicted_drift: Vec<AnchorState>,
+    pub(crate) accepted_decision_changes: Vec<AcceptedDecisionChange>,
     pub(crate) uncovered_regions: Vec<CodeRegion>,
     pub(crate) totals: ImpactTotals,
     pub(crate) truncated: BTreeMap<String, usize>,
+}
+
+#[derive(Clone, Serialize)]
+pub(crate) struct AcceptedDecisionChange {
+    pub(crate) path: String,
+    pub(crate) message: &'static str,
 }
 
 pub(crate) fn build_diff_context(
@@ -76,7 +85,7 @@ pub(crate) fn build_diff_context(
     locks: &[LockEntry],
 ) -> Result<DiffContext> {
     let graph = CodeGraph::load(db, locks)?;
-    let (baseline, changes) = git_changes(root, schema, revision)?;
+    let (baseline, changes, mut accepted_decision_changes) = git_changes(root, schema, revision)?;
     let mut files = Vec::new();
     let mut uncovered_regions = Vec::new();
     let mut affected = Vec::new();
@@ -152,6 +161,8 @@ pub(crate) fn build_diff_context(
         .collect::<Vec<_>>();
     totals.files = files.len();
     totals.drifting_anchors = predicted_drift.len();
+    totals.accepted_decisions_changed = accepted_decision_changes.len();
+    cap(&mut accepted_decision_changes, DOC_LIMIT, "accepted_decision_changes", &mut truncated);
     cap(&mut files, FILE_LIMIT, "files", &mut truncated);
     cap(
         &mut uncovered_regions,
@@ -172,6 +183,7 @@ pub(crate) fn build_diff_context(
         includes_worktree: true,
         files,
         predicted_drift,
+        accepted_decision_changes,
         uncovered_regions,
         totals,
         truncated,
@@ -189,7 +201,7 @@ fn git_changes(
     root: &Path,
     schema: &Schema,
     revision: Option<&str>,
-) -> Result<(String, Vec<RawChange>)> {
+) -> Result<(String, Vec<RawChange>, Vec<AcceptedDecisionChange>)> {
     validate_diff_repository(root)?;
     let baseline = match revision {
         Some(revision) => run_git_capture(
@@ -240,15 +252,24 @@ fn git_changes(
         .into_iter()
         .collect::<BTreeSet<_>>();
     let mut changes = Vec::new();
+    let mut accepted_decision_changes = Vec::new();
     for record in records.chunks_exact(2) {
         let path = String::from_utf8_lossy(record[1]).into_owned();
-        if is_markdown(&path)
-            || is_ignored(schema, &path)
+        if is_ignored(schema, &path)
             || ignored.contains(&path)
             || path
                 .split('/')
                 .any(|part| matches!(part, ".git" | ".harnesskit"))
         {
+            continue;
+        }
+        if is_markdown(&path) {
+            if accepted_decision_body_changed(root, schema, &baseline, &prefix, &path)? {
+                accepted_decision_changes.push(AcceptedDecisionChange {
+                    path,
+                    message: crate::lifecycle::ACCEPTED_DECISION_CHANGED,
+                });
+            }
             continue;
         }
         let old_bytes = Command::new("git")
@@ -352,7 +373,58 @@ fn git_changes(
         });
     }
     changes.sort_by(|a, b| a.path.cmp(&b.path));
-    Ok((baseline, changes))
+    Ok((baseline, changes, accepted_decision_changes))
+}
+
+fn accepted_decision_body_changed(
+    root: &Path,
+    schema: &Schema,
+    baseline: &str,
+    prefix: &str,
+    path: &str,
+) -> Result<bool> {
+    let old_output = Command::new("git")
+        .args(["show", &format!("{baseline}:{prefix}{path}")])
+        .current_dir(root)
+        .output()?;
+    let old = old_output.status.success().then_some(old_output.stdout);
+    let new = std::fs::read(root.join(path)).ok();
+    let decode = |bytes: &Option<Vec<u8>>| {
+        bytes.as_ref().and_then(|bytes| {
+            if bytes.contains(&0) {
+                None
+            } else {
+                std::str::from_utf8(bytes).ok().map(str::to_string)
+            }
+        })
+    };
+    let Some(old_text) = decode(&old) else {
+        return Ok(false);
+    };
+    let Some(new_text) = (if new.is_none() { Some(String::new()) } else { decode(&new) }) else {
+        return Ok(false);
+    };
+    let old_doc = parse_doc_text(path, &old_text);
+    let new_doc = parse_doc_text(path, &new_text);
+    if old_doc.body_text.trim_start_matches('\n') == new_doc.body_text.trim_start_matches('\n') {
+        return Ok(false);
+    }
+    Ok(is_accepted_decision(schema, path, &old_text)
+        || is_accepted_decision(schema, path, &new_text))
+}
+
+fn is_accepted_decision(schema: &Schema, path: &str, text: &str) -> bool {
+    let parsed = parse_doc_text(path, text);
+    parsed
+        .frontmatter
+        .get("status")
+        .map(|status| status.eq_ignore_ascii_case("accepted"))
+        .unwrap_or(false)
+        && crate::discover::infer_index_role(
+            schema,
+            path,
+            crate::discover::collection_name_for_path(schema, path).as_deref(),
+        ) == "decisions"
 }
 
 fn touched_regions(
@@ -454,7 +526,7 @@ pub(super) fn snapshot_code_changes(
         summary.hint =
             Some("The old snapshot has no code fingerprints; falling back to its Git HEAD may include edits that were already uncommitted at snapshot time.");
         match git_changes(root, schema, Some(head)) {
-            Ok((_, changes)) => changes
+            Ok((_, changes, _)) => changes
                 .into_iter()
                 .flat_map(|change| change.regions)
                 .collect(),

@@ -620,7 +620,7 @@ pub(crate) fn snippet_for_doc(
     let mut current_heading = String::new();
     let mut frontmatter = false;
     let mut best = (String::new(), String::new(), String::new());
-    let mut best_count = 0;
+    let mut best_score = (0, 0, false);
     for (index, line) in text.lines().enumerate() {
         let trimmed = line.trim();
         if index == 0 && trimmed == "---" {
@@ -642,7 +642,9 @@ pub(crate) fn snippet_for_doc(
             .filter_map(|term| matching_offset(&lower, term))
             .collect::<Vec<_>>();
         let count = offsets.len();
-        if count > best_count {
+        let score = (count, crate::render::constraint_score(&lower),
+            trimmed.contains('/') && !trimmed.contains("://"));
+        if count > 0 && score > best_score {
             let first_match = *offsets.iter().min().unwrap();
             // Lowercasing can expand a character (e.g. İ -> i + combining dot).
             // Translate the match back to the original line before slicing it.
@@ -660,7 +662,7 @@ pub(crate) fn snippet_for_doc(
                 format!("line {}", index + 1),
                 truncate_snippet(trimmed, char_offset, 220),
             );
-            best_count = count;
+            best_score = score;
         }
     }
     best

@@ -117,6 +117,12 @@ pub(crate) fn print_diff_context_with_options(
             packet.totals.uncovered
         )),
     ];
+    for change in &packet.accepted_decision_changes {
+        lines.push(RenderLine::content(format!(
+            "- {}: {}",
+            change.path, change.message
+        )));
+    }
     for file in &packet.files {
         lines.push(RenderLine::content(format!(
             "- {} [{}; {}]: {}",

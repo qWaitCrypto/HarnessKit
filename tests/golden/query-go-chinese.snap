@@ -1,5 +1,5 @@
 1. symbol gateway/limit.go: legacyLimit, limitRequests, normalizeRoute — func limitRequests(count int) int; func legacyLimit() int; func normalizeRoute(route string) string
    ↳ notes docs/notes/go-pitfalls.md §边界检查; 旧接口; 规范化: `limitRequests` 需要覆盖边界值。 `legacyLimit` 将被删除。 `normalizeRoute` 保持独立，移动时保持逻辑。
    ↳ decisions docs/decisions/go.md §请求限流: `limitRequests` 在输入值上增加 60。
-2. decisions docs/decisions/go.md §网关限流决策 — # «网关限流»决策
-3. notes docs/notes/go-pitfalls.md §网关限流经验 — # «网关限流»经验
+2. decisions docs/decisions/go.md §网关限流决策 — «网关限流»的确定性规则。
+3. notes docs/notes/go-pitfalls.md §网关限流经验 — «网关限流»的维护经验。

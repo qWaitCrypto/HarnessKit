@@ -44,7 +44,7 @@ fn has_explanation(text: &str) -> bool {
 #[test]
 fn bundled_skill_is_short_and_versioned_with_the_cli() {
     let text = include_str!("../agent-surfaces/skills/harnesskit/SKILL.md");
-    assert!(text.lines().count() <= 60);
+    assert!(text.lines().count() <= 35);
     let header: Value = serde_yaml::from_str(text.split("---").nth(1).unwrap()).unwrap();
     assert_eq!(header["metadata"]["version"], env!("CARGO_PKG_VERSION"));
     assert!(Path::new(env!("CARGO_MANIFEST_DIR"))

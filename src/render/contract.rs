@@ -304,27 +304,56 @@ pub(crate) fn highlight_terms(text: &str, terms: &[String]) -> String {
 }
 
 pub(crate) fn kwic_excerpt(text: &str, query: &str, fallback: &str, max_chars: usize) -> String {
+    let fallback = if text.trim().is_empty() { fallback } else { "" };
+    highlight(&preferred_excerpt(text, query, &[], fallback, max_chars), query)
+}
+
+/// Prefer the actual rule or code reference within the selected section. Query
+/// coverage still leads; headings are useful only when the prose has no hit or
+/// constraint. Anchors are supplied by reverse context and related-code links.
+pub(crate) fn preferred_excerpt(
+    text: &str,
+    query: &str,
+    anchors: &[&str],
+    fallback: &str,
+    max_chars: usize,
+) -> String {
     let terms = query_tokens_for_render(query);
-    let mut best = None::<(String, usize)>;
+    let mut best = None::<(String, (bool, usize, usize, usize))>;
     for sentence in sentences(text)
         .into_iter()
         .flat_map(fenced_candidates)
     {
         let lower = sentence.to_lowercase();
+        let prose = !sentence.trim_start().starts_with('#');
+        if !prose && !fallback.is_empty() {
+            continue;
+        }
         let count = terms
             .iter()
             .filter(|term| crate::query::matching_offset(&lower, term).is_some())
             .count();
-        if count > 0
+        let constraints = if prose { constraint_score(&lower) } else { 0 };
+        let anchored = usize::from(prose && (anchors.iter().any(|anchor| {
+            !anchor.is_empty() && sentence.contains(anchor)
+        }) || sentence.split_whitespace().any(|word| {
+            word.contains('/') && !word.contains("://")
+                && (word.contains('#') || word.rsplit('/').next().unwrap_or("").contains('.'))
+        })));
+        let score = (prose && count > 0, if prose { count } else { 0 }, constraints, anchored);
+        if (count > 0 || constraints > 0 || anchored > 0)
             && best
                 .as_ref()
-                .map(|(_, score)| count > *score)
+                .map(|(_, previous)| score > *previous)
                 .unwrap_or(true)
         {
-            best = Some((sentence, count));
+            best = Some((sentence, score));
         }
     }
     let chosen = best.map(|(sentence, _)| sentence).unwrap_or_else(|| {
+        if !fallback.is_empty() {
+            return fallback.to_string();
+        }
         text.lines()
             .map(str::trim)
             .find(|line| !line.is_empty() && !line.starts_with("```"))
@@ -363,7 +392,15 @@ pub(crate) fn kwic_excerpt(text: &str, query: &str, fallback: &str, max_chars: u
     if start > 0 {
         excerpt.insert(0, '…');
     }
-    highlight(&excerpt, query)
+    excerpt
+}
+
+pub(crate) fn constraint_score(text: &str) -> usize {
+    let words = text.split(|ch: char| !ch.is_alphabetic()).collect::<BTreeSet<_>>();
+    ["must", "never", "only", "not", "cannot", "shall"]
+        .iter().filter(|word| words.contains(**word)).count()
+        + usize::from(words.contains("returns") && words.contains("caller"))
+        + ["必须", "不得", "禁止", "只能"].iter().filter(|word| text.contains(**word)).count()
 }
 
 fn fenced_candidates(sentence: &str) -> impl Iterator<Item = String> + '_ {

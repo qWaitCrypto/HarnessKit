@@ -33,3 +33,9 @@ How this repository uses HarnessKit docs.
 - Use `{{docs_root}}/templates/` when a focused doc is missing
 - Update the relevant collection index when a doc becomes a repeated reading entrypoint
 - Prefer replacing stale docs over leaving contradictions
+
+## Focused Documents
+
+Follow `AGENTS.md` or `CLAUDE.md` -> `{{architecture_path}}` -> `{{manifest_path}}` -> the relevant collection index -> the focused document.
+
+When a document is missing, start from its collection's template in `{{docs_root}}/templates/`, keep it narrow and task-scoped, then add its link to the collection index. Collection defaults and templates are listed in the docs manifest; the schema defines allowed frontmatter.

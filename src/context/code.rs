@@ -33,6 +33,8 @@ pub(crate) struct CodeDocument {
     pub(crate) status: String,
     pub(crate) lifecycle: String,
     pub(crate) summary: String,
+    #[serde(skip_serializing)]
+    body: String,
     pub(crate) constrains: bool,
     pub(crate) active_plan: bool,
     pub(crate) links: Vec<CodeLink>,
@@ -73,7 +75,7 @@ impl CodeGraph {
         let states = anchor_states(db, locks)?;
         let artifact = read_index_artifact_from_fact_store(db)?;
         let successors = successor_map(&artifact.docs);
-        let sections = db.query("SELECT n.id, n.path, n.name, COALESCE(s.summary, d.summary, '')
+        let sections = db.query("SELECT n.id, n.path, n.name, COALESCE(s.summary, d.summary, ''), COALESCE(s.body, d.body_tokens, '')
             FROM nodes n LEFT JOIN doc_sections s ON s.node_id = n.id LEFT JOIN docs d ON d.path = n.path
             WHERE n.kind IN ('doc', 'section') ORDER BY n.id;", [])?;
         let mut documents = BTreeMap::new();
@@ -104,6 +106,7 @@ impl CodeGraph {
                     active_plan: is_active_plan(doc, next),
                     lifecycle,
                     summary: cell(row, 3).chars().take(240).collect(),
+                    body: cell(row, 4).to_string(),
                     links: Vec::new(),
                     links_total: 0,
                 },
@@ -207,6 +210,12 @@ impl CodeGraph {
             }
         }
         let mut docs = found.into_values().collect::<Vec<_>>();
+        for doc in &mut docs {
+            let anchors = doc.links.iter().flat_map(|link| {
+                [link.code.path.as_str(), link.code.name.as_str()]
+            }).collect::<Vec<_>>();
+            doc.summary = crate::render::preferred_excerpt(&doc.body, "", &anchors, &doc.summary, 240);
+        }
         docs.sort_by(|a, b| a.priority().cmp(&b.priority()));
         docs
     }

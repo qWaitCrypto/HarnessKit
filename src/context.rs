@@ -42,7 +42,7 @@ pub(crate) fn context_packet_for_doc(
     doc_path: &str,
 ) -> Result<ContextPacket> {
     let doc = db.query(
-        "SELECT path, title, role, COALESCE(status, ''), summary, incoming_links
+        "SELECT path, title, role, COALESCE(status, ''), summary, incoming_links, body_tokens
          FROM docs WHERE path = ?1;",
         [doc_path],
     )?;
@@ -51,6 +51,12 @@ pub(crate) fn context_packet_for_doc(
     };
     let snippet = snippet_for_doc(target_dir, doc_path, doc_path);
     let superseded_by = superseded_by(db, doc_path)?;
+    let anchored = !db.query(
+        "SELECT 1 FROM edges e JOIN nodes n ON n.id = e.src JOIN nodes t ON t.id = e.dst
+         WHERE n.path = ?1 AND t.kind IN ('file', 'symbol')
+           AND e.kind IN ('anchor', 'mention') LIMIT 1;",
+        [doc_path],
+    )?.rows.is_empty();
     let anchor = QueryCandidate {
         path: cell(row, 0).to_string(),
         title: cell(row, 1).to_string(),
@@ -58,7 +64,11 @@ pub(crate) fn context_packet_for_doc(
         status: cell(row, 3).to_string(),
         score: format!("{:.2}", cell(row, 5).parse::<f32>().unwrap_or(0.0) * 0.05),
         why: "context anchor".to_string(),
-        summary: cell(row, 4).to_string(),
+        summary: if anchored {
+            crate::render::preferred_excerpt(cell(row, 6), "", &[], cell(row, 4), 240)
+        } else {
+            cell(row, 4).to_string()
+        },
         neighbors: Vec::new(),
         snippet_heading: snippet.0,
         snippet_location: snippet.1,

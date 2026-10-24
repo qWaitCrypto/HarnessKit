@@ -902,7 +902,7 @@ fn replace_anchor_code_spans(text: &str, replacements: &BTreeMap<String, String>
         output.replace_range(start..end, &replacement);
     }
     let _ = frontmatter;
-    output
+    crate::anchors::replace_prose_references(&output, replacements)
 }
 
 #[cfg(test)]

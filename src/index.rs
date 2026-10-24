@@ -25,7 +25,7 @@ use crate::schema::{core_file_rel_path, DocCollectionSpec, Schema};
 use crate::sqlite::{QueryResult, SqliteConnection};
 use crate::Result;
 
-pub(crate) const FACT_SCHEMA_VERSION: &str = "12";
+pub(crate) const FACT_SCHEMA_VERSION: &str = "13";
 
 #[derive(Clone, Default, Serialize)]
 pub(crate) struct IndexedDoc {
@@ -1000,6 +1000,7 @@ fn initialize_fact_store(db: &SqliteConnection) -> Result<()> {
             line INTEGER NOT NULL,
             column_number INTEGER NOT NULL,
             text TEXT NOT NULL,
+            prose INTEGER NOT NULL DEFAULT 0,
             PRIMARY KEY (doc_path, span_index)
          ) WITHOUT ROWID;
          CREATE TABLE IF NOT EXISTS headings (

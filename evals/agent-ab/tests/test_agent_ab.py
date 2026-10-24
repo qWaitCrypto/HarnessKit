@@ -317,6 +317,14 @@ def test_prompts_and_queue_indexes_do_not_reveal_scenario_answers(repositories):
     assert not re.search('结算|settlement', SCENARIOS['S3'].prompt, re.I)
     assert not re.search('结算|settlement', SCENARIOS['S2'].prompt, re.I)
     assert '订单列表' in SCENARIOS['S2'].prompt and 'v8' in SCENARIOS['S2'].prompt
+    cache_note = (repositories['S2'] / 'docs/notes/cache-observation.md').read_text()
+    assert 'order-list reader' in cache_note and 'settlement summaries' in cache_note
+    assert 'must move together to v8' in cache_note
+    assert 'same batch' in cache_note and 'published by billing' in cache_note
+    assert 'must keep reading retained' in cache_note and 'v7 exports' in cache_note
+    for path in (repositories['S2'] / 'docs').rglob('*.md'):
+        if path.name != 'cache-observation.md':
+            assert 'must move together to v8' not in path.read_text(), path
     assert not re.search('现在|现行|current', SCENARIOS['S5'].prompt, re.I)
     for path in ['docs/index.md', 'docs/design-docs/index.md']:
         text = (repositories['S5'] / path).read_text()

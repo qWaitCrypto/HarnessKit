@@ -660,7 +660,7 @@ fn looks_like_commit(value: &str) -> bool {
 fn refresh_mentions(db: &SqliteConnection) -> Result<()> {
     let spans = db.query(
         "SELECT doc_path, src, section, line, column_number, text
-         FROM inline_code_spans ORDER BY doc_path, span_index;",
+         FROM inline_code_spans WHERE prose = 0 ORDER BY doc_path, span_index;",
         [],
     )?;
     let anchor_spans = db

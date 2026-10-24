@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
+use serde_json::Value;
 use support::{assert_success, TestRepo};
 
 fn file_contents(root: &Path, dir: &Path) -> BTreeMap<String, Vec<u8>> {
@@ -131,4 +132,23 @@ fn docs_root_override_survives_project_schema_reload() {
     let snapshot = repo.run(&["history", "snapshot", "-m", "custom docs root"]);
     assert!(snapshot.contains("Created HarnessKit history snapshot"));
     assert!(repo.run(&["history", "status"]).contains("dirty=no"));
+}
+
+#[test]
+fn collection_indexes_are_short_manifests_without_repeated_workflow_boilerplate() {
+    let repo = TestRepo::new(None);
+    repo.run(&["init", "--tracked"]);
+    let decision_index = fs::read_to_string(repo.root.join("docs/decisions/index.md")).unwrap();
+    assert_eq!(decision_index, include_str!("golden/init-decisions-index.snap"));
+    let schema: Value = serde_yaml::from_str(&fs::read_to_string(repo.root.join(".harnesskit/schema.yaml")).unwrap()).unwrap();
+    let mut purposes = std::collections::BTreeSet::new();
+    for collection in schema["doc_collections"].as_object().unwrap().values() {
+        let index = fs::read_to_string(repo.root.join("docs").join(collection["path"].as_str().unwrap()).join("index.md")).unwrap();
+        let nonempty = index.lines().filter(|line| !line.is_empty()).collect::<Vec<_>>();
+        assert_eq!(nonempty.len(), 3, "{index}");
+        assert!(nonempty[0].starts_with("# ") && nonempty[2].starts_with("- "));
+        assert!(purposes.insert(nonempty[1].to_string()), "{index}");
+    }
+    let rules = fs::read_to_string(repo.root.join("docs/DOCUMENTATION_SYSTEM.md")).unwrap();
+    assert!(rules.contains("keep it narrow and task-scoped"));
 }

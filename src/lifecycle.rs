@@ -2,6 +2,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::index::IndexedDoc;
 
+pub(crate) const ACCEPTED_DECISION_CHANGED: &str =
+    "accepted decision changed — confirm with the user / supersede instead";
+
 pub(crate) fn path_status(path: &str) -> Option<&'static str> {
     // A historical directory wins if a nested path also contains `active`.
     let parts = path

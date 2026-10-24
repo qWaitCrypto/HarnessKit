@@ -407,6 +407,32 @@ fn section_summaries_and_bridge_vocabulary_stay_with_their_own_first_paragraph_o
 }
 
 #[test]
+fn context_and_query_prefer_the_constraint_sentence_within_the_anchored_section() {
+    let repo = TestRepo::new(None);
+    write(&repo, "src/auth/session.rs", "pub fn renew_session() {}\n");
+    write(&repo, "docs/decisions/ownership.md", concat!(
+        "---\nstatus: accepted\n---\n# Session ownership\n\nA general introduction.\n\n",
+        "## Policy\n\nThe renewal operation handles session requests.\n\n",
+        "The renewal operation returns any failure to its caller; the caller owns retry policy.\n\n",
+        "It is implemented by src/auth/session.rs#renew_session.\n\n",
+        "## Other policy\n\nOther callers must never delete records.\n",
+    ));
+    let expected = "The renewal operation returns any failure to its caller; the caller owns retry policy.";
+    let context: Value = serde_json::from_str(&repo.run(&["context", "--for", "src/auth/session.rs", "--json"])).unwrap();
+    assert_eq!(context["documents"][0]["summary"], expected, "{context}");
+    let results = query(&repo, "renewal operation", &["--docs"]);
+    let policy = nodes(&results).into_iter().find(|node| node["heading"] == "Policy").unwrap();
+    assert_eq!(policy["summary"], expected, "{results}");
+    let text = repo.run(&["query", "renewal operation", "--docs"]);
+    assert!(text.contains("returns any failure to its caller"), "{text}");
+    assert!(!text.contains("handles session requests"), "{text}");
+    let hook = repo.command(&["hook", "pre-edit", "src/auth/session.rs"]).stdin(std::process::Stdio::null()).output().unwrap();
+    assert_success(&hook, &["hook", "pre-edit"]);
+    let hook = String::from_utf8(hook.stdout).unwrap();
+    assert!(hook.contains("returns any failure to its caller"), "{hook}");
+}
+
+#[test]
 fn summaries_skip_html_and_badges_and_upgrade_pre_fix_cached_documents() {
     let repo = TestRepo::new(None);
     write(&repo, "src/engine.rs", "pub fn engine() {}\n");

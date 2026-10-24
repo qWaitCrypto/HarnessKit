@@ -170,6 +170,12 @@ reviews worktree changes or a revision against `HEAD`, including uncovered code
 and anchors that may drift. `--current` also reports code regions since the last
 snapshot.
 
+Context snippets are reading pointers. Read the entire section that states a
+constraint before editing its code. A feature request does not revoke an accepted
+decision: use its allowed caller or boundary, or name the decision path and
+implementation/replacement options. Never rewrite an accepted body to justify
+code; obtain explicit user consent and create a superseding decision to replace it.
+
 #### Anchors and hooks
 
 ```bash

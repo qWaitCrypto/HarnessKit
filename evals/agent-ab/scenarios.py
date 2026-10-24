@@ -797,8 +797,9 @@ def _topic_docs() -> dict[str, str]:
             The order-list reader takes its namespace from
             `src/cache/keys.rs#CACHE_NAMESPACE_VERSION`; settlement summaries
             select theirs in `src/cache/settlement.rs#CACHE_NAMESPACE_VERSION`.
-            Both selectors were still v7 in the on-call sample. The report tool
-            reads retained v7 exports for the historical finance audit.
+            Both readers must move together to v8 because they read the same batch
+            of rows published by billing. The report tool must keep reading retained
+            v7 exports for the historical finance audit.
 
             See [cache layout](../design-docs/cache-layout.md) for the key shape.
         """,

@@ -4,4 +4,4 @@ Context --diff HEAD + working tree: Changed code: 1 files, 1 regions (covered 1,
 Predicted anchor issues: 2
 - docs/decisions/rust.md `refresh_token` ⚠drift — code changed since review; confirm the document constraints.
 - docs/notes/rust-pitfalls.md `refresh_token` ⚠drift — code changed since review; confirm the document constraints.
-Hint: Drift prediction uses the saved anchor fingerprints; editing the document alongside its code automatically confirms the updated anchor.
+Hint: Drift prediction uses saved anchor fingerprints; confirm changed constraints with the user before acknowledging them.

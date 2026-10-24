@@ -309,12 +309,13 @@ impl Graph {
         })
     }
 
-    fn bundle_node(&self, db: &SqliteConnection, id: &str) -> Result<BundleNode> {
+    fn bundle_node(&self, db: &SqliteConnection, id: &str, query: &str) -> Result<BundleNode> {
         let mut node = self.nodes[id].clone();
         let rows = db.query(
             "SELECT n.span_start, n.span_end, n.lang, n.signature, n.doc_comment,
                     COALESCE(d.title, ''), COALESCE(d.role, n.kind), COALESCE(d.status, ''),
-                    COALESCE(s.heading, ''), COALESCE(s.summary, d.summary, '')
+                    COALESCE(s.heading, ''), COALESCE(s.summary, d.summary, ''),
+                    COALESCE(s.body, d.body_tokens, '')
              FROM nodes n LEFT JOIN docs d ON d.path = n.path
              LEFT JOIN doc_sections s ON s.node_id = n.id WHERE n.id = ?1",
             [id],
@@ -343,6 +344,9 @@ impl Graph {
             node.role = cell(row, 6).to_string();
             node.status = cell(row, 7).to_string();
             node.heading = cell(row, 8).to_string();
+            if !node.is_code() {
+                node.summary = crate::render::preferred_excerpt(cell(row, 10), query, &[], &node.summary, 440);
+            }
         }
         Ok(node)
     }
@@ -549,7 +553,7 @@ pub(crate) fn query_bundles(
         if rows.rows.len() == 1 {
             let id = cell(&rows.rows[0], 0);
             let graph = Graph::load_selected(db, Some(id))?;
-            let mut primary = graph.bundle_node(db, id)?;
+            let mut primary = graph.bundle_node(db, id, query)?;
             primary.match_info = Some(QueryMatch {
                 matched_terms: query_tokens(query),
                 missing_terms: Vec::new(),
@@ -571,8 +575,10 @@ pub(crate) fn query_bundles(
             if !graph.nodes.contains_key(&id) {
                 continue;
             }
-            let mut primary = graph.bundle_node(db, &id)?;
-            primary.summary = candidate.summary.clone();
+            let mut primary = graph.bundle_node(db, &id, query)?;
+            primary.summary = crate::render::preferred_excerpt(
+                &candidate.snippet, query, &[], &candidate.summary, 440,
+            );
             primary.match_info = candidate.match_info.clone();
             bundles.push(QueryBundle {
                 primary,
@@ -707,7 +713,7 @@ pub(crate) fn query_bundles(
             }
             covered.insert(neighbor.clone());
             let link = RelatedLink {
-                node: graph.bundle_node(db, &neighbor)?,
+                node: graph.bundle_node(db, &neighbor, query)?,
                 edge: graph.edges[edge].clone(),
                 freshness: graph.freshness_for(db, &neighbor)?,
             };
@@ -727,7 +733,7 @@ pub(crate) fn query_bundles(
         }
         covered.insert(id.clone());
         bundles.push(QueryBundle {
-            primary: graph.bundle_node(db, id)?,
+            primary: graph.bundle_node(db, id, query)?,
             related,
             score: format!("{score:.6}"),
             freshness: graph.freshness_for(db, id)?,

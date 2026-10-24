@@ -173,7 +173,7 @@ pub(crate) fn materialize_from_schema(
     }
 
     for spec in &schema.doc_collections {
-        let content = render_collection_index_template(schema, spec, &render_paths)?;
+        let content = render_collection_index_template(spec)?;
         record_write(
             write_if_allowed(
                 &docs_root_path.join(&spec.path).join("index.md"),
@@ -345,36 +345,14 @@ fn render_collection_rows(schema: &Schema) -> String {
     rows.join("\n")
 }
 
-fn render_collection_index_template(
-    schema: &Schema,
-    spec: &DocCollectionSpec,
-    paths: &RenderPaths,
-) -> Result<String> {
+fn render_collection_index_template(spec: &DocCollectionSpec) -> Result<String> {
     let raw = load_bundled_text("templates/core/collection-index.md.tpl")?;
     let title = collection_title(spec);
     let purpose = collection_purpose(spec);
-    let when_to_read = collection_when_to_read(spec);
-    let default_authority = spec.authority.as_deref().unwrap_or("unspecified");
-    let default_status = render_default_status(spec);
-    let anchor_guidance = if spec.anchor_candidate { "yes" } else { "no" };
-    let allowed_frontmatter = render_allowed_frontmatter(spec);
-    let template_path = format!("{}/templates/{}.md", schema.managed_root, spec.template);
-    let collection_repo_path = format!("{}/{}", schema.managed_root, spec.path);
-    let collection_index_path = format!("{}/index.md", collection_repo_path);
 
     Ok(raw
         .replace("{{collection_title}}", &title)
-        .replace("{{collection_repo_path}}", &collection_repo_path)
-        .replace("{{collection_purpose}}", &purpose)
-        .replace("{{collection_when_to_read}}", &when_to_read)
-        .replace("{{default_authority}}", default_authority)
-        .replace("{{default_status}}", default_status)
-        .replace("{{anchor_guidance}}", anchor_guidance)
-        .replace("{{template_path}}", &template_path)
-        .replace("{{allowed_frontmatter}}", &allowed_frontmatter)
-        .replace("{{architecture_path}}", &paths.architecture)
-        .replace("{{manifest_path}}", &paths.manifest)
-        .replace("{{collection_index_path}}", &collection_index_path))
+        .replace("{{collection_purpose}}", &purpose))
 }
 
 fn collection_label(name: &str, path: &str) -> String {
@@ -437,36 +415,8 @@ fn collection_purpose(spec: &DocCollectionSpec) -> String {
     }
 }
 
-fn collection_when_to_read(spec: &DocCollectionSpec) -> String {
-    match spec.name.as_str() {
-        "product_specs" => "- Read when you need expected behavior, scope, or user-facing intent.".to_string(),
-        "design_docs" => "- Read when you need architecture, tradeoffs, or implementation constraints.".to_string(),
-        "decisions" => "- Read when a prior decision may constrain the current task.".to_string(),
-        "exec_plans_active" => "- Read when the task is part of ongoing implementation work or may need resume support.".to_string(),
-        "exec_plans_completed" => "- Read only when current active docs are insufficient and historical execution context matters.".to_string(),
-        "worklog_active" => "- Read when you need recent validation, failures, or handoff details.".to_string(),
-        "worklog_archive" => "- Read only for historical traceability.".to_string(),
-        "operations" => "- Read when the task touches operating procedures or maintenance.".to_string(),
-        "generated" => "- Read only when you need generated evidence or inventories.".to_string(),
-        "references" => "- Read only when focused docs point here or external material is required.".to_string(),
-        _ => "- Read when this collection is the smallest relevant source of truth.".to_string(),
-    }
-}
-
 fn render_default_status(spec: &DocCollectionSpec) -> &str {
     spec.status.as_deref().unwrap_or("not set by default")
-}
-
-fn render_allowed_frontmatter(spec: &DocCollectionSpec) -> String {
-    if spec.allowed_frontmatter.is_empty() {
-        "none by default".to_string()
-    } else {
-        spec.allowed_frontmatter
-            .iter()
-            .map(|field| format!("`{}`", field))
-            .collect::<Vec<_>>()
-            .join(", ")
-    }
 }
 
 fn build_render_paths(schema: &Schema) -> RenderPaths {
