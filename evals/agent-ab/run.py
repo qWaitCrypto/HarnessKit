@@ -8,6 +8,7 @@ import concurrent.futures
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -23,6 +24,7 @@ from grader_support import extract_metrics, read_jsonl, snapshot_baseline  # noq
 from scenarios import (  # noqa: E402
     SCENARIOS,
     Scenario,
+    adopt_harnesskit,
     apply_recorded_solution,
     generate_repo,
     scenario_ids,
@@ -31,6 +33,8 @@ from scenarios import (  # noqa: E402
 
 
 MAX_TIMEOUT_SECONDS = 45 * 60
+# S7 starts from a genuinely old CLI, built once from this release tag.
+OLD_HARNESSKIT_TAG = "v0.1.0-alpha.6"
 FORBIDDEN_HOME_PARTS = re.compile(
     r"^(?:memories.*|sessions|skills|history.*|state.*\.sqlite(?:-shm|-wal)?|goals.*|thread_history.*)$",
     re.IGNORECASE,
@@ -39,11 +43,14 @@ FORBIDDEN_HOME_PARTS = re.compile(
 
 @dataclass
 class PreparedEnvironment:
+    shell_home: Path
     codex_home: Path
     path_bin: Path
     env: dict[str, str]
     harnesskit_binary: Path | None
     install_prefix: Path
+    shell_harnesskit_path: str
+    start_git_status: str
 
 
 def _repo_root() -> Path:
@@ -135,25 +142,52 @@ def _link_original_path(original_path: str, destination: Path) -> None:
                 pass
 
 
-def _assert_commands(env: dict[str, str], arm: str, binary: Path | None) -> None:
+def _old_harnesskit(repo_root: Path) -> Path:
+    """Build (once) and return the old release binary that S7 starts from."""
+
+    cache = repo_root / "target" / "e1-old" / OLD_HARNESSKIT_TAG
+    binary = cache / "target" / "release" / "harnesskit"
+    if binary.is_file():
+        return binary
+    source = cache / "src"
+    if not source.exists():
+        subprocess.run(["git", "-C", str(repo_root), "worktree", "add", "--detach", str(source), OLD_HARNESSKIT_TAG],
+                       check=True, capture_output=True, text=True, timeout=120)
+    subprocess.run(["cargo", "build", "--release", "--offline", "--target-dir", str(cache / "target")],
+                   cwd=source, check=True, capture_output=True, text=True, timeout=1200)
+    if not binary.is_file():
+        raise RuntimeError(f"old harnesskit build produced no binary: {binary}")
+    return binary
+
+
+def _assert_commands(env: dict[str, str], arm: str, binary: Path | None, repo: Path,
+                     expected_version: str = "harnesskit 0.2.0") -> str:
     harnesskit_result = subprocess.run(
-        ["bash", "-c", "command -v harnesskit"], env=env, text=True, capture_output=True, check=False
+        ["bash", "-lc", "command -v harnesskit; harnesskit --version"],
+        cwd=repo, env=env, text=True, capture_output=True, timeout=30, check=False,
     )
-    codex_result = subprocess.run(
-        ["bash", "-c", "command -v codex"], env=env, text=True, capture_output=True, check=False
+    tools_result = subprocess.run(
+        ["bash", "-lc", "command -v codex cargo"],
+        cwd=repo, env=env, text=True, capture_output=True, timeout=30, check=False,
     )
-    harnesskit_path = harnesskit_result.stdout.strip()
-    codex_path = codex_result.stdout.strip()
+    lines = harnesskit_result.stdout.splitlines()
+    harnesskit_path = lines[0] if lines else ""
+    tool_paths = tools_result.stdout.splitlines()
+    if tools_result.returncode != 0 or len(tool_paths) != 2 or any(
+        Path(path).parent != Path(env["PATH"]) for path in tool_paths
+    ):
+        raise RuntimeError(f"{arm} login shell does not expose isolated codex and cargo: {tool_paths!r}")
     if arm == "A":
-        if harnesskit_path:
+        if harnesskit_path or harnesskit_result.returncode != 127:
             raise RuntimeError(f"A PATH unexpectedly exposes harnesskit: {harnesskit_path}")
-        if not codex_path:
-            raise RuntimeError("A PATH does not expose codex")
     else:
-        if binary is None or not harnesskit_path or Path(harnesskit_path).resolve() != binary.resolve():
+        if (binary is None or not harnesskit_path
+                or Path(harnesskit_path) != Path(env["PATH"]) / "harnesskit"
+                or Path(harnesskit_path).resolve() != binary.resolve()):
             raise RuntimeError(f"B PATH does not put release harnesskit first: {harnesskit_path!r}")
-        if not codex_path:
-            raise RuntimeError("B PATH does not expose codex")
+        if harnesskit_result.returncode != 0 or lines[1:] != [expected_version]:
+            raise RuntimeError(f"B login shell does not run {expected_version}: {lines!r}")
+    return harnesskit_path
 
 
 def _check_home_isolation(home: Path, arm: str) -> None:
@@ -186,9 +220,11 @@ def _prepare_environment(
     source_home: Path,
     repo_root: Path,
 ) -> PreparedEnvironment:
+    shell_home = run_dir / "home"
     codex_home = run_dir / "codex-home"
     path_bin = run_dir / "bin"
     install_prefix = run_dir / "install-prefix"
+    shell_home.mkdir(parents=True)
     codex_home.mkdir(parents=True)
     path_bin.mkdir(parents=True)
     install_prefix.mkdir(parents=True)
@@ -203,17 +239,38 @@ def _prepare_environment(
 
     original_path = os.environ.get("PATH", "")
     release_binary: Path | None = None
+    adopt_binary: Path | None = None
+    expected_version = "harnesskit 0.2.0"
     if arm == "B":
         release_binary = repo_root / "target" / "release" / "harnesskit"
         if not release_binary.is_file() or not os.access(release_binary, os.X_OK):
             raise RuntimeError(f"missing release binary: {release_binary}; run cargo build --release")
+        adopt_binary = release_binary
         if scenario_id == "S7":
+            # The subject must upgrade this old CLI itself; adoption still
+            # indexes with the current release so the tracked state is valid.
+            old_binary = _old_harnesskit(repo_root)
             installed_binary = install_prefix / "bin/harnesskit"
-            _copy_file(release_binary, installed_binary)
+            _copy_file(old_binary, installed_binary)
             release_binary = installed_binary
+            expected_version = "harnesskit " + OLD_HARNESSKIT_TAG.removeprefix("v")
         (path_bin / "harnesskit").symlink_to(release_binary)
     _link_original_path(original_path, path_bin)
+    # Login shells read these files after /etc/profile. Never copy the real
+    # user's startup files: they can restore a PATH containing another CLI.
+    profile = f"export PATH={shlex.quote(str(path_bin))}\n"
+    for name in (".profile", ".bashrc", ".bash_profile"):
+        (shell_home / name).write_text(profile, encoding="utf-8")
+    (shell_home / ".gitconfig").write_text(
+        "[user]\n\tname = Harbourline Platform Team\n\temail = harbourline-e1@example.invalid\n",
+        encoding="utf-8",
+    )
     env = os.environ.copy()
+    env["HOME"] = str(shell_home)
+    env["CARGO_HOME"] = os.environ.get("CARGO_HOME", str(Path.home() / ".cargo"))
+    env["RUSTUP_HOME"] = os.environ.get("RUSTUP_HOME", str(Path.home() / ".rustup"))
+    for name in ("BASH_ENV", "ENV", "ZDOTDIR"):
+        env.pop(name, None)
     env["CODEX_HOME"] = str(codex_home)
     # The flattened directory is the complete PATH. Keeping the original
     # directories after it would re-expose the real harnesskit in arm A (and
@@ -223,6 +280,7 @@ def _prepare_environment(
     env["HARNESSKIT_INSTALL_PREFIX"] = str(install_prefix)
 
     if arm == "B":
+        adopt_harnesskit(scenario_repo, scenario_id, adopt_binary, env=env)
         # S7 deliberately starts with the old skill shipped in the scenario.
         # Other B runs use the release skill as their pre-installed surface.
         source_skill = (
@@ -234,30 +292,16 @@ def _prepare_environment(
         if not (source_skill / "SKILL.md").is_file():
             raise RuntimeError(f"missing shared skill: {source_skill / 'SKILL.md'}")
         shutil.copytree(source_skill, target_skill)
-        agents = scenario_repo / "AGENTS.md"
-        prefix = agents.read_text(encoding="utf-8") if agents.is_file() else "# Agent entrypoint\n"
-        route = "This repository uses HarnessKit for documentation; see the HarnessKit skill."
-        if "HarnessKit for documentation" not in prefix:
-            agents.write_text(
-                prefix.rstrip() + "\n\n" + route + "\n",
-                encoding="utf-8",
-            )
-        result = subprocess.run(
-            [str(release_binary), "index", str(scenario_repo)],
-            cwd=repo_root,
-            env=env,
-            text=True,
-            capture_output=True,
-            timeout=120,
-            check=False,
-        )
-        if result.returncode != 0:
-            raise RuntimeError(f"B HarnessKit index failed: {result.stderr[-1000:]}")
-    else:
-        shutil.rmtree(scenario_repo / ".harnesskit", ignore_errors=True)
     _check_home_isolation(codex_home, arm)
-    _assert_commands(env, arm, release_binary)
-    return PreparedEnvironment(codex_home, path_bin, env, release_binary, install_prefix)
+    harnesskit_path = _assert_commands(env, arm, release_binary, scenario_repo, expected_version)
+    status = subprocess.run(
+        ["git", "status", "--porcelain"], cwd=scenario_repo, env=env,
+        text=True, capture_output=True, timeout=30, check=True,
+    ).stdout
+    if status:
+        raise RuntimeError(f"{arm} prepared workspace is dirty: {status!r}")
+    return PreparedEnvironment(shell_home, codex_home, path_bin, env, release_binary,
+                               install_prefix, harnesskit_path, status)
 
 
 def _sample_events(scenario: Scenario, arm: str) -> list[dict[str, Any]]:
@@ -339,6 +383,7 @@ def _run_one(
                 scenario_repo,
                 codex_home=prepared.codex_home,
                 install_prefix=prepared.install_prefix,
+                env=prepared.env,
             )
             last_message_path.write_text(last_message + "\n", encoding="utf-8")
             (run_dir / "final_message.txt").write_text(last_message + "\n", encoding="utf-8")
@@ -383,6 +428,8 @@ def _run_one(
         )
         metrics["malformed_events"] = malformed
         metrics["decision_violations"] = grade.decision_violations
+        metrics["start_git_status"] = prepared.start_git_status
+        metrics["shell_harnesskit_path"] = prepared.shell_harnesskit_path
         metrics.update(grade.process_metrics)
         result = {
             "scenario": scenario.scenario_id,
@@ -397,6 +444,10 @@ def _run_one(
             "metrics": metrics,
             "repo": str(scenario_repo),
             "codex_home": str(prepared.codex_home),
+            "shell_home": str(prepared.shell_home),
+            "start_git_status": prepared.start_git_status,
+            "shell_harnesskit_path": prepared.shell_harnesskit_path,
+            "harnesskit_failed_commands": metrics["harnesskit_failed_commands"],
             "install_prefix": str(prepared.install_prefix),
             "harnesskit_binary": str(prepared.harnesskit_binary) if prepared.harnesskit_binary else None,
             "events": str(events_path),
@@ -487,4 +538,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

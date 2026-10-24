@@ -1071,7 +1071,7 @@ def _product_docs() -> dict[str, str]:
             [lib]
             path = "src/lib.rs"
         """,
-        ".gitignore": ".harnesskit/state/\ntarget/\nrelease/*.tar.gz\n",
+        ".gitignore": "target/\n",
     })
     # Keep the corpus in the requested roughly sixty-document range while
     # retaining coverage in the remaining operational and reference pages.
@@ -1128,7 +1128,7 @@ def _scattered_s6_files() -> dict[str, str]:
             jobs. The old handbook is in [README.md](README.md) and investigations
             are in [notes/index.md](notes/index.md).
         """,
-        ".gitignore": ".harnesskit/state/\ntarget/\n",
+        ".gitignore": "target/\n",
         "Cargo.toml": """
             [package]
             name = "harbourline_order_service"
@@ -1293,11 +1293,8 @@ def _common_files(scenario_id: str) -> dict[str, str]:
     files.update(_rust_files())
     files.update(_rust_tools())
     files.update(_fixture_support())
-    files[".harnesskit/schema.yaml"] = _schema_old() if scenario_id == "S7" else _schema_new()
     if scenario_id == "S7":
         files["CLAUDE.md"] = "See AGENTS.md for the repository route.\n"
-        files["agent-surfaces/skills/harnesskit/SKILL.md"] = _old_skill()
-        files["agent-surfaces/skills/harnesskit/references/cli.md"] = (ROOT / "fixtures/alpha7-skill/references/cli.md").read_text(encoding="utf-8")
     return files
 
 
@@ -1306,7 +1303,6 @@ def _s6_files() -> dict[str, str]:
     files.update(_rust_files())
     files.update(_rust_tools())
     files.update(_fixture_support())
-    files[".harnesskit/schema.yaml"] = _schema_new()
     return files
 
 
@@ -1322,9 +1318,10 @@ def _git(root: Path, *args: str, env: dict[str, str] | None = None) -> None:
     subprocess.run(["git", "-C", str(root), *args], env=command_env, check=True, capture_output=True, text=True)
 
 
-def _commit(root: Path, message: str, commit_date: date) -> None:
+def _commit(root: Path, message: str, commit_date: date, *, env: dict[str, str] | None = None) -> None:
     timestamp = commit_date.isoformat() + "T00:00:00+0000"
     env = {
+        **(env or {}),
         "GIT_AUTHOR_NAME": "Harbourline Platform Team",
         "GIT_AUTHOR_EMAIL": "harbourline-e1@example.invalid",
         "GIT_COMMITTER_NAME": "Harbourline Platform Team",
@@ -1332,7 +1329,7 @@ def _commit(root: Path, message: str, commit_date: date) -> None:
         "GIT_AUTHOR_DATE": timestamp,
         "GIT_COMMITTER_DATE": timestamp,
     }
-    _git(root, "add", "-A")
+    _git(root, "add", "-A", env=env)
     _git(root, "commit", "--quiet", "--no-gpg-sign", "-m", message, env=env)
 
 
@@ -1391,8 +1388,39 @@ def _make_local_release(root: Path) -> None:
     _append_update(root, "README.md", "Local workstation packages are cached under [release](release/README.md).")
 
 
+def adopt_harnesskit(root: Path, scenario_id: str, binary: Path, *, env: dict[str, str]) -> None:
+    """Add B's tracked adaptation after the shared, tool-free product history."""
+
+    _write(root, ".harnesskit/schema.yaml", _schema_old() if scenario_id == "S7" else _schema_new())
+    # S6 has no resolved code anchors yet; keep an empty, valid tracked lock
+    # rather than inventing an anchor in its product documentation.
+    _write(root, ".harnesskit/knowledge.lock",
+           "# HarnessKit knowledge.lock: confirmed document anchors and code fingerprints.\n")
+    _append_update(root, "AGENTS.md", "This repository uses HarnessKit for documentation; see the HarnessKit skill.")
+    ignored = root / ".gitignore"
+    ignored.write_text(ignored.read_text(encoding="utf-8") + (
+        ".harnesskit/state/\n.harnesskit/history/\n.harnesskit/index.lock\n"
+    ), encoding="utf-8")
+    if scenario_id == "S7":
+        _write(root, "agent-surfaces/skills/harnesskit/SKILL.md", _old_skill())
+        _write(root, "agent-surfaces/skills/harnesskit/references/cli.md",
+               (ROOT / "fixtures/alpha7-skill/references/cli.md").read_text(encoding="utf-8"))
+        # The cache is disposable; its product README route is tracked in this
+        # same adaptation commit, leaving the initial workspace clean.
+        with ignored.open("a", encoding="utf-8") as handle:
+            handle.write("release/\n")
+        _make_local_release(root)
+    result = subprocess.run(
+        [str(binary), "index", str(root)], cwd=root, env=env,
+        text=True, capture_output=True, timeout=120, check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"B HarnessKit index failed: {result.stderr[-1000:]}")
+    _commit(root, "Adopt HarnessKit for documentation", date(2026, 10, 23), env=env)
+
+
 def generate_repo(scenario_id: str, destination: Path, *, force: bool = False) -> Path:
-    """Create a Harbourline repository with 45 natural commits."""
+    """Create the shared Harbourline history without HarnessKit artifacts."""
 
     scenario_id = scenario_id.upper()
     if scenario_id not in SCENARIOS:
@@ -1424,7 +1452,8 @@ def generate_repo(scenario_id: str, destination: Path, *, force: bool = False) -
         _write(destination, relative, content)
     _commit(destination, "Bootstrap merchant order and payment service", bootstrap_date)
     for day, (message, relative, paragraph) in enumerate(_history_updates(scenario_id), start=2):
-        commit_date = date(2026, 9, 10) + timedelta(days=day - 1)
+        # End on October 22 so B's October 23 adoption predates scenario today.
+        commit_date = date(2026, 9, 8) + timedelta(days=day - 1)
         for path, (recorded_on, content) in list(dated_docs.items()):
             if recorded_on <= commit_date:
                 _write(destination, path, content)
@@ -1451,8 +1480,6 @@ def generate_repo(scenario_id: str, destination: Path, *, force: bool = False) -
         _commit(destination, message, commit_date)
     if dated_docs:
         raise ValueError(f"dated documents fall outside the fixture history: {sorted(dated_docs)}")
-    if scenario_id == "S7":
-        _make_local_release(destination)
     return destination
 
 
@@ -1460,7 +1487,7 @@ def _readme(spec: Scenario) -> str:
     arm_line = "A、B" if spec.arms == ("A", "B") else "仅 B"
     key_lines = "\n".join(f"- {path}" for path in spec.key_files)
     rules = {
-        "S1": "正确解保留刷新器的单飞边界，并在最终答复指出决策和替代方案；刷新路径新增退避或重试会失败。HTTP 客户端已有的独立重试不计入该路径。",
+        "S1": "刷新器及直接协调器无新增重试或退避且隐藏测试通过即成功；允许请求边界有界重试。答复引用决策、改写 accepted 决策正文仅记为指标。HTTP 客户端已有的独立重试不计入该路径。",
         "S2": "正确解让订单缓存与结算缓存一起迁移，并保留历史报表工具的 v7；只改一个消费者或一律改为 v8 都会失败。",
         "S3": "正确解执行现行计划的 90 秒窗口步骤，不推进旧计划或其代码方向；允许归档旧计划或调整其 frontmatter。计划勾选和任意 worklog 交接条目只记为过程指标。",
         "S4": "正确解在最终答复报告代码当前值，并更新运维说明或指出旧值已漂移；搜索到的其他限流数字不能替代网关值。",
@@ -1636,6 +1663,7 @@ def apply_recorded_solution(
     *,
     codex_home: Path | None = None,
     install_prefix: Path | None = None,
+    env: dict[str, str] | None = None,
 ) -> str:
     if scenario_id == "S1":
         return (
@@ -1681,7 +1709,7 @@ def apply_recorded_solution(
             home = codex_home or Path(temporary) / "codex-home"
             prefix = install_prefix or Path(temporary) / "prefix"
             home.mkdir(parents=True, exist_ok=True)
-            env = os.environ.copy()
+            env = dict(env if env is not None else os.environ)
             env.update(CODEX_HOME=str(home), HARNESSKIT_USAGE_LOG="off")
             subprocess.run([
                 "bash", str(root / "release/install.sh"), "--version", "0.2.0",

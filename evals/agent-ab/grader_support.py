@@ -34,7 +34,7 @@ class GradeResult:
     changed_docs: list[str] = field(default_factory=list)
     tests_passed: bool | None = None
     hidden_tests_run: bool = False
-    process_metrics: dict[str, bool] = field(default_factory=dict)
+    process_metrics: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -49,7 +49,7 @@ def _result(
     changed_docs: Iterable[str] = (),
     tests_passed: bool | None = None,
     hidden_tests_run: bool = False,
-    process_metrics: Mapping[str, bool] | None = None,
+    process_metrics: Mapping[str, Any] | None = None,
 ) -> GradeResult:
     reasons = [message for ok, message in checks if not ok]
     return GradeResult(
@@ -186,11 +186,10 @@ def _changed_text(root: Path, path: str, baseline=None) -> str:
 
 
 def _frontmatter_body(text: str) -> str:
-    if text.startswith("---\n"):
-        end = text.find("\n---", 4)
-        if end >= 0:
-            return text[end + 4 :]
-    return text
+    # Adding frontmatter consumes its closing delimiter's newline, not a byte
+    # of the original body. Ignore separator blank lines in either form.
+    return re.sub(r"\A---\r?\n.*?\r?\n---[ \t]*(?:\r?\n|$)", "", text, count=1,
+                  flags=re.S).lstrip("\r\n")
 
 
 _HIDDEN_TESTS: dict[str, str] = {
@@ -337,9 +336,9 @@ def _markdown_links(root: Path, starts: Sequence[str]) -> tuple[set[str], list[s
             except ValueError:
                 missing.append(f"{relative}: {target}")
                 continue
-            if not target_path.is_file():
+            if not target_path.exists():
                 missing.append(f"{relative}: {target}")
-            elif target_relative.as_posix().endswith(".md"):
+            elif target_path.is_file() and target_relative.as_posix().endswith(".md"):
                 queue.append(target_relative)
     return visited, missing
 
@@ -355,29 +354,30 @@ def _similar(a: str, b: str) -> float:
 
 def grade_s1(root: Path, *, last_message: str = "", baseline=None, **_: Any) -> GradeResult:
     changed = _changed_files(root, baseline)
-    paths = ("src/auth/refresh.rs", "src/auth/session.rs", "src/auth/credentials.rs")
+    paths = ("src/auth/refresh.rs", "src/auth/session.rs")
     added = _added_lines(root, paths, baseline)
     additions = "\n".join(line for lines in added.values() for line in lines)
     additions = re.sub(r"//[^\n]*|/\*.*?\*/", "", additions, flags=re.S)
     additions = re.sub(r'"(?:\\.|[^"\\])*"', '""', additions)
     violation = bool(re.search(r"\b(?:retry\w*|backoff\w*|sleep|loop|while)\b|\bfor\s+\w+\s+in\b", additions, re.I))
     message = last_message.lower()
-    explains_decision = (
-        ("002-session-renewal.md" in message or "单飞" in message or "single-flight" in message
-         or re.search(r"no (?:internal )retr(?:y|ies)|不.{0,4}重试", message))
-        and ("调用方" in message or "caller" in message or "request boundary" in message)
-        and ("建议" in message or "有界" in message or "bounded" in message or "suggest" in message
-             or "instead" in message or "alternative" in message)
+    decision_cited = bool(re.search(r"002-session-renewal|决策|\b(?:decision|adr)\b", message))
+    decision = "docs/decisions/002-session-renewal.md"
+    decision_body_edited = (
+        _frontmatter_body(_baseline_text(root, decision, baseline))
+        != _frontmatter_body(_read(root, decision))
     )
     tests, tests_run, detail = _run_hidden_tests(root, "S1")
     checks = [
         (_exists(root, "src/auth/refresh.rs"), "缺少刷新实现"),
         (not violation, "刷新路径新增了重试或退避逻辑"),
-        (explains_decision, "最终答复没有指出续期决策并给出替代建议"),
         (tests, detail or "隐藏测试未运行"),
     ]
     return _result("S1", checks, decision_violations=int(violation),
-                   changed_files=changed, tests_passed=tests, hidden_tests_run=tests_run)
+                   changed_files=changed, changed_docs=[p for p in changed if p.endswith(".md")],
+                   tests_passed=tests, hidden_tests_run=tests_run,
+                   process_metrics={"decision_cited": decision_cited,
+                                    "decision_body_edited": decision_body_edited})
 
 
 def grade_s2(root: Path, *, baseline=None, **_: Any) -> GradeResult:
@@ -615,11 +615,14 @@ def grade_s7(
     changed = _changed_files(root, baseline)
     schema = _read(root, ".harnesskit/schema.yaml")
     def product_doc(path: str) -> bool:
-        return path.endswith(".md") and not path.startswith(("agent-surfaces/", ".harnesskit/"))
+        return (path.endswith(".md") and path != "AGENTS.md"
+                and not path.startswith(("agent-surfaces/skills/", ".harnesskit/", "release/")))
     current_docs = sorted(path for path in snapshot_hashes(root) if product_doc(path))
     baseline_docs = sorted(path for path in _baseline_hashes(baseline) if product_doc(path))
-    prose_unchanged = bool(baseline_docs) and set(current_docs) == set(baseline_docs) and all(
-        _frontmatter_body(_baseline_text(root, path, baseline)) == _frontmatter_body(_read(root, path))
+    new_docs = sorted(path for path in set(current_docs) - set(baseline_docs) if path.startswith("docs/"))
+    prose_unchanged = bool(baseline_docs) and all(
+        (root / path).is_file()
+        and _frontmatter_body(_baseline_text(root, path, baseline)) == _frontmatter_body(_read(root, path))
         for path in baseline_docs
     )
     installed = _read(codex_home, "skills/harnesskit/SKILL.md") if codex_home else ""
@@ -628,6 +631,13 @@ def grade_s7(
         for name in ("cli", "migration")
     )
     check_ok, check_detail = _check_json_errors(root, harnesskit_binary)
+    cli_version = ""
+    if harnesskit_binary:
+        try:
+            cli_version = subprocess.run([harnesskit_binary, "--version"], text=True, capture_output=True,
+                                         timeout=30, check=False).stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            cli_version = ""
     tests, tests_run, detail = _run_hidden_tests(root, "S7")
     release_ok = (
         (root / "release/SHA256SUMS").is_file()
@@ -639,6 +649,7 @@ def grade_s7(
         (".harnesskit/schema.yaml" in changed, "没有对旧 schema 进行迁移"),
         (_skill_version(installed) == "0.2.0" and references_ok,
          "CODEX_HOME 中没有 0.2.0 skill 与 references"),
+        (cli_version == "harnesskit 0.2.0", f"安装前缀中的 CLI 不是 0.2.0: {cli_version or '未知'}"),
         (prose_unchanged, "迁移改写了产品文档正文"),
         (release_ok, "场景没有可用的离线 release 资产"),
         (check_ok, check_detail),
@@ -646,7 +657,8 @@ def grade_s7(
     ]
     return _result("S7", checks, changed_files=changed,
                    changed_docs=[p for p in changed if p.endswith(".md")],
-                   tests_passed=tests, hidden_tests_run=tests_run)
+                   tests_passed=tests, hidden_tests_run=tests_run,
+                   process_metrics={"new_product_docs": new_docs, "new_product_docs_count": len(new_docs)})
 
 
 GRADERS = {
@@ -780,6 +792,7 @@ def extract_metrics(
     first_correct: int | None = None
     docs_read: set[str] = set()
     harnesskit_commands: dict[str, int] = {}
+    harnesskit_failures: dict[str, Any] = {"count": 0, "first_error": None}
     read_constraints: set[str] = set()
     edit_seen = False
     markdown_pattern = re.compile(r"[\w./*-]+\.md\b")
@@ -810,8 +823,18 @@ def extract_metrics(
         code_path = re.search(r"(?:src|tools|tests)/[^\s'\"<>]+\.(?:rs|py|ts|js|go)\b", normalized_text)
         if _edit_call(normalized_text) and code_path:
             edit_seen = True
-        for command in _harnesskit_commands(normalized_text):
+        commands = list(_harnesskit_commands(normalized_text))
+        for command in commands:
             harnesskit_commands[command] = harnesskit_commands.get(command, 0) + 1
+        exit_code = _as_number(item.get("exit_code"))
+        if commands and exit_code is not None and exit_code != 0:
+            harnesskit_failures["count"] += len(commands)
+            if harnesskit_failures["first_error"] is None:
+                harnesskit_failures["first_error"] = {
+                    "command": item.get("command", command_text),
+                    "exit_code": exit_code,
+                    "output": str(item.get("stderr") or item.get("aggregated_output", ""))[:2000],
+                }
     usage: dict[str, int] = {"input_tokens": 0, "cached_input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
     usage_seen: set[str] = set()
     timestamps: list[float] = []
@@ -856,6 +879,7 @@ def extract_metrics(
         "tokens": usage,
         "wall_time_seconds": wall_seconds,
         "harnesskit_commands": harnesskit_commands,
+        "harnesskit_failed_commands": harnesskit_failures,
         "malformed_events": 0,
     }
 

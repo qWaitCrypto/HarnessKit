@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -16,7 +17,7 @@ REPO_ROOT = EVAL_ROOT.parents[1]
 sys.path.insert(0, str(EVAL_ROOT))
 
 from grader_support import extract_metrics, grade, snapshot_baseline, snapshot_hashes  # noqa: E402
-from scenarios import SCENARIOS, apply_recorded_solution, generate_repo  # noqa: E402
+from scenarios import SCENARIOS, adopt_harnesskit, apply_recorded_solution, generate_repo  # noqa: E402
 
 
 @pytest.fixture(scope="session")
@@ -32,6 +33,11 @@ def _copy_repo(repositories, scenario: str, destination: Path) -> Path:
 
 def _generated(tmp_path: Path, scenario: str) -> Path:
     return generate_repo(scenario, tmp_path / scenario)
+
+
+def _adopt_s7(root: Path) -> None:
+    adopt_harnesskit(root, "S7", REPO_ROOT / "target/release/harnesskit",
+                     env={**os.environ, "HARNESSKIT_USAGE_LOG": "off"})
 
 
 def _replace(root: Path, path: str, old: str, new: str) -> None:
@@ -51,9 +57,14 @@ def _wrong_solution(scenario: str, variant: int, root: Path, codex_home: Path) -
     }
     result""")
             return apply_recorded_solution("S1", root)
-        # A safe implementation still needs an explanation of the decision and
-        # an alternative; an unsupported refusal is not task completion.
-        return "I left the code alone."
+        # A plausible transient-error retry inside the refresh operation still
+        # violates the once-per-renewal boundary, even without a loop keyword.
+        _replace(root, "src/auth/refresh.rs", "    result\n}", '''    if result.is_err() && state.failures_remaining > 0 {
+        return refresh_token(state, credential);
+    }
+    result
+}''')
+        return "Added recovery for a transient provider failure."
     if scenario == "S2":
         path = "src/cache/keys.rs" if variant == 0 else "src/cache/settlement.rs"
         _replace(root, path, "VERSION: u32 = 7", "VERSION: u32 = 8")
@@ -108,6 +119,8 @@ def _old_home(root: Path, home: Path) -> None:
 def test_each_grader_accepts_recorded_solution_and_rejects_two_errors(tmp_path, repositories, scenario):
     binary = str(REPO_ROOT / "target/release/harnesskit")
     correct = _copy_repo(repositories, scenario, tmp_path / "correct")
+    if scenario == "S7":
+        _adopt_s7(correct)
     baseline = snapshot_baseline(correct)
     home = tmp_path / "correct-home"
     if scenario == "S7":
@@ -121,6 +134,8 @@ def test_each_grader_accepts_recorded_solution_and_rejects_two_errors(tmp_path, 
 
     for variant in (0, 1):
         wrong = _copy_repo(repositories, scenario, tmp_path / f"wrong-{variant}")
+        if scenario == "S7":
+            _adopt_s7(wrong)
         wrong_baseline = snapshot_baseline(wrong)
         wrong_home = tmp_path / f"wrong-home-{variant}"
         if scenario == "S7":
@@ -200,6 +215,9 @@ def test_runner_dry_run_builds_isolated_a_and_b(tmp_path: Path) -> None:
         assert completed.returncode == 0, completed.stdout + completed.stderr
         result = json.loads((out / "results.json").read_text())
         assert result[0]["success"] is True
+        assert result[0]["start_git_status"] == result[0]["metrics"]["start_git_status"] == ""
+        assert result[0]["shell_harnesskit_path"] == result[0]["metrics"]["shell_harnesskit_path"]
+        assert result[0]["harnesskit_failed_commands"] == {"count": 0, "first_error": None}
         home = out / "S1" / arm / "rep-01" / "codex-home"
         assert not (home / "memories").exists()
         assert not (home / "state_5.sqlite").exists()
@@ -255,10 +273,11 @@ def test_generated_service_baseline_is_green(tmp_path, repositories, scenario):
     assert not list(root.glob('tests/*hidden*'))
 
 
-def test_s1_allows_bounded_caller_retry_and_ignores_transport_distractors(tmp_path, repositories):
+@pytest.mark.parametrize("message,cited", [("Added automatic recovery.", False),
+                                         ("Followed decision 002-session-renewal.md.", True)])
+def test_s1_allows_bounded_caller_retry_and_ignores_transport_distractors(tmp_path, repositories, message, cited):
     root = _copy_repo(repositories, 'S1', tmp_path / 'repo')
     baseline = snapshot_baseline(root)
-    message = apply_recorded_solution('S1', root)
     _replace(root, 'src/gateway/session_access.rs', '    renew_session(state, credential)', '''    let mut outcome = renew_session(state, credential);
     for _ in 0..2 {
         if outcome.is_ok() { break; }
@@ -269,6 +288,7 @@ def test_s1_allows_bounded_caller_retry_and_ignores_transport_distractors(tmp_pa
     result = grade('S1', root, baseline=baseline, last_message=message)
     assert result.success, result.reasons
     assert result.decision_violations == 0
+    assert result.process_metrics == {"decision_cited": cited, "decision_body_edited": False}
 
 
 def test_grader_uses_saved_baseline_even_after_subject_commits(tmp_path, repositories):
@@ -591,6 +611,11 @@ def test_s7_has_offline_assets_old_installed_skill_and_only_two_extra_roots(tmp_
     installed = prepared.codex_home / 'skills/harnesskit/SKILL.md'
     assert '0.1.0-alpha.7' in installed.read_text()
     assert prepared.harnesskit_binary == prepared.install_prefix / 'bin/harnesskit'
+    started = subprocess.run([str(prepared.harnesskit_binary), '--version'], text=True,
+                             capture_output=True, check=True).stdout.strip()
+    assert started == 'harnesskit 0.1.0-alpha.6'
+    old_binary = prepared.install_prefix.parent / 'old-harnesskit'
+    shutil.copy2(prepared.harnesskit_binary, old_binary)
     command = _codex_command(SCENARIOS['S7'], root, prepared, tmp_path / 'last.txt')
     override = command[command.index('-c') + 1]
     roots = json.loads(override.split('=', 1)[1])
@@ -608,6 +633,15 @@ def test_s7_has_offline_assets_old_installed_skill_and_only_two_extra_roots(tmp_
     assert (installed.parent / 'references/migration.md').read_text()
     assert hashlib.sha256(shared_binary.read_bytes()).hexdigest() == original_binary_hash
     assert (prepared.codex_home / 'config.toml').read_text().count('model_reasoning_effort = "max"') == 1
+    # Upgrading the skill and schema without the CLI is not an upgrade.
+    upgraded = prepared.install_prefix.parent / 'upgraded-harnesskit'
+    shutil.copy2(prepared.harnesskit_binary, upgraded)
+    shutil.copy2(old_binary, prepared.harnesskit_binary)
+    result = grade('S7', root, baseline=baseline, last_message=message, codex_home=prepared.codex_home,
+                   harnesskit_binary=str(prepared.harnesskit_binary))
+    assert not result.success
+    assert any('CLI 不是 0.2.0' in reason for reason in result.reasons)
+    shutil.copy2(upgraded, prepared.harnesskit_binary)
     # Merely changing schema_version must not masquerade as complete migration.
     (root / '.harnesskit/schema.yaml').write_text(baseline['texts']['.harnesskit/schema.yaml'].replace('schema_version: 0', 'schema_version: 1'))
     result = grade('S7', root, baseline=baseline, codex_home=prepared.codex_home,
@@ -617,9 +651,12 @@ def test_s7_has_offline_assets_old_installed_skill_and_only_two_extra_roots(tmp_
 
 
 def test_s7_release_is_reproducible(tmp_path, repositories):
+    first = _copy_repo(repositories, 'S7', tmp_path / 'first')
+    _adopt_s7(first)
     second = generate_repo('S7', tmp_path / 'second')
+    _adopt_s7(second)
     for name in ['SHA256SUMS', 'harnesskit-x86_64-unknown-linux-gnu.tar.gz']:
-        assert hashlib.sha256((repositories['S7'] / 'release' / name).read_bytes()).hexdigest() == hashlib.sha256((second / 'release' / name).read_bytes()).hexdigest()
+        assert hashlib.sha256((first / 'release' / name).read_bytes()).hexdigest() == hashlib.sha256((second / 'release' / name).read_bytes()).hexdigest()
 
 
 def test_s4_allows_an_operations_answer_that_identifies_doc_drift(tmp_path, repositories):
@@ -662,3 +699,210 @@ def test_s4_rejects_noncurrent_gateway_values(tmp_path, repositories, value):
                    last_message=f'当前网关为每分钟 {value} 次，运维文档已同步。')
     assert not result.success and result.tests_passed
     assert any('没有报告当前网关值' in reason for reason in result.reasons)
+
+
+@pytest.mark.parametrize('scenario', list(SCENARIOS))
+def test_prepare_isolates_login_shell_and_keeps_shared_history_clean(tmp_path, repositories, scenario, monkeypatch):
+    from run import _prepare_environment
+    source = tmp_path / 'daily-codex'
+    source.mkdir()
+    (source / 'auth.json').write_text('{"OPENAI_API_KEY":"e1-isolation-fixture-key"}\n')
+    (source / 'config.toml').write_text('model = "fixture"\nmodel_reasoning_effort = "max"\n')
+    real_home = tmp_path / 'daily-home'
+    local_bin = real_home / '.local/bin'
+    local_bin.mkdir(parents=True)
+    old_cli = local_bin / 'harnesskit'
+    old_cli.write_text('#!/bin/sh\necho "harnesskit 0.1.0-alpha.6"\n')
+    old_cli.chmod(0o755)
+    for name in ('.profile', '.bashrc', '.bash_profile'):
+        (real_home / name).write_text(f'export PATH={local_bin}:"$PATH"\n')
+    monkeypatch.setenv('CARGO_HOME', os.environ.get('CARGO_HOME', str(Path.home() / '.cargo')))
+    monkeypatch.setenv('RUSTUP_HOME', os.environ.get('RUSTUP_HOME', str(Path.home() / '.rustup')))
+    monkeypatch.setenv('HOME', str(real_home))
+    monkeypatch.setenv('PATH', str(local_bin) + os.pathsep + os.environ['PATH'])
+    monkeypatch.setenv('BASH_ENV', str(real_home / '.bashrc'))
+
+    shared = repositories[scenario]
+    shared_tree = subprocess.check_output(['git', '-C', str(shared), 'rev-parse', 'HEAD^{tree}'])
+    shared_head = subprocess.check_output(['git', '-C', str(shared), 'rev-parse', 'HEAD'])
+    shared_date = subprocess.check_output(['git', '-C', str(shared), 'log', '-1', '--format=%cs'], text=True).strip()
+    assert shared_date < '2026-10-23'
+    for arm in SCENARIOS[scenario].arms:
+        root = _copy_repo(repositories, scenario, tmp_path / arm / 'repo')
+        prepared = _prepare_environment(arm=arm, scenario_id=scenario, run_dir=tmp_path / arm / 'run',
+                                        scenario_repo=root, source_home=source, repo_root=REPO_ROOT)
+        assert prepared.env['HOME'] == str(prepared.shell_home)
+        assert prepared.env['CARGO_HOME'] == os.environ['CARGO_HOME']
+        assert prepared.env['RUSTUP_HOME'] == os.environ['RUSTUP_HOME']
+        assert 'BASH_ENV' not in prepared.env
+        assert {p.name for p in prepared.shell_home.iterdir()} == {'.profile', '.bashrc', '.bash_profile', '.gitconfig'}
+        assert (prepared.codex_home / 'auth.json').read_bytes() == (source / 'auth.json').read_bytes()
+        lookup = subprocess.run(['bash', '-lc', 'command -v harnesskit; harnesskit --version'],
+                                cwd=root, env=prepared.env, text=True, capture_output=True, timeout=30)
+        tools = subprocess.run(['bash', '-lc', 'command -v codex cargo'],
+                               cwd=root, env=prepared.env, text=True, capture_output=True, timeout=30)
+        assert tools.returncode == 0
+        assert tools.stdout.splitlines() == [str(prepared.path_bin / name) for name in ('codex', 'cargo')]
+        metadata = subprocess.run(['bash', '-lc', 'cargo metadata --offline --no-deps --format-version=1'],
+                                  cwd=root, env=prepared.env, text=True, capture_output=True, timeout=30)
+        assert metadata.returncode == 0, metadata.stderr
+        assert prepared.start_git_status == ''
+        assert subprocess.check_output(['git', 'status', '--porcelain'], cwd=root, env=prepared.env) == b''
+        if arm == 'A':
+            assert lookup.returncode == 127 and lookup.stdout == ''
+            assert prepared.shell_harnesskit_path == ''
+            assert not (root / '.harnesskit').exists()
+            history = subprocess.check_output(['git', '-C', str(root), 'log', '--all', '-p', '--no-ext-diff'], text=True)
+            assert 'harnesskit' not in history.lower()
+            assert all('harnesskit' not in path.lower() for path in snapshot_hashes(root))
+            assert all(b'harnesskit' not in (root / path).read_bytes().lower() for path in snapshot_hashes(root))
+            revision = 'HEAD'
+        else:
+            assert lookup.returncode == 0
+            expected = 'harnesskit 0.1.0-alpha.6' if scenario == 'S7' else 'harnesskit 0.2.0'
+            assert lookup.stdout.splitlines() == [str(prepared.path_bin / 'harnesskit'), expected]
+            assert Path(prepared.shell_harnesskit_path).resolve() == prepared.harnesskit_binary.resolve()
+            assert subprocess.check_output(['git', '-C', str(root), 'log', '-1', '--format=%cs'], text=True).strip() == '2026-10-23'
+            assert subprocess.check_output(['git', '-C', str(root), 'rev-parse', 'HEAD~']) == shared_head
+            tracked = subprocess.check_output(['git', '-C', str(root), 'show', '--format=', '--name-only', 'HEAD'], text=True)
+            assert {'.gitignore', 'AGENTS.md', '.harnesskit/schema.yaml', '.harnesskit/knowledge.lock'} <= set(tracked.splitlines())
+            assert not re.search(r'(?m)^\.harnesskit/(?:state|history)/', tracked)
+            revision = 'HEAD~'
+        assert subprocess.check_output(['git', '-C', str(root), 'rev-parse', f'{revision}^{{tree}}']) == shared_tree
+        if scenario == 'S3':
+            timestamps = [int(subprocess.check_output(['git', '-C', str(root), 'log', '-1', '--format=%ct', '--', path]))
+                          for path in ['docs/exec-plans/active/provider-routing-review.md',
+                                       'docs/exec-plans/active/settlement-cutover.md']]
+            assert timestamps[0] > timestamps[1]
+        if scenario == 'S1':
+            # Local login status reads CODEX_HOME auth without contacting a provider.
+            login = subprocess.run(['bash', '-lc', 'codex login status'], cwd=root, env=prepared.env,
+                                   text=True, capture_output=True, timeout=30)
+            assert login.returncode == 0
+            assert 'api key' in (login.stdout + login.stderr).lower()
+            assert not (prepared.shell_home / '.codex/auth.json').exists()
+
+
+def test_isolation_assertion_detects_login_profile_path_leak(tmp_path, repositories):
+    from run import _assert_commands, _prepare_environment
+    root = _copy_repo(repositories, 'S1', tmp_path / 'repo')
+    source = tmp_path / 'daily-codex'
+    source.mkdir()
+    (source / 'auth.json').write_text('{"auth_mode":"fixture"}\n')
+    (source / 'config.toml').write_text('model = "fixture"\n')
+    prepared = _prepare_environment(arm='A', scenario_id='S1', run_dir=tmp_path / 'run',
+                                    scenario_repo=root, source_home=source, repo_root=REPO_ROOT)
+    leaked_bin = tmp_path / 'leaked-bin'
+    leaked_bin.mkdir()
+    binary = leaked_bin / 'harnesskit'
+    binary.write_text('#!/bin/sh\necho "harnesskit 0.1.0-alpha.6"\n')
+    binary.chmod(0o755)
+    (prepared.shell_home / '.bash_profile').write_text(f'export PATH={leaked_bin}:"$PATH"\n')
+    with pytest.raises(RuntimeError, match='unexpectedly exposes harnesskit'):
+        _assert_commands(prepared.env, 'A', None, root)
+
+
+@pytest.mark.parametrize('directory', ['api/', 'api/examples/', 'config/tenants/'])
+def test_s6_accepts_existing_directory_links(tmp_path, repositories, directory):
+    root = _copy_repo(repositories, 'S6', tmp_path / 'repo')
+    baseline = snapshot_baseline(root)
+    apply_recorded_solution('S6', root)
+    assert (root / directory).is_dir()
+    with (root / 'README.md').open('a') as handle:
+        handle.write(f'\n[Service files]({directory})\n')
+    result = grade('S6', root, baseline=baseline)
+    assert result.success, result.reasons
+
+
+@pytest.mark.parametrize('case_name', ['S1/A', 'S1/B', 'S7/B'])
+def test_pilot1_actual_results_are_accepted(tmp_path, repositories, case_name):
+    case = json.loads((EVAL_ROOT / 'fixtures/pilot1-regressions.json').read_text())['runs'][case_name]
+    scenario, _ = case_name.split('/')
+    root = _copy_repo(repositories, scenario, tmp_path / 'repo')
+    home = tmp_path / 'codex-home'
+    if scenario == 'S7':
+        _adopt_s7(root)
+
+    def write_version(version):
+        for relative, versions in case['files'].items():
+            path = root / relative
+            text = versions[version]
+            if text is None:
+                path.unlink(missing_ok=True)
+            else:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(text)
+
+    write_version('before')
+    baseline = snapshot_baseline(root)
+    write_version('after')
+    for relative, text in case.get('installed_skill', {}).items():
+        path = home / 'skills/harnesskit' / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+    result = grade(scenario, root, baseline=baseline, last_message=case['last_message'],
+                   codex_home=home, harnesskit_binary=str(REPO_ROOT / 'target/release/harnesskit'))
+    assert result.success, result.reasons
+    assert result.tests_passed and result.hidden_tests_run
+    if scenario == 'S1':
+        assert result.process_metrics['decision_body_edited'] is True
+        assert result.decision_violations == 0
+    else:
+        assert result.process_metrics['new_product_docs'] == []
+
+
+@pytest.mark.parametrize('change,accepted', [
+    ('frontmatter', True), ('new-docs', True), ('skill-release-route', True),
+    ('body', False), ('deleted-doc', False),
+])
+def test_s7_protects_existing_product_prose_and_records_new_docs(tmp_path, repositories, change, accepted):
+    root = _copy_repo(repositories, 'S7', tmp_path / 'repo')
+    _adopt_s7(root)
+    baseline = snapshot_baseline(root)
+    home = tmp_path / 'codex-home'
+    apply_recorded_solution('S7', root, codex_home=home)
+    if change == 'frontmatter':
+        path = root / 'README.md'
+        path.write_text('---\nstatus: active\n---\n\n' + path.read_text())
+    elif change == 'new-docs':
+        (root / 'docs/migration-notes.md').write_text('# Migration notes\n\nReviewed the schema migration.\n')
+    elif change == 'skill-release-route':
+        shutil.copytree(home / 'skills/harnesskit', root / 'agent-surfaces/skills/harnesskit', dirs_exist_ok=True)
+        (root / 'release/README.md').write_text('# Local release cache\n\nInstalled 0.2.0.\n')
+        with (root / 'AGENTS.md').open('a') as handle:
+            handle.write('\nUse `harnesskit context --current` for documentation routes.\n')
+    elif change == 'body':
+        _replace(root, 'README.md', 'integer minor units', 'floating point amounts')
+    elif change == 'deleted-doc':
+        (root / 'docs/decisions/002-session-renewal.md').unlink()
+    result = grade('S7', root, baseline=baseline, codex_home=home,
+                   harnesskit_binary=str(REPO_ROOT / 'target/release/harnesskit'))
+    assert result.success is accepted, result.reasons
+    assert result.tests_passed and result.hidden_tests_run
+    expected = ['docs/migration-notes.md'] if change == 'new-docs' else []
+    assert result.process_metrics['new_product_docs'] == expected
+    assert result.process_metrics['new_product_docs_count'] == len(expected)
+    if not accepted:
+        assert '迁移改写了产品文档正文' in result.reasons
+
+
+def test_metrics_count_failed_harnesskit_commands_and_first_error():
+    def call(identity, command, exit_code=None, output=''):
+        return {'type': 'item.completed' if exit_code is not None else 'item.started',
+                'item': {'id': identity, 'type': 'command_execution', 'command': command,
+                         'exit_code': exit_code, 'aggregated_output': output}}
+    error = 'Error: "invalid schema: expected boolean, got `120`"\n'
+    events = [
+        call('query', '/bin/bash -lc \'harnesskit query "session renewal"\''),
+        call('query', '/bin/bash -lc \'harnesskit query "session renewal"\'', 1, error),
+        call('lookup', '/bin/bash -lc \'command -v harnesskit\'', 1),
+        call('cargo', 'cargo test --offline', 1, 'a test failed'),
+        call('check', 'harnesskit check --json', 2, 'another error'),
+        call('version', 'harnesskit --version', 0, 'harnesskit 0.2.0'),
+    ]
+    metrics = extract_metrics(events, key_files=[])
+    assert metrics['harnesskit_failed_commands'] == {
+        'count': 2,
+        'first_error': {'command': events[1]['item']['command'], 'exit_code': 1, 'output': error},
+    }
+    assert extract_metrics([], key_files=[])['harnesskit_failed_commands'] == {'count': 0, 'first_error': None}
