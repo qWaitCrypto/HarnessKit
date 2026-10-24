@@ -97,6 +97,10 @@ SCENARIOS: dict[str, Scenario] = {
 
 # Each fact requires all concepts, with alternatives for natural English and
 # Chinese wording. A bag of unrelated matching words across files is not a fact.
+# Field notes whose only paragraph restates an invariant that has a canonical
+# home elsewhere; a clean S6 keeps one copy of it, the rest of the notes stay.
+S6_FACT_NOTES = ("order-creation", "event-delivery", "tenant-storage", "job-failures", "production-review")
+
 S6_FACT_GROUPS: dict[str, tuple[tuple[str, ...], ...]] = {
     "order idempotency": (("order creation", "creating an order", "checkout", "订单创建", "创建订单"),
                           ("idempotency", "idempotent", "幂等")),
@@ -1645,8 +1649,7 @@ def _clean_s6(root: Path) -> None:
         note = root / relative
         title = Path(relative).stem.replace("-", " ").title()
         paragraphs = note.read_text(encoding="utf-8").strip().split("\n\n")[1:]
-        fact_notes = {"order-creation", "event-delivery", "tenant-storage", "job-failures", "production-review"}
-        if note.stem in fact_notes:
+        if note.stem in S6_FACT_NOTES:
             paragraphs = paragraphs[1:]
         route = "See [operating invariants](../docs/design/order-invariants.md)."
         if note.stem == "production-review":

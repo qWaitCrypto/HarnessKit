@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
-from scenarios import S6_FACT_GROUPS
+from scenarios import S6_FACT_GROUPS, S6_FACT_NOTES
 
 
 @dataclass
@@ -352,6 +352,14 @@ def _similar(a: str, b: str) -> float:
     return difflib.SequenceMatcher(a=a.lower(), b=b.lower()).ratio()
 
 
+def _contained(needle: str, haystack: str) -> float:
+    """Share of needle's words that appear, in order, inside haystack."""
+    words = re.findall(r"[a-z0-9_]+|[\u4e00-\u9fff]", needle.lower())
+    other = re.findall(r"[a-z0-9_]+|[\u4e00-\u9fff]", haystack.lower())
+    matcher = difflib.SequenceMatcher(a=words, b=other, autojunk=False)
+    return sum(block.size for block in matcher.get_matching_blocks()) / max(1, len(words))
+
+
 def grade_s1(root: Path, *, last_message: str = "", baseline=None, **_: Any) -> GradeResult:
     changed = _changed_files(root, baseline)
     paths = ("src/auth/refresh.rs", "src/auth/session.rs")
@@ -540,6 +548,16 @@ def grade_s6(root: Path, *, baseline=None, **_: Any) -> GradeResult:
         for second in paragraphs[index + 1:]
         if _similar(first, second) >= 0.86
     ]
+    # Whole-paragraph similarity misses a fact note kept verbatim beside a canonical
+    # copy that gained one clause, so also count reachable files holding each note.
+    copied_facts = []
+    for stem in S6_FACT_NOTES:
+        for planted in _paragraphs(_frontmatter_body(_baseline_text(root, f"notes/{stem}.md", baseline)))[1:]:
+            holders = {path for path in reachable
+                       for part in _paragraphs(_frontmatter_body(_read(root, path)))
+                       if _contained(planted, part) >= 0.8}
+            if len(holders) >= 2:
+                copied_facts.append(stem)
     tests, tests_run, detail = _run_hidden_tests(root, "S6")
     missing_facts = [
         fact for fact, concepts in S6_FACT_GROUPS.items()
@@ -554,6 +572,7 @@ def grade_s6(root: Path, *, baseline=None, **_: Any) -> GradeResult:
         (len(_read(root, "README.md").splitlines()) <= 120, "README.md 入口超过 120 行"),
         (not missing_facts, f"关键产品事实没有从 AGENTS 可达: {missing_facts}"),
         (not duplicates, "入口可达文档包含高度相似的重复段落"),
+        (not copied_facts, f"同一条事实在多个入口可达文档中重复: {copied_facts}"),
         (not missing, f"入口可达文档有失效链接: {missing[:3]}"),
         (tests, detail or "隐藏测试未运行"),
     ]

@@ -602,6 +602,32 @@ def test_s6_rejects_unreachable_facts_and_broken_links(tmp_path, repositories):
     assert any('失效链接' in reason for reason in result.reasons)
 
 
+@pytest.mark.parametrize('copy', ['verbatim-note', 'index-item'])
+def test_s6_rejects_fact_kept_beside_a_lightly_edited_canonical_copy(tmp_path, repositories, copy):
+    # full1/A/S6 rep-02 and full2/B/S6 rep-01 kept the production-review note
+    # verbatim while the release guide gained a clause; full1/A rep-05 copied
+    # every fact into its notes index. Paragraph similarity passed all three.
+    root = _copy_repo(repositories, 'S6', tmp_path / 'repo')
+    baseline = snapshot_baseline(root)
+    apply_recorded_solution('S6', root)
+    assert grade('S6', root, baseline=baseline).success
+    if copy == 'verbatim-note':
+        (root / 'notes/production-review.md').write_text(baseline['texts']['notes/production-review.md'])
+        stem = 'production-review'
+    else:
+        # A verbatim note beside a paraphrased canonical doc is still one copy.
+        (root / 'notes/order-creation.md').write_text(baseline['texts']['notes/order-creation.md'])
+        assert grade('S6', root, baseline=baseline).success
+        rule = baseline['texts']['notes/order-creation.md'].split('\n\n')[1].strip()
+        with (root / 'docs/references/field-notes.md').open('a') as handle:
+            handle.write(f'- [Order creation](../../notes/order-creation.md): {rule}\n')
+        stem = 'order-creation'
+    result = grade('S6', root, baseline=baseline)
+    assert not result.success
+    assert '入口可达文档包含高度相似的重复段落' not in result.reasons
+    assert any('多个入口可达文档中重复' in reason and stem in reason for reason in result.reasons)
+
+
 @pytest.mark.parametrize('mode', ['empty', 'unavailable', 'disabled-autotests'])
 def test_hidden_tests_must_actually_run(tmp_path, repositories, monkeypatch, mode):
     import grader_support

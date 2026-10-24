@@ -17,7 +17,7 @@
 | S3 | prompt 不含工作主题；两个计划同在 `exec-plans/active/`，旧计划的最后修改更晚，只有 frontmatter 标记 superseded 和 superseded_by。 | 成功只看 90 秒窗口步骤及隐藏测试、未执行旧代码方向、未勾选旧计划待办；允许归档旧计划或仅改其 frontmatter。计划勾选与任意 worklog 交接条目只作为过程指标。 |
 | S4 | `docs/operations/gateway-throttles.md` 自信写着 100 并标更新日期；之后历史中的网关值提交只改代码。 | 最终答复写当前 120；原文档 diff 更新到 120，或答复中 100 与过时／旧／漂移／stale／outdated 等出现在同句或相隔不超过 80 字符。隐藏测试验证 allowance 与边界。 |
 | S5 | `queue.md` 与 `queue-v1.md` 都写 429，v1 仅 frontmatter 标 superseded；两级索引用相同标题中性列出两篇。 | 改实现及现行文档，允许只改 v1 frontmatter，禁止改 v1 正文；新增队列设计／契约文档才判重复（设计／参考目录，或标题／首段相似度 ≥0.8）。worklog/changelog/notes 可复用主题标题记录 503 变更，仅复制契约首段才算重复；链接有效，隐藏测试通过。 |
-| S6 | 长 README、53 篇零散现场笔记、重复真实段落和失效链接；事实散落在 README、notes 和 ops。 | AGENTS 必须修改且 ≤120 行；从 AGENTS 递归遍历 Markdown 链接，匹配五组关键事实；用段落相似度（0.86）检查重复，无失效链接，隐藏测试通过。仓库内已存在目录是有效链接；不规定目录或文件名。 |
+| S6 | 长 README、53 篇零散现场笔记、重复真实段落和失效链接；事实散落在 README、notes 和 ops。 | AGENTS 必须修改且 ≤120 行；从 AGENTS 递归遍历 Markdown 链接，匹配五组关键事实；用段落相似度（0.86）检查重复，并检查五篇事实笔记的原段落（按词序包含 ≥0.8）是否出现在两个以上可达文件中，无失效链接，隐藏测试通过。仓库内已存在目录是有效链接；不规定目录或文件名。 |
 | S7（仅 B） | alpha.6 schema、安装前缀里是从 `v0.1.0-alpha.6` 标签构建的旧 CLI、已装 `e0deab9` 的原始 alpha.7 skill（未改写的历史快照），仓库旁有真正 0.2.0 release 资产。 | 检查安装前缀 CLI 为 0.2.0、schema 版本及迁移待办消除、CODEX_HOME skill 0.2.0 与非空 references、原有产品文档正文不变、`check` 0 error；隐藏测试保持服务可跑。允许 frontmatter、AGENTS 路由变化，排除 `agent-surfaces/skills/`、`.harnesskit/`、`release/`。新增文档不算改写，新增 `docs/` Markdown 路径及数量单列指标。录制正确解实际调用本地 installer 和 migrate。 |
 
 共同干扰项包括 HTTP retry、队列 redelivery、provider 503、cache refresh、session renewal、configuration refresh、网关／租户／DB 三种额度，以及 event/config/provider/cache 多个 version 常量。正文没有“先检查实现”“更新现行文档”等人为提示。S3 的 worklog 只记停点，S5 的版本关系只由 frontmatter 表明。
@@ -53,6 +53,12 @@ S1 另记 `decision_cited`（答复引用决策）、`decision_body_edited`（�
 
 ```bash
 python3 evals/agent-ab/summarize.py --input /tmp/e1-b --markdown /tmp/e1-b/summary.md --json-out /tmp/e1-b/summary.json
+```
+
+评分器修改后可用当前评分器重评已完成的运行；旧判定追加保存在 `run.json` 的 `regrades` 中：
+
+```bash
+python3 evals/agent-ab/regrade.py --input /tmp/e1-b --scenario S6
 ```
 
 自测对每个场景运行一份正确解和两份错误解（包括可编译、看似合理的部分修复）；另覆盖 S2 一律改 v8、S3 无过程记录／当天新增 worklog／旧计划归档／错误勾选、S4 漂移措辞及距离、S5 合法变更记录及重复契约、S6 自选 handbook 布局及目录链接、带日期文件的新增时间，以及隔离和隐藏测试执行检查。所有 13 个场景×组别组合检查干净起点、共享树、登录 shell 隔离；本地 `codex login status` 确认临时 CODEX_HOME 可读认证文件，不联系 provider。`fixtures/pilot1-regressions.json` 保留作废 pilot1 的 S1 A/B、S7 B 真实改动用于回归，不作为有效实验结果。
