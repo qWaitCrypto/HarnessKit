@@ -588,6 +588,44 @@ Storage rows are separated by tenant id; background tasks that fail are moved to
         assert grade('S6', root, baseline=baseline).success
 
 
+@pytest.mark.parametrize('language', ['English', 'Chinese'])
+def test_s6_accepts_facts_consolidated_in_the_agents_own_words(tmp_path, repositories, language):
+    # Wording from full3/B/S6, where the grader missed facts that were stated.
+    root = _copy_repo(repositories, 'S6', tmp_path / 'repo')
+    baseline = snapshot_baseline(root)
+    apply_recorded_solution('S6', root)
+    if language == 'English':
+        failed_jobs = 'Jobs exhausted against their delivery budget enter a dead-letter queue.'
+        prose = f'''# Service invariants
+
+Order creation requires an idempotency key; a retry returns the original outcome.
+
+Events are delivered at least once and consumers store event ids before acknowledging.
+
+Isolate tenant data by `tenant_id` in request context, storage keys and export manifests.
+
+{failed_jobs}
+'''
+    else:
+        failed_jobs = '后台任务耗尽投递预算后进入 dead-letter。'
+        prose = f'''# 服务约束
+
+订单创建必须使用幂等键。
+
+事件采用 at-least-once 投递，消费者先持久化 event id 再确认消息。
+
+数据按租户标识隔离。
+
+{failed_jobs}
+'''
+    (root / 'docs/design/order-invariants.md').write_text(prose)
+    result = grade('S6', root, baseline=baseline)
+    assert result.success, result.reasons
+    (root / 'docs/design/order-invariants.md').write_text(prose.replace(failed_jobs, ''))
+    result = grade('S6', root, baseline=baseline)
+    assert any('failed jobs' in reason for reason in result.reasons), result.reasons
+
+
 def test_s6_rejects_unreachable_facts_and_broken_links(tmp_path, repositories):
     root = _copy_repo(repositories, 'S6', tmp_path / 'repo')
     baseline = snapshot_baseline(root)

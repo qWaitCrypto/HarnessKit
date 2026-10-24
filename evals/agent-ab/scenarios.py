@@ -101,15 +101,19 @@ SCENARIOS: dict[str, Scenario] = {
 # home elsewhere; a clean S6 keeps one copy of it, the rest of the notes stay.
 S6_FACT_NOTES = ("order-creation", "event-delivery", "tenant-storage", "job-failures", "production-review")
 
+# Concepts a reachable paragraph must all contain to state each fact. Consolidated
+# docs restate facts in their own words ("Isolate tenant data", "事件采用
+# at-least-once 投递"), so concepts use stems; preserved field notes mention the
+# same nouns without the rule, so each group still needs the rule's own term.
 S6_FACT_GROUPS: dict[str, tuple[tuple[str, ...], ...]] = {
     "order idempotency": (("order creation", "creating an order", "checkout", "订单创建", "创建订单"),
-                          ("idempotency", "idempotent", "幂等")),
-    "event delivery": (("event bus", "events", "event delivery", "事件总线", "事件投递"),
-                       ("at-least-once", "at least once", "至少一次")),
-    "tenant isolation": (("tenant_id", "tenant id", "租户标识"),
-                         ("isolated", "isolation", "separated", "隔离")),
-    "failed jobs": (("background jobs", "background tasks", "后台任务"),
-                    ("fail", "失败"), ("dead-letter", "dead letter", "死信")),
+                          ("idempot", "幂等")),
+    "event delivery": (("event", "事件"), ("at-least-once", "at least once", "至少一次")),
+    "tenant isolation": (("tenant_id", "tenant id", "租户标识"), ("isolat", "separated", "隔离")),
+    # The budget, not "fail", carries the rule: note titles and review notes
+    # mention failed jobs and dead letters without stating when jobs move.
+    "failed jobs": (("job", "task", "任务"), ("exhaust", "budget", "耗尽", "用尽", "预算"),
+                    ("dead-letter", "dead letter", "死信")),
     "release review": (("production release", "production deployment", "生产发布", "生产部署"),
                        ("two-person", "two person", "second reviewer", "双人", "两人"),
                        ("review", "approval", "复核", "审批", "审核")),
