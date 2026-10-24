@@ -665,7 +665,8 @@ fn refresh_mentions(db: &SqliteConnection) -> Result<()> {
     )?;
     let anchor_spans = db
         .query(
-            "SELECT evidence_json FROM edges WHERE kind = 'anchor' AND confidence = 'EXTRACTED';",
+            "SELECT evidence_json FROM edges
+             WHERE kind IN ('anchor', 'mention') AND confidence = 'EXTRACTED';",
             [],
         )?
         .rows
@@ -857,7 +858,9 @@ fn refresh_mentions(db: &SqliteConnection) -> Result<()> {
     }
 
     db.transaction(|db| {
-        db.exec("DELETE FROM edges WHERE kind = 'mention';")?;
+        // W9c stores resolved mention-only document references as EXTRACTED
+        // edges. Rebuild only W4's inferred mentions here.
+        db.exec("DELETE FROM edges WHERE kind = 'mention' AND confidence = 'INFERRED';")?;
         for (src, dst, weight, evidence) in next_edges {
             db.execute(
                 "INSERT INTO edges(src, dst, kind, confidence, weight, evidence_json)

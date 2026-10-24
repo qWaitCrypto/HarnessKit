@@ -15,6 +15,11 @@ pub(crate) fn path_status(path: &str) -> Option<&'static str> {
         .any(|part| matches!(part.as_str(), "archive" | "archived"))
     {
         Some("archived")
+    } else if parts
+        .iter()
+        .any(|part| matches!(part.as_str(), "historical" | "history" | "superseded"))
+    {
+        Some("historical")
     } else if parts.iter().any(|part| part == "active") {
         Some("active")
     } else {
@@ -55,7 +60,15 @@ pub(crate) fn infer_status(
 pub(crate) fn historical_status(status: &str) -> bool {
     matches!(
         status.to_ascii_lowercase().as_str(),
-        "superseded" | "completed" | "archive" | "archived" | "historical"
+        "superseded"
+            | "completed"
+            | "complete"
+            | "done"
+            | "closed"
+            | "finished"
+            | "archive"
+            | "archived"
+            | "historical"
     )
 }
 

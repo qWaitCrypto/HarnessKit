@@ -105,6 +105,7 @@ impl Targets {
 
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
 struct Edge {
+    kind: String,
     src: String,
     dst: String,
     evidence: String,
@@ -114,6 +115,7 @@ pub(crate) fn refresh_anchor_facts(
     db: &SqliteConnection,
     root: &Path,
     docs: &[IndexedDoc],
+    sealed_docs: &BTreeSet<String>,
 ) -> Result<Vec<IndexCheck>> {
     let mut checks = Vec::new();
     let suppressed_docs = docs
@@ -167,6 +169,7 @@ pub(crate) fn refresh_anchor_facts(
                 cell(row, 1),
                 evidence,
                 suppressed_docs.contains(cell(row, 0)),
+                sealed_docs.contains(cell(row, 0)),
                 &mut edges,
                 &mut checks,
             );
@@ -175,25 +178,27 @@ pub(crate) fn refresh_anchor_facts(
         edges.dedup();
         let previous = db
             .query(
-                "SELECT src, dst, evidence_json FROM edges WHERE kind = 'anchor'
-             AND confidence = 'EXTRACTED' ORDER BY src, dst, evidence_json;",
+                "SELECT kind, src, dst, evidence_json FROM edges
+             WHERE kind IN ('anchor', 'mention') AND confidence = 'EXTRACTED'
+             ORDER BY kind, src, dst, evidence_json;",
                 [],
             )?
             .rows
             .iter()
             .map(|row| Edge {
-                src: cell(row, 0).to_string(),
-                dst: cell(row, 1).to_string(),
-                evidence: cell(row, 2).to_string(),
+                kind: cell(row, 0).to_string(),
+                src: cell(row, 1).to_string(),
+                dst: cell(row, 2).to_string(),
+                evidence: cell(row, 3).to_string(),
             })
             .collect::<Vec<_>>();
         if previous != edges {
-            db.exec("DELETE FROM edges WHERE kind = 'anchor' AND confidence = 'EXTRACTED';")?;
+            db.exec("DELETE FROM edges WHERE kind IN ('anchor', 'mention') AND confidence = 'EXTRACTED';")?;
             for edge in edges {
                 db.execute(
                     "INSERT INTO edges(src, dst, kind, confidence, weight, evidence_json)
-                     VALUES (?1, ?2, 'anchor', 'EXTRACTED', 1.0, ?3);",
-                    params![edge.src, edge.dst, edge.evidence],
+                     VALUES (?1, ?2, ?3, 'EXTRACTED', 1.0, ?4);",
+                    params![edge.src, edge.dst, edge.kind, edge.evidence],
                 )?;
             }
         }
@@ -291,6 +296,7 @@ fn resolve(
     src: &str,
     mut evidence: Value,
     suppress_diagnostics: bool,
+    seal: bool,
     edges: &mut Vec<Edge>,
     checks: &mut Vec<IndexCheck>,
 ) {
@@ -325,6 +331,7 @@ fn resolve(
         }
         for target in matches {
             edges.push(Edge {
+                kind: if seal { "anchor" } else { "mention" }.to_string(),
                 src: src.to_string(),
                 dst: target.id.clone(),
                 evidence: evidence.to_string(),
@@ -409,6 +416,7 @@ fn resolve(
     } else {
         for target in matches {
             edges.push(Edge {
+                kind: if seal { "anchor" } else { "mention" }.to_string(),
                 src: src.to_string(),
                 dst: target.id.clone(),
                 evidence: evidence.to_string(),

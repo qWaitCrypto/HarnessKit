@@ -257,7 +257,8 @@ pub(crate) fn rule_group(rule_id: &str) -> String {
         | "anchor-line-number"
         | "code-drift"
         | "anchor-moved"
-        | "anchor-broken" => "anchors".to_string(),
+        | "anchor-broken"
+        | "knowledge-lock-pruned" => "anchors".to_string(),
         "duplicate-content" | "overlap-heading-fingerprint" => "duplicate".to_string(),
         "canonical-links-generated" | "canonical-links-reference" => "contamination".to_string(),
         "frontmatter-field-not-allowed" | "frontmatter-parse-error" => "frontmatter".to_string(),

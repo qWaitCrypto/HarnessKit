@@ -36,6 +36,33 @@ pub(crate) struct IncludeSpec {
     pub(crate) collection: String,
 }
 
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub(crate) enum AnchorPolicy {
+    Seal,
+    Mention,
+}
+
+impl AnchorPolicy {
+    pub(crate) fn parse(value: &str) -> Result<Self> {
+        match value.trim().trim_matches(['\'', '"']) {
+            "seal" => Ok(Self::Seal),
+            "mention" => Ok(Self::Mention),
+            other => Err(format!(
+                "invalid schema: anchors must be `seal` or `mention`, got `{}`",
+                other
+            )
+            .into()),
+        }
+    }
+
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Seal => "seal",
+            Self::Mention => "mention",
+        }
+    }
+}
+
 #[derive(Default, Clone)]
 pub(crate) struct EntryPoints {
     pub(crate) agents: Option<String>,
@@ -63,6 +90,7 @@ pub(crate) struct DocCollectionSpec {
     pub(crate) authority: Option<String>,
     pub(crate) status: Option<String>,
     pub(crate) anchor_candidate: bool,
+    pub(crate) anchors: Option<AnchorPolicy>,
     pub(crate) template: String,
     pub(crate) allowed_frontmatter: Vec<String>,
 }
@@ -489,6 +517,7 @@ pub(crate) fn parse_schema(text: &str) -> Result<Schema> {
                             "authority" => spec.authority = Some(value),
                             "status" => spec.status = Some(value),
                             "anchor_candidate" => spec.anchor_candidate = parse_bool(&value)?,
+                            "anchors" => spec.anchors = Some(AnchorPolicy::parse(&value)?),
                             "template" => spec.template = value,
                             "allowed_frontmatter" => {
                                 spec.allowed_frontmatter = parse_inline_list(&value)
@@ -910,6 +939,9 @@ pub(crate) fn render_schema_copy(schema: &Schema) -> String {
         push_optional_line(&mut lines, 4, "authority", spec.authority.as_deref());
         push_optional_line(&mut lines, 4, "status", spec.status.as_deref());
         lines.push(format!("    anchor_candidate: {}", spec.anchor_candidate));
+        if let Some(policy) = spec.anchors {
+            lines.push(format!("    anchors: {}", policy.as_str()));
+        }
         lines.push(format!("    template: {}", spec.template));
         lines.push(format!(
             "    allowed_frontmatter: [{}]",

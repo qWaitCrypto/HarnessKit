@@ -18,7 +18,7 @@ use crate::fs_utils::{
 };
 use crate::git::{git_dirty_label, host_git_info, HostGitInfo, HostGitMode};
 use crate::history::{compute_history_status, is_history_dirty, HistoryStatus};
-use crate::lifecycle::infer_status;
+use crate::lifecycle::{doc_lifecycle, infer_status, successor_map};
 use crate::parse::parse_doc_text;
 use crate::render::{render_index_json, render_index_summary};
 use crate::schema::{core_file_rel_path, DocCollectionSpec, Schema};
@@ -65,6 +65,27 @@ pub(crate) struct IndexedDoc {
     pub(crate) mtime_unix: u64,
     #[serde(skip_serializing)]
     pub(crate) mtime_ns: u64,
+}
+
+/// Documents whose resolved explicit code references are durable contracts.
+/// The policy is deliberately computed from the indexed lifecycle state so a
+/// completed, archived, superseded or banner-marked document is downgraded to
+/// a searchable mention even when its collection normally seals anchors.
+pub(crate) fn sealed_doc_paths(schema: &Schema, docs: &[IndexedDoc]) -> BTreeSet<String> {
+    let successors = successor_map(docs);
+    docs.iter()
+        .filter(|doc| {
+            crate::discover::anchor_policy_for_path(schema, &doc.path)
+                == crate::schema::AnchorPolicy::Seal
+                && doc_lifecycle(
+                    &doc.path,
+                    doc.status.as_deref().unwrap_or(""),
+                    &doc.summary,
+                    successors.get(&doc.path).map(Vec::as_slice).unwrap_or(&[]),
+                ) == "current"
+        })
+        .map(|doc| doc.path.clone())
+        .collect()
 }
 
 #[derive(Clone, Serialize)]
@@ -316,12 +337,18 @@ fn refresh_fact_store_with_knowledge(context: &EngineContext, persist: bool) -> 
     let db = open_fact_store(&context.target_dir)?;
     crate::code::refresh_code_facts(&db, &context.target_dir, &context.schema)?;
     let mut artifact = read_index_artifact_from_fact_store(&db)?;
+    let sealed_docs = sealed_doc_paths(&context.schema, &artifact.docs);
     let mut anchor_checks =
-        crate::anchors::refresh_anchor_facts(&db, &context.target_dir, &artifact.docs)?;
+        crate::anchors::refresh_anchor_facts(
+            &db,
+            &context.target_dir,
+            &artifact.docs,
+            &sealed_docs,
+        )?;
     let knowledge = if persist {
-        crate::knowledge::refresh(&context.target_dir, &db)?
+        crate::knowledge::refresh(&context.target_dir, &db, &sealed_docs)?
     } else {
-        crate::knowledge::preview(&context.target_dir, &db)?
+        crate::knowledge::preview(&context.target_dir, &db, &sealed_docs)?
     };
     anchor_checks.retain(|check| {
         if check.rule_id != "anchor-unresolved" {
@@ -381,6 +408,43 @@ fn refresh_fact_store_with_knowledge(context: &EngineContext, persist: bool) -> 
     checks.extend(external_checks);
     checks.extend(anchor_checks);
     checks.extend(knowledge.checks);
+    // `check` refreshes the same fact store more than once while assembling
+    // its filtered report. Keep the one aggregate cleanup notice visible for
+    // the remainder of that derived-state generation.
+    if knowledge.pruned_docs.is_empty() {
+        checks.extend(
+            artifact
+                .checks
+                .iter()
+                .filter(|check| check.rule_id == "knowledge-lock-pruned")
+                .cloned(),
+        );
+    }
+    if !knowledge.pruned_docs.is_empty() {
+        let docs = knowledge.pruned_docs.iter().cloned().collect::<Vec<_>>();
+        let mut check = IndexCheck {
+            rule_id: "knowledge-lock-pruned".to_string(),
+            severity: "info".to_string(),
+            subject_path: ".harnesskit/knowledge.lock".to_string(),
+            message: format!(
+                "Removed {} mention-only document(s) from knowledge.lock: {}.",
+                docs.len(),
+                docs.join(", ")
+            ),
+            hint: Some(
+                "Historical, release and completed documents remain searchable through mention edges; no acknowledgement is required."
+                    .to_string(),
+            ),
+            fixable: false,
+            evidence_json: serde_json::json!({
+                "docs": docs,
+                "reason": "document anchor policy changed to mention",
+            })
+            .to_string(),
+        };
+        crate::checks::complete_check(&mut check);
+        checks.push(check);
+    }
     checks.sort_by(|left, right| {
         (&left.subject_path, &left.rule_id).cmp(&(&right.subject_path, &right.rule_id))
     });

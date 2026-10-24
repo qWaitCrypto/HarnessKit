@@ -7,7 +7,7 @@ use crate::fs_utils::{normalize_path, read_text_lossy};
 use crate::parse::parse_doc_text;
 use crate::schema::{
     configured_architecture_path, core_file_rel_path, glob_matcher, parse_schema,
-    DocCollectionSpec, Schema, BUNDLED_SCHEMA_TEXT,
+    AnchorPolicy, DocCollectionSpec, Schema, BUNDLED_SCHEMA_TEXT,
 };
 use crate::Result;
 
@@ -539,6 +539,111 @@ fn classify_path(schema: &Schema, path: &str) -> (Option<String>, String) {
 
 pub(crate) fn collection_name_for_path(schema: &Schema, path: &str) -> Option<String> {
     classify_path(schema, path).0
+}
+
+/// Return the configured/default edge policy for a document path. Lifecycle
+/// state is applied by `index::sealed_doc_paths`; this function answers which
+/// edge kind a current document would normally create.
+pub(crate) fn anchor_policy_for_path(schema: &Schema, path: &str) -> AnchorPolicy {
+    let configured_collection = collection_name_for_path(schema, path);
+    let basename = Path::new(path)
+        .file_name()
+        .map(|name| name.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default();
+    if basename == "readme.md" || path.starts_with("agent-surfaces/") {
+        return AnchorPolicy::Mention;
+    }
+    if let Some(collection) = configured_collection.as_deref() {
+        if let Some(spec) = schema.doc_collections.iter().find(|spec| spec.name == collection) {
+            if let Some(policy) = spec.anchors {
+                return policy;
+            }
+            if !spec.anchor_candidate {
+                return AnchorPolicy::Mention;
+            }
+            if is_historical_record_name(&basename) || is_historical_record_path(path) {
+                return AnchorPolicy::Mention;
+            }
+            return default_anchor_policy(collection);
+        }
+        // Include mappings use built-in collection names without a full
+        // collection declaration. They still get a stable zero-config policy.
+        if is_historical_record_name(&basename) || is_historical_record_path(path) {
+            return AnchorPolicy::Mention;
+        }
+        if basename.starts_with("design-") || basename.starts_with("design_") {
+            return AnchorPolicy::Seal;
+        }
+        if collection == "notes"
+            && !schema.include.iter().any(|item| {
+                glob_matcher(&item.pattern)
+                    .expect("validated schema glob")
+                    .is_match(path)
+            })
+        {
+            // A flat, unclassified Markdown document is a current source by
+            // default. Explicit include mappings to notes opt into the
+            // lower-noise mention policy used by release/agent surfaces.
+            return AnchorPolicy::Seal;
+        }
+        return default_anchor_policy(collection);
+    }
+
+    if is_configured_doc(schema, path) {
+        return AnchorPolicy::Seal;
+    }
+
+    // Flat release/migration records are time-point evidence. Keep these
+    // references searchable, but do not make their code examples a contract.
+    if is_historical_record_name(&basename) || is_historical_record_path(path) {
+        AnchorPolicy::Mention
+    } else if basename.starts_with("design-") || basename.starts_with("design_") {
+        AnchorPolicy::Seal
+    } else {
+        // An otherwise unclassified document with an explicit code path is a
+        // current contract in zero-config projects. Known time-point records
+        // were handled above and remain mention-only.
+        AnchorPolicy::Seal
+    }
+}
+
+pub(crate) fn default_anchor_policy(collection: &str) -> AnchorPolicy {
+    match collection {
+        "decisions" | "design_docs" | "product_specs" | "notes" => AnchorPolicy::Seal,
+        _ => AnchorPolicy::Mention,
+    }
+}
+
+fn is_historical_record_name(name: &str) -> bool {
+    name == "changelog.md"
+        || name == "changes.md"
+        || name.starts_with("changelog-")
+        || name.starts_with("changes-")
+        || name.starts_with("migration-")
+        || name == "migration.md"
+        || name == "release.md"
+        || name.starts_with("release-")
+        || name.starts_with("release_")
+        || name.starts_with("release-notes")
+        || name.starts_with("release_notes")
+        || name.starts_with("history-")
+        || name.starts_with("history_")
+}
+
+fn is_historical_record_path(path: &str) -> bool {
+    path.split('/').any(|part| {
+        matches!(
+            part.to_ascii_lowercase().as_str(),
+            "changelog"
+                | "changes"
+                | "migration"
+                | "migrations"
+                | "release"
+                | "releases"
+                | "history"
+                | "histories"
+        )
+    })
 }
 
 pub(crate) fn default_authority(collection: &str) -> Option<String> {

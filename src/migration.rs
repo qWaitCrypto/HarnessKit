@@ -588,7 +588,9 @@ pub(crate) fn apply_analysis(
         let path = context.target_dir.join(".harnesskit/knowledge.lock");
         if !path.exists() {
             let db = crate::index::open_fact_store(&context.target_dir)?;
-            crate::knowledge::refresh(&context.target_dir, &db)?;
+            let artifact = crate::index::read_index_artifact_from_fact_store(&db)?;
+            let sealed_docs = crate::index::sealed_doc_paths(&context.schema, &artifact.docs);
+            crate::knowledge::refresh(&context.target_dir, &db, &sealed_docs)?;
             changed |= path.is_file();
         }
         applied.push("knowledge-lock-init".to_string());

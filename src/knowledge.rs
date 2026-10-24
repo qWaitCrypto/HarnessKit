@@ -87,6 +87,7 @@ pub(crate) fn anchor_states(
             anchor: entry.anchor.clone(),
             status: match seal {
                 Some(seal) if seal.fingerprint == entry.fingerprint => "current",
+                Some(_) if is_directory_anchor(&entry.anchor) => "current",
                 Some(_) => "drifted",
                 None if moved.is_some() => "moved",
                 None if matches.len() > 1 => "ambiguous",
@@ -141,18 +142,25 @@ pub(crate) struct KnowledgeResult {
     pub(crate) checks: Vec<IndexCheck>,
     /// W2's unresolved diagnostic is superseded by a lock-aware W3 result.
     pub(crate) locked_unresolved: BTreeSet<(String, String)>,
+    /// Existing seals removed because their document is now mention-only.
+    pub(crate) pruned_docs: BTreeSet<String>,
 }
 
 pub(crate) fn refresh(
     root: &Path,
     db: &SqliteConnection,
+    sealed_docs: &BTreeSet<String>,
 ) -> Result<KnowledgeResult> {
-    refresh_knowledge(root, db, true)
+    refresh_knowledge(root, db, true, sealed_docs)
 }
 
 /// Migration analysis refreshes derived facts without changing durable seals.
-pub(crate) fn preview(root: &Path, db: &SqliteConnection) -> Result<KnowledgeResult> {
-    refresh_knowledge(root, db, false)
+pub(crate) fn preview(
+    root: &Path,
+    db: &SqliteConnection,
+    sealed_docs: &BTreeSet<String>,
+) -> Result<KnowledgeResult> {
+    refresh_knowledge(root, db, false, sealed_docs)
 }
 
 pub(crate) fn has_resolved_anchors(db: &SqliteConnection) -> Result<bool> {
@@ -163,6 +171,7 @@ fn refresh_knowledge(
     root: &Path,
     db: &SqliteConnection,
     persist: bool,
+    sealed_docs: &BTreeSet<String>,
 ) -> Result<KnowledgeResult> {
     let lock_path = root.join(".harnesskit/knowledge.lock");
     let (entries, had_valid_entry) = read_lock(&lock_path)?;
@@ -179,6 +188,7 @@ fn refresh_knowledge(
 
     let mut checks = Vec::new();
     let mut locked_unresolved = BTreeSet::new();
+    let mut pruned_docs = BTreeSet::new();
     let mut next = BTreeMap::<(String, String), LockEntry>::new();
 
     // Existing entries are the authority for detecting a disappeared symbol.
@@ -186,6 +196,10 @@ fn refresh_knowledge(
     // omitted, which also cleans stale lines after an ordinary index.
     for entry in &existing_entries {
         let key = (entry.doc.clone(), entry.anchor.clone());
+        if !sealed_docs.contains(&entry.doc) {
+            pruned_docs.insert(entry.doc.clone());
+            continue;
+        }
         if is_line_anchor(&entry.anchor) || !current_doc_anchors.contains(&key) {
             continue;
         }
@@ -193,6 +207,12 @@ fn refresh_knowledge(
         let current = current_anchors.get(&key);
         match current {
             Some(current) if current.fingerprint == entry.fingerprint => {
+                next.insert(key, entry.clone());
+            }
+            Some(_) if is_directory_anchor(&entry.anchor) => {
+                // Directory seals keep their baseline for staged/deleted
+                // coverage, but content churn is not a document contract and
+                // never produces code-drift or rewrites the lock.
                 next.insert(key, entry.clone());
             }
             Some(current) => {
@@ -255,6 +275,7 @@ fn refresh_knowledge(
     Ok(KnowledgeResult {
         checks,
         locked_unresolved,
+        pruned_docs,
     })
 }
 
@@ -448,6 +469,14 @@ fn current_seals(db: &SqliteConnection) -> Result<BTreeMap<(String, String), Cur
         );
     }
     Ok(seals)
+}
+
+fn is_directory_anchor(anchor: &str) -> bool {
+    anchor
+        .split_once('#')
+        .map(|(path, _)| path)
+        .unwrap_or(anchor)
+        .ends_with('/')
 }
 
 fn current_doc_anchors(db: &SqliteConnection) -> Result<BTreeSet<(String, String)>> {

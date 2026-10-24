@@ -45,6 +45,7 @@ doc_collections:
     authority: canonical
     status: active
     anchor_candidate: true
+    anchors: seal
     template: product-spec
     allowed_frontmatter: [status, authority, scope_paths, supersedes, superseded_by, supersedes_parts_of]
   design_docs:
@@ -52,6 +53,7 @@ doc_collections:
     authority: canonical
     status: active
     anchor_candidate: true
+    anchors: seal
     template: design-doc
     allowed_frontmatter: [status, authority, scope_paths, supersedes, superseded_by, supersedes_parts_of]
   decisions:
@@ -59,48 +61,56 @@ doc_collections:
     authority: canonical
     status: active
     anchor_candidate: true
+    anchors: seal
     template: decision
     allowed_frontmatter: [status, authority, scope_paths, supersedes, superseded_by, supersedes_parts_of]
   exec_plans_active:
     path: exec-plans/active
     authority: supporting
     anchor_candidate: false
+    anchors: mention
     template: exec-plan
     allowed_frontmatter: [status, superseded_by, supersedes_parts_of]
   exec_plans_completed:
     path: exec-plans/completed
     authority: supporting
     anchor_candidate: false
+    anchors: mention
     template: exec-plan
     allowed_frontmatter: [status, superseded_by, supersedes_parts_of]
   worklog_active:
     path: worklog/active
     authority: supporting
     anchor_candidate: false
+    anchors: mention
     template: worklog
     allowed_frontmatter: [status, superseded_by, supersedes_parts_of]
   worklog_archive:
     path: worklog/archive
     authority: supporting
     anchor_candidate: false
+    anchors: mention
     template: worklog
     allowed_frontmatter: [status, superseded_by, supersedes_parts_of]
   operations:
     path: operations
     authority: supporting
     anchor_candidate: false
+    anchors: seal
     template: operation
     allowed_frontmatter: [status, authority, superseded_by, supersedes_parts_of]
   generated:
     path: generated
     authority: generated
     anchor_candidate: false
+    anchors: mention
     template: generated
     allowed_frontmatter: [superseded_by, supersedes_parts_of]
   references:
     path: references
     authority: reference
     anchor_candidate: false
+    anchors: mention
     template: reference
     allowed_frontmatter: [superseded_by, supersedes_parts_of]
 

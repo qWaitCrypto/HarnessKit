@@ -54,6 +54,15 @@ and suppressions can use the glob-aware `rule` key instead of legacy `rule_id`.
 - Agent hooks are disabled by default. `harnesskit hook pre-edit|post-edit`
   is inert until an agent invokes it, and `harnesskit install --hooks --write`
   explicitly enables project-local Claude Code settings.
+- Release, migration, changelog, and completed or historical documents now keep
+  code references as mention edges; they are searchable but do not create
+  `knowledge.lock` seals or `code-drift` findings. Existing seals that become
+  mention-only are removed automatically with one informational check notice.
+  In the bundled schema, product specs, design docs, decisions and operations
+  seal anchors; exec plans, worklogs, generated docs and references are
+  mention-only. Set `anchors: seal|mention` on a collection to override.
+- Directory anchors (for example `tests/`) are checked for existence and moves
+  only; content changes inside the directory no longer report drift.
 
 ## knowledge.lock and Git
 
