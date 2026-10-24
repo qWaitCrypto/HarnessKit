@@ -1,3 +1,4 @@
 /target
 /.serena
 /.harnesskit/state/
+__pycache__/

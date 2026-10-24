@@ -1,0 +1,6 @@
+{"type":"thread.started","thread_id":"sample-thread","created_at":"2026-01-01T00:00:00Z"}
+{"type":"item.started","item":{"id":"call-1","type":"command_execution","command":"harnesskit context --current"},"created_at":"2026-01-01T00:00:01Z"}
+{"type":"item.completed","item":{"id":"call-1","type":"command_execution","command":"harnesskit context --current","aggregated_output":"current"},"created_at":"2026-01-01T00:00:02Z"}
+{"type":"item.started","item":{"id":"call-2","type":"command_execution","command":"sed -n '1,120p' docs/decisions/000-token-refresh.md"},"created_at":"2026-01-01T00:00:03Z"}
+{"type":"item.completed","item":{"id":"call-2","type":"command_execution","command":"sed -n '1,120p' docs/decisions/000-token-refresh.md","aggregated_output":"single-flight"},"created_at":"2026-01-01T00:00:04Z"}
+{"type":"turn.completed","usage":{"input_tokens":900,"cached_input_tokens":200,"output_tokens":180,"total_tokens":1080},"created_at":"2026-01-01T00:00:05Z"}
