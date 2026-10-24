@@ -10,6 +10,7 @@ import os
 import re
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -392,12 +393,22 @@ def _run_one(
             command = _codex_command(scenario, scenario_repo, prepared, last_message_path)
             try:
                 with events_path.open("w", encoding="utf-8") as output:
-                    process = subprocess.Popen(command, env=prepared.env, stdout=output, stderr=subprocess.PIPE, text=True)
+                    # codex exec reads extra prompt text from a non-TTY stdin until EOF, so an
+                    # inherited stdin that never closes hangs it before the first event.
+                    # The npm shim spawns the native binary as a child; kill the whole
+                    # session on timeout or the orphan keeps stderr open and blocks us.
+                    process = subprocess.Popen(
+                        command, env=prepared.env, stdin=subprocess.DEVNULL, stdout=output,
+                        stderr=subprocess.PIPE, text=True, start_new_session=True,
+                    )
                     try:
                         _, stderr = process.communicate(timeout=min(timeout_seconds, MAX_TIMEOUT_SECONDS))
                     except subprocess.TimeoutExpired:
                         timed_out = True
-                        process.kill()
+                        try:
+                            os.killpg(process.pid, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
                         _, stderr = process.communicate()
                     return_code = process.returncode
                 (run_dir / "stderr.log").write_text(stderr or "", encoding="utf-8")

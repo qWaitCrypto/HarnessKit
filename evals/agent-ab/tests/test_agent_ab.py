@@ -386,6 +386,35 @@ def test_s3_runner_records_process_metrics(tmp_path, repositories):
         assert recorded['grade']['process_metrics'][name] is True
 
 
+def test_runner_closes_stdin_and_kills_orphaned_codex_on_timeout(tmp_path, repositories, monkeypatch):
+    # Shape of the npm codex shim: it reads stdin until EOF and its native child
+    # inherits stderr, so killing only the shim used to leave communicate() blocked.
+    import run
+    fake = tmp_path / 'fake-codex'
+    fake.write_text('#!/bin/sh\ncat > /dev/null\necho stdin-closed\nsleep 600 &\nwait\n')
+    fake.chmod(0o755)
+    monkeypatch.setattr(run, '_codex_command', lambda *args: [str(fake)])
+    source = tmp_path / 'daily-home'
+    source.mkdir()
+    (source / 'auth.json').write_text('{"auth_mode":"fixture"}\n')
+    (source / 'config.toml').write_text('model = "fixture"\n')
+    read_end, write_end = os.pipe()
+    saved_stdin = os.dup(0)
+    os.dup2(read_end, 0)
+    try:
+        run._run_one(scenario=SCENARIOS['S3'], arm='A', repetition=1,
+                     fixture=repositories['S3'], out_root=tmp_path / 'out', source_home=source,
+                     repo_root=REPO_ROOT, dry_run=False, timeout_seconds=3)
+    finally:
+        os.dup2(saved_stdin, 0)
+        for fd in (saved_stdin, read_end, write_end):
+            os.close(fd)
+    recorded = json.loads((tmp_path / 'out/S3/A/rep-01/run.json').read_text())
+    assert recorded['timed_out'] is True
+    assert recorded['metrics']['wall_time_seconds'] < 30
+    assert (tmp_path / 'out/S3/A/rep-01/events.jsonl').read_text() == 'stdin-closed\n'
+
+
 @pytest.mark.parametrize('archive', [False, True])
 def test_s3_accepts_superseded_plan_metadata_and_archiving(tmp_path, repositories, archive):
     root = _copy_repo(repositories, 'S3', tmp_path / 'repo')
