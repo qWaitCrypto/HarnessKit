@@ -15,7 +15,7 @@ Files are project memory; the CLI retrieves, checks, migrates and checkpoints it
 - Takeover: `harnesskit context --current` shows active work and recent changes.
 - Evidence: `harnesskit query "1–3 distinctive keywords"`; on zero results follow `hints`, then use `rg`.
 - Before code edits: `harnesskit context --for <path|symbol>`; read the full constraining section, not just the snippet.
-- Conflicting feature requests do not override accepted decisions. Honor their caller/boundary or stop with the decision path and options. Never rewrite accepted bodies to fit; replacement needs explicit user consent and a new superseding decision.
+- Conflicting feature requests do not override accepted decisions. Honor their caller/boundary and name the decision in your reply, or stop with the decision path and options. Never rewrite accepted bodies to fit; replacement needs explicit user consent and a new superseding decision.
 - Review: `harnesskit context --diff [rev]` shows affected documents and drift.
 
 ## After working
