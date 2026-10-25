@@ -626,6 +626,36 @@ Isolate tenant data by `tenant_id` in request context, storage keys and export m
     assert any('failed jobs' in reason for reason in result.reasons), result.reasons
 
 
+@pytest.mark.parametrize('language', ['English', 'Chinese'])
+def test_s6_rejects_a_note_replaced_by_a_link_unless_its_detail_moved(tmp_path, repositories, language):
+    # Wording from full3/B/S6, which replaced notes with links to owner docs.
+    root = _copy_repo(repositories, 'S6', tmp_path / 'repo')
+    baseline = snapshot_baseline(root)
+    apply_recorded_solution('S6', root)
+    original = (root / 'notes/cache-keys.md').read_text()
+    (root / 'notes/cache-keys.md').write_text('# Cache Keys\n\nSee [operating invariants](../docs/design/order-invariants.md).\n')
+    result = grade('S6', root, baseline=baseline)
+    assert not result.success
+    assert any('笔记的独有内容' in reason and 'cache-keys#0' in reason and 'cache-keys#1' in reason
+               for reason in result.reasons), result.reasons
+    # A migration plan that lists the moved text is not where the knowledge lives.
+    plan = root / 'docs/exec-plans/completed/adoption.md'
+    plan.parent.mkdir(parents=True, exist_ok=True)
+    plan.write_text(f'# Adoption\n\n{original}\n')
+    assert 'cache-keys#0' in ' '.join(grade('S6', root, baseline=baseline).reasons)
+    if language == 'English':
+        moved = ('Order and settlement keys each include a tenant component; the settlement suffix includes the '
+                 'business day used in reconciliation.\n\nCache entries expire after fifteen minutes; expiry must '
+                 'not delete the order or settlement evidence.\n')
+    else:
+        moved = '订单列表与结算导出缓存都带 tenant 前缀；结算业务后缀使用对账所用的 business day。\n\n缓存条目运行要求为十五分钟过期，过期不能删除订单或结算证据。\n'
+    with (root / 'docs/design/order-invariants.md').open('a') as handle:
+        handle.write(f'\n{moved}')
+    result = grade('S6', root, baseline=baseline)
+    assert result.success, result.reasons
+    assert result.process_metrics['note_details_lost'] == 0
+
+
 def test_s6_rejects_unreachable_facts_and_broken_links(tmp_path, repositories):
     root = _copy_repo(repositories, 'S6', tmp_path / 'repo')
     baseline = snapshot_baseline(root)

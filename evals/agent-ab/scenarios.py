@@ -120,6 +120,206 @@ S6_FACT_GROUPS: dict[str, tuple[tuple[str, ...], ...]] = {
 }
 
 
+# What each field-note paragraph beyond the five fact rules says, in the order
+# the note holds them; a clean S6 keeps every one somewhere in the docs. Agents
+# move these into owner docs in their own words or in Chinese, so each paragraph
+# is a set of concepts like S6_FACT_GROUPS. A spec may also match the note's
+# sibling paragraph or the general event-consumer rule when those state the
+# same thing; it matches nothing else in the fixture.
+S6_NOTE_DETAILS: dict[str, tuple[tuple[tuple[str, ...], ...], ...]] = {
+    "admin-console": (
+        (("console", "控制台", "管理台"), ("manual action", "手动操作", "人工操作", "手工操作"), ("provider reference", "provider 引用", "provider ref")),
+        (("mask", "掩码", "脱敏", "遮"), ("email", "邮箱", "邮件"), ("screenshot", "截图")),
+    ),
+    "authorization": (
+        (("authoriz", "授权"), ("captur", "捕获", "扣款"), ("separate", "distinct", "different", "independent", "分开", "分别", "独立", "各自", "不同"), ("payment", "支付", "audit field", "审计字段")),
+        (("authoriz", "授权"), ("same string", "same identifier", "same value", "相同字符串", "同一字符串", "相同的字符串", "相同标识", "相同值", "同一个字符串", "同一值")),
+    ),
+    "backup-restore": (
+        (("restor", "恢复", "还原"), ("prefix", "前缀"), ("idempot", "幂等")),
+        (("northwind",), ("cedar",), ("backup manifest", "备份清单", "备份 manifest", "signed", "签名")),
+    ),
+    "cache-keys": (
+        (("suffix", "后缀"), ("business day", "业务日")),
+        (("fifteen minute", "fifteen-minute", "15 minute", "15-minute", "15 分钟", "15分钟", "十五分钟"),),
+    ),
+    "capture-worker": (
+        (("captur", "捕获"), ("lease", "租约"), ("renew", "续约", "续期", "续租")),
+        (("set-63",), ("csv",), ("checksum", "校验和", "校验值")),
+    ),
+    "cart-expiry": (
+        (("cart", "购物车"), ("expir", "过期"), ("audit", "审计")),
+        (("cart", "购物车"), ("inventory", "库存"), ("transition", "状态迁移", "状态转换", "状态转移", "迁移记录")),
+    ),
+    "config-refresh": (
+        (("validat", "校验", "验证"), ("immutable", "不可变"), ("snapshot", "快照", "merg", "合并")),
+        (("region mapping", "region 映射", "区域映射", "地区映射", "所有 region", "全部 region"), ("validat", "校验", "验证")),
+    ),
+    "correlation": (
+        (("correlation", "关联 id", "关联标识"), ("gateway", "网关"), ("settlement row", "settlement", "结算")),
+    ),
+    "currency": (
+        (("minor unit", "minor-unit", "最小货币单位", "最小单位", "整数分"), ("currency", "币种", "货币"), ("integer", "整数")),
+        (("support", "支持", "客服", "工单"), ("checkout timestamp", "结账时间", "下单时间", "checkout 时间")),
+    ),
+    "customer-manifest": (
+        (("customer manifest", "客户清单", "客户 manifest"), ("checksum", "校验和", "校验值"), ("retention", "保留期", "保留窗口")),
+        (("checksum", "校验和", "校验值"), ("sorted", "排序"), ("download url", "下载 url", "下载链接", "url expir", "url 过期")),
+    ),
+    "database-pool": (
+        (("pool wait", "连接池等待", "pool 等待", "池等待"), ("queue age", "队列年龄", "队列时长", "最老", "oldest", "queue 年龄")),
+        (("12 ms", "12ms", "12 毫秒"),),
+        (("two second", "2 second", "2-second", "two-second", "2 秒", "2秒", "两秒"), ("dependency-unavailable", "dependency unavailable", "依赖不可用")),
+    ),
+    "dead-letter-review": (
+        (("dead-letter", "dead letter", "死信"), ("cause", "原因"), ("replay batch", "replay", "重放", "回放")),
+        (("dead-letter", "dead letter", "死信"), ("region", "区域", "地区"), ("on-call", "值班", "payment owner", "支付负责人", "replay case", "重放", "回放")),
+    ),
+    "export-manifest": (
+        (("export", "导出", "stream", "流式"), ("manifest", "清单"), ("checksum", "校验"), ("resum", "续传", "恢复", "继续")),
+        (("cursor", "游标"), ("sealed snapshot", "same snapshot", "封存快照", "同一快照", "同一个快照", "封存的快照")),
+    ),
+    "fraud-check": (
+        (("fraud", "欺诈", "风控"), ("review", "复核", "审核"), ("customer identifier", "customer id", "客户标识", "客户身份", "observability", "可观测", "观测")),
+        (("500,000", "500000", "50 万", "50万"),),
+    ),
+    "gateway-errors": (
+        (("gateway", "网关"), ("stable reason", "stable", "稳定"), ("correlation", "关联")),
+        (("reason", "原因码", "错误码"), ("request id", "请求 id", "请求标识", "request_id", "correlation", "关联"), ("span",)),
+    ),
+    "health-check": (
+        (("readiness", "ready", "就绪"), ("dependency", "依赖"), ("distinguish", "separate", "distinct", "区分", "分别", "独立", "另行", "不能混")),
+        (("payment provider", "provider", "支付服务商"), ("database", "数据库"), ("readiness", "ready", "就绪")),
+    ),
+    "incident-links": (
+        (("incident", "事故", "事件记录"), ("provider reference", "provider 引用", "provider ref"), ("tenant scope", "租户范围")),
+        (("pay-217",), ("outage timeline", "timeline", "时间线")),
+    ),
+    "inventory-window": (
+        (("inventory", "库存"), ("short window", "短窗口", "short reservation", "短暂预留")),
+    ),
+    "launch-window": (
+        (("quiet", "静默", "安静", "冷静期"), ("export", "导出")),
+        (("northwind",), ("october", "10 月", "十月"), ("finance operations", "finance ops", "财务运营", "财务运维")),
+    ),
+    "ledger-snapshot": (
+        (("snapshot", "快照"), ("seal", "封存", "密封"), ("provider row", "provider", "compar", "比较", "对比"), ("before", "前")),
+        (("nw-oct-18",), ("set-63",)),
+    ),
+    "line-items": (
+        (("line item", "accepted line", "each line", "订单行", "明细行", "商品行", "行项"), ("catalog price", "checkout price", "目录价", "目录单价", "商品价格", "catalog 价格")),
+        (("line item", "accepted line", "each line", "订单行", "明细行", "商品行", "行项"), ("import", "导入")),
+    ),
+    "merchant-onboarding": (
+        (("region", "区域", "地区"), ("currency", "币种", "货币"), ("adapter", "适配器"), ("first order", "首次订单", "首个订单", "第一笔订单", "首笔订单")),
+        (("region", "区域", "地区"), ("currency", "币种", "货币"), ("catalog", "目录"), ("import", "导入")),
+    ),
+    "metrics-labels": (
+        (("metric", "指标"), ("label", "标签"), ("customer identifier", "customer id", "客户标识", "客户身份")),
+    ),
+    "migration-window": (
+        (("migration window", "迁移窗口"), ("revision", "release owner", "发布负责人", "release 负责人")),
+        (("reader", "读取方", "读者", "读端"), ("one release cycle", "release cycle", "发布周期", "一个发布", "一个版本周期")),
+    ),
+    "order-state": (
+        (("transition", "状态迁移", "状态转换", "状态转移", "状态变更"), ("tenant", "租户"), ("idempot", "幂等"), ("record", "记录", "carr", "携带")),
+    ),
+    "provider-review": (
+        (("july", "7 月", "七月"), ("duplicate ledger", "duplicate", "重复账本", "重复")),
+        (("pay-217",), ("timeout timestamp", "timeout", "超时")),
+    ),
+    "provider-timeout": (
+        (("timeout", "timed out", "timed-out", "超时"), ("pending", "待定", "未决", "挂起"), ("lookup", "查询", "查证"), ("until", "直到", "resolv", "之前", "前")),
+        (("lookup", "查询", "查证"), ("another charge", "second charge", "再次扣款", "重复扣款", "二次扣款", "再扣", "没有再", "未再")),
+    ),
+    "queue-leases": (
+        (("lease", "租约"), ("correlation", "关联"), ("expir", "过期", "到期")),
+        (("45-second", "45 second", "45 秒", "45秒"),),
+    ),
+    "queue-sample": (
+        (("oldest", "最老", "最久", "最早"), ("lease", "租约"), ("depth", "深度")),
+        (("218",), ("11 second", "11-second", "11 秒", "11秒")),
+    ),
+    "rate-window": (
+        (("rate window", "rate", "速率", "限流"), ("tenant bucket", "租户桶", "tenant 桶", "per tenant", "每个租户", "按租户"), ("retry", "重试")),
+    ),
+    "reconciliation": (
+        (("ledger total", "账本总额", "ledger 总额"), ("review item", "复核项", "review 项", "审核项")),
+        (("business day", "业务日"), ("total", "总额"), ("manifest",)),
+    ),
+    "refund-audit": (
+        (("refund", "退款"), ("provider reference", "provider 引用", "provider ref"), ("correlation", "关联")),
+        (("refund", "退款"), ("capture currency", "原始捕获币种", "原捕获币种", "捕获币种", "原币种", "原始币种")),
+    ),
+    "refund-worker": (
+        (("refund", "退款"), ("capture reference", "捕获引用", "capture 引用", "capture ref"), ("outcome", "result", "结果")),
+    ),
+    "region-routing": (
+        (("region", "区域", "地区"), ("adapter", "适配器"), ("authoriz", "授权"), ("select", "选", "before", "前")),
+        (("cedar",), ("uk adapter", "uk", "英国")),
+    ),
+    "release-owner": (
+        (("migration output", "migration result", "迁移输出", "迁移结果"), ("smoke", "冒烟"), ("evidence", "证据", "attach", "附")),
+        (("accepted checkout", "checkout", "结账", "下单"), ("captured payment", "捕获的支付", "支付捕获", "captur", "捕获"), ("export checksum", "checksum", "校验和")),
+    ),
+    "replay-window": (
+        (("replay", "重放", "回放"), ("one event id", "single event", "一个 event id", "一次一个", "单个事件", "一个事件", "每次一个"), ("incident reference", "incident", "事故", "事件编号")),
+        (("replay", "重放", "回放"), ("consumer name", "consumer", "消费者"), ("offset", "偏移")),
+    ),
+    "retention": (
+        (("retention", "保留"), ("cleanup", "清理"), ("ledger row", "账本行", "ledger 行", "账本记录")),
+        (("signed", "签名"), ("download url", "下载 url", "下载链接", "url"), ("another link", "new link", "新链接", "重新申请", "再次申请", "另一个链接")),
+    ),
+    "retry-boundaries": (
+        (("transport", "传输"), ("redeliver", "重投", "重新投递"), ("attempt record", "attempt", "尝试记录", "尝试次数")),
+        (("408",), ("429",), ("503",)),
+    ),
+    "schema-rehearsal": (
+        (("envelope", "信封"), ("optional field", "可选字段"), ("older", "previous", "旧"), ("accept", "接受", "兼容", "compatib")),
+        (("merchant_region",),),
+    ),
+    "second-reviewer": (
+        (("second reviewer", "第二复核人", "第二审核人", "第二名", "第二位", "第二个"), ("tenant-scoped export", "export", "导出")),
+        (("tenant sample", "租户样本", "tenant 样本"), ("migration warning", "迁移警告", "迁移告警", "warning")),
+    ),
+    "session-expiry": (
+        (("session", "会话"), ("one provider operation", "single provider", "一个 provider", "同一个 provider", "同一 provider", "一次 provider", "单个 provider", "共享")),
+        (("38 second", "38-second", "38 秒", "38秒"), ("six", "6 ", "六"), ("three", "3 ", "三")),
+    ),
+    "shipping-adapter": (
+        (("shipping", "物流", "配送", "发货"), ("carrier reference", "承运商引用", "承运人引用", "carrier 引用", "carrier ref", "承运商")),
+        (("carrier reference", "承运商引用", "承运人引用", "carrier 引用", "carrier ref", "承运商"), ("separate", "独立", "分开", "单独", "分别")),
+    ),
+    "support-scope": (
+        (("support", "支持", "客服"), ("scope", "范围", "作用域"), ("dashboard url", "dashboard", "仪表盘", "控制台 url", "url")),
+        (("escalation", "升级"), ("scope expir", "expir", "过期", "到期"), ("case number", "incident case", "案例编号", "工单号", "事故编号", "案件编号", "case")),
+    ),
+    "tax-rounding": (
+        (("tax", "税"), ("round", "舍入", "取整"), ("invoice", "发票"), ("minor unit", "minor-unit", "最小单位", "最小货币单位", "integer", "整数")),
+        (("1,800", "1800"), ("144",), ("basis point", "基点", "8%")),
+    ),
+    "tenant-quota": (
+        (("gateway allowance", "gateway", "网关"), ("daily quota", "每日配额", "日配额", "quota", "配额"), ("pool ceiling", "pool", "连接池", "池"), ("independent", "独立", "separate", "各自")),
+        (("per minute", "每分钟"), ("active connection", "活跃连接", "活动连接"), ("business day", "业务日")),
+    ),
+    "tenant-storage": (
+        (("cedar",), ("24",), ("support session", "支持会话", "客服会话", "support")),
+    ),
+    "trace-shape": (
+        (("span", "追踪", "tracing", "trace"), ("correlation", "关联"), ("asynchronous", "async", "异步")),
+        (("seven day", "7 day", "7-day", "7 天", "7天", "七天"), ("finance retention", "财务保留", "finance")),
+    ),
+    "webhook-ack": (
+        (("consumer", "消费者", "webhook"), ("event id", "事件 id", "event_id"), ("acknowledg", "ack", "确认")),
+        (("wh-812",), ("14 second", "14-second", "14 秒", "14秒")),
+    ),
+    "worker-drain": (
+        (("drain", "排空", "排干"), ("traffic", "切流", "流量"), ("before", "前", "after", "后", "then")),
+        (("lease", "租约", "已租"), ("acquisition", "acquir", "获取", "领取"), ("durable", "持久", "queued", "排队", "待处理")),
+    ),
+}
+
+
 def scenario_ids(value: str) -> list[str]:
     if value.lower() == "all":
         return list(SCENARIOS)

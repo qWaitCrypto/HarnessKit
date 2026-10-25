@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
-from scenarios import S6_FACT_GROUPS, S6_FACT_NOTES
+from scenarios import S6_FACT_GROUPS, S6_FACT_NOTES, S6_NOTE_DETAILS
 
 
 @dataclass
@@ -360,6 +360,54 @@ def _contained(needle: str, haystack: str) -> float:
     return sum(block.size for block in matcher.get_matching_blocks()) / max(1, len(words))
 
 
+def _claim_units(text: str) -> list[str]:
+    """Prose paragraphs, list items and adjacent item pairs, and tables whole and by row."""
+    text = re.sub(r"\[([^\]]*)\]\([^)]+\)", r"\1", text)
+    units: list[str] = []
+    for part in re.split(r"\n\s*\n", text):
+        if not part.strip():
+            continue
+        items = [re.sub(r"\s+", " ", item.strip())
+                 for item in re.split(r"\n(?=\s*(?:[-*+]|\d+[.)]|\|)\s)", part) if item.strip()]
+        # A whole list joins unrelated claims, but a table's columns often
+        # carry one claim across rows, and procedure steps split one rule.
+        if len(items) == 1 or part.lstrip().startswith("|"):
+            units.append(re.sub(r"\s+", " ", part.strip()))
+        if len(items) > 1:
+            units.extend(items + [f"{first} {second}" for first, second in zip(items, items[1:])])
+    return units
+
+
+def _states(concepts: Sequence[Sequence[str]], unit: str) -> bool:
+    lowered = unit.lower()
+    return all(any(term in lowered for term in alternatives) for alternatives in concepts)
+
+
+def _lost_note_details(root: Path, reachable: set[str], baseline=None) -> tuple[list[str], list[str]]:
+    """Field-note paragraphs stated nowhere in the docs, and those stated only off the AGENTS route."""
+    units = [
+        (relative, unit)
+        for path in sorted(root.rglob("*.md"))
+        # Plans and worklogs record the migration itself, not where the knowledge lives.
+        if not (relative := path.relative_to(root).as_posix()).startswith((".git/", "target/"))
+        and "/exec-plans/" not in f"/{relative}" and "/worklog/" not in f"/{relative}"
+        for unit in _claim_units(_read(root, relative))
+    ]
+    lost, unreachable = [], []
+    for stem, specs in S6_NOTE_DETAILS.items():
+        planted = _paragraphs(_frontmatter_body(_baseline_text(root, f"notes/{stem}.md", baseline)))[1:]
+        if stem in S6_FACT_NOTES:
+            planted = planted[1:]
+        for index, (paragraph, concepts) in enumerate(zip(planted, specs)):
+            holders = {relative for relative, unit in units
+                       if _states(concepts, unit) or _contained(paragraph, unit) >= 0.8}
+            if not holders:
+                lost.append(f"{stem}#{index}")
+            elif not holders & reachable:
+                unreachable.append(f"{stem}#{index}")
+    return lost, unreachable
+
+
 def grade_s1(root: Path, *, last_message: str = "", baseline=None, **_: Any) -> GradeResult:
     changed = _changed_files(root, baseline)
     paths = ("src/auth/refresh.rs", "src/auth/session.rs")
@@ -558,6 +606,7 @@ def grade_s6(root: Path, *, baseline=None, **_: Any) -> GradeResult:
                        if _contained(planted, part) >= 0.8}
             if len(holders) >= 2:
                 copied_facts.append(stem)
+    lost_details, unreachable_details = _lost_note_details(root, reachable, baseline)
     tests, tests_run, detail = _run_hidden_tests(root, "S6")
     missing_facts = [
         fact for fact, concepts in S6_FACT_GROUPS.items()
@@ -574,12 +623,15 @@ def grade_s6(root: Path, *, baseline=None, **_: Any) -> GradeResult:
         (not duplicates, "入口可达文档包含高度相似的重复段落"),
         (not copied_facts, f"同一条事实在多个入口可达文档中重复: {copied_facts}"),
         (not missing, f"入口可达文档有失效链接: {missing[:3]}"),
+        (not lost_details, f"笔记的独有内容没有保留在任何文档中: {lost_details[:5]}"),
         (tests, detail or "隐藏测试未运行"),
     ]
     return _result("S6", checks, changed_files=changed,
                    changed_docs=[p for p in changed if p.endswith(".md")],
                    tests_passed=tests, hidden_tests_run=tests_run,
-                   process_metrics={"agents_entry_updated": "AGENTS.md" in changed})
+                   process_metrics={"agents_entry_updated": "AGENTS.md" in changed,
+                                    "note_details_lost": len(lost_details),
+                                    "note_details_unreachable": len(unreachable_details)})
 
 
 def _check_json_errors(root: Path, binary_override: str | None = None) -> tuple[bool, str]:
