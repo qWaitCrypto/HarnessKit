@@ -505,7 +505,9 @@ def grade_s4(root: Path, *, last_message: str = "", baseline=None, **_: Any) -> 
         " ".join(additions), re.I
     ))
     old_value = r"(?<!\d)100(?!\d)"
-    drift = r"(?:\b(?:outdated|stale|old(?:er)?|obsolete|out[- ]of[- ]date|drift(?:ed|ing)?)\b|过时|旧|过期|漂移)"
+    # full1/A and full4/A replies said the runbook "仍写着 100 … 与服务代码不一致".
+    drift = (r"(?:\b(?:outdated|stale|old(?:er)?|obsolete|out[- ]of[- ]date|drift(?:ed|ing)?|inconsistent|mismatch(?:ed)?"
+             r"|does(?:n't| not) match|still (?:says|lists|shows|reads|states))\b|过时|旧|过期|漂移|不一致|不符|仍(?:然)?写|还写)")
     gap = r"(?:[^。！？.!?\n]*|[\s\S]{0,80})"
     drift_explained = re.search(
         rf"{old_value}{gap}{drift}|{drift}{gap}{old_value}", last_message, re.I

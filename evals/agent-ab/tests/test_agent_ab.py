@@ -826,6 +826,11 @@ def test_s4_allows_an_operations_answer_that_identifies_doc_drift(tmp_path, repo
     ('The runbook is out of date: 100 requests per minute.', True),
     ('文档写 100。该值已漂移。', True),
     ('文档写 100' + ' 与实现核对' * 20 + '后确认已过时。', True),
+    ('文档写 100，与实现一致。', False),
+    ('注意，运维文档目前仍写着 100 次/分钟，与服务代码不一致；请以当前代码中的 120 次为准。', True),
+    ('服务实现已从 100 调整为 120，但运维文档仍写着 100，需以服务实现为准。', True),
+    ('The runbook still says 100 requests per minute.', True),
+    ('The runbook value of 100 is inconsistent with the service.', True),
 ])
 def test_s4_requires_an_explicit_drift_explanation(tmp_path, repositories, explanation, accepted):
     root = _copy_repo(repositories, 'S4', tmp_path / 'repo')
