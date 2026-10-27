@@ -311,7 +311,9 @@ fn date_cutoff(value: &str) -> Result<Option<u64>> {
     let year = value[..4].parse::<u32>().map_err(|_| invalid())?;
     let month = value[5..7].parse::<usize>().map_err(|_| invalid())?;
     let day = value[8..].parse::<u32>().map_err(|_| invalid())?;
-    let leap = |year: u32| year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let leap = |year: u32| {
+        year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400))
+    };
     let months = [
         31,
         if leap(year) { 29 } else { 28 },

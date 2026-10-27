@@ -431,9 +431,11 @@ fn resolve(
         targets.path_targets(path, directory)
     };
     if matches.is_empty() {
-        if fragment.is_some() && !suppress_diagnostics && !is_placeholder_anchor(&raw) {
+        if let Some(fragment) =
+            fragment.filter(|_| !suppress_diagnostics && !is_placeholder_anchor(&raw))
+        {
             let candidates = {
-                let global = targets.matching_symbols(fragment.unwrap(), None);
+                let global = targets.matching_symbols(fragment, None);
                 if global.is_empty() {
                     targets.symbols.get(path).into_iter().flatten().collect()
                 } else {

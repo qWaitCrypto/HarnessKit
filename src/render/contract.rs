@@ -100,7 +100,7 @@ pub(crate) fn token_cost(text: &str) -> usize {
         // The contract treats CJK characters as one token and approximates
         // Latin text as four characters per token.
         let cjk = text.chars().filter(|ch| is_cjk(*ch)).count();
-        cjk + (text.chars().count().saturating_sub(cjk) + 3) / 4
+        cjk + text.chars().count().saturating_sub(cjk).div_ceil(4)
     }
 }
 

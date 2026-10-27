@@ -250,7 +250,9 @@ fn git_changes(
         .filter(|part| !part.is_empty())
         .collect::<Vec<_>>();
     let paths = records
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|record| String::from_utf8_lossy(record[1]).into_owned())
         .collect::<Vec<_>>();
     let ignored = ignored_paths(root, &paths)?
@@ -258,7 +260,7 @@ fn git_changes(
         .collect::<BTreeSet<_>>();
     let mut changes = Vec::new();
     let mut accepted_decision_changes = Vec::new();
-    for record in records.chunks_exact(2) {
+    for record in records.as_chunks::<2>().0 {
         let path = String::from_utf8_lossy(record[1]).into_owned();
         if is_ignored(schema, &path)
             || ignored.contains(&path)
