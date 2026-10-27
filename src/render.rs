@@ -639,11 +639,7 @@ pub(crate) fn print_query_bundles_with_options(
             .filter_map(|issue| issue["kind"].as_str())
             .next()
             .unwrap_or("");
-        let badge = if badge.is_empty() {
-            ""
-        } else {
-            badge
-        };
+        let badge = if badge.is_empty() { "" } else { badge };
         let suffix = if badge.is_empty() {
             String::new()
         } else if primary_issue.is_empty() {

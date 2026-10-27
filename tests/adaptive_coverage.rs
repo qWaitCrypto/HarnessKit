@@ -852,6 +852,7 @@ fn repository_dogfood_needs_no_init_or_schema_and_explains_every_mapping() {
             "agent-surfaces/skills/harnesskit/references/adoption.md",
             "agent-surfaces/skills/harnesskit/references/cli.md",
             "agent-surfaces/skills/harnesskit/references/migration.md",
+            "agent-surfaces/skills/harnesskit/references/principles.md",
         ])
     );
     assert_eq!(report["coverage"]["managed"], 7);
@@ -954,6 +955,7 @@ fn repository_schema_keeps_s11_dogfood_clean_with_docs_and_root_documents() {
             "agent-surfaces/skills/harnesskit/references/adoption.md",
             "agent-surfaces/skills/harnesskit/references/cli.md",
             "agent-surfaces/skills/harnesskit/references/migration.md",
+            "agent-surfaces/skills/harnesskit/references/principles.md",
         ])
     );
 }
