@@ -168,7 +168,10 @@ pub(crate) fn build_current_context(
         latest_snapshot: snapshot.as_ref().map(SnapshotPointer::from),
         changes_since_snapshot,
         code_changes_since_snapshot: super::changes::snapshot_code_changes(
-            db, root, schema, snapshot.as_ref(),
+            db,
+            root,
+            schema,
+            snapshot.as_ref(),
         )?,
         unverified_items: unverified_documents.iter().map(|doc| doc.count).sum(),
         unverified_documents,

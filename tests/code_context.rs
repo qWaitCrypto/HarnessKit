@@ -432,20 +432,43 @@ fn diff_flags_accepted_decision_body_changes_even_without_code_changes() {
     let original = "---\nstatus: accepted\nauthority: canonical\n---\n\n# Ownership\n\nThe operation must return failures to its caller.\n";
     write(&repo, path, original);
     git(&repo, &["add", path]);
-    git(&repo, &["-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "Accept ownership decision"]);
+    git(
+        &repo,
+        &[
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "-qm",
+            "Accept ownership decision",
+        ],
+    );
     seal(&repo);
-    write(&repo, path, &original.replace("must return", "must retry then return"));
+    write(
+        &repo,
+        path,
+        &original.replace("must return", "must retry then return"),
+    );
     let packet = diff(&repo);
     assert_eq!(packet["totals"]["files"], 0);
     assert_eq!(packet["totals"]["accepted_decisions_changed"], 1);
     assert_eq!(packet["accepted_decision_changes"][0]["path"], path);
     let text = repo.run(&["context", "--diff"]);
-    assert!(text.contains("accepted decision changed — confirm with the user / supersede instead"), "{text}");
+    assert!(
+        text.contains("accepted decision changed — confirm with the user / supersede instead"),
+        "{text}"
+    );
     assert!(!text.contains("automatically confirms"), "{text}");
 
     // Changing status at the same time cannot hide a rewrite of an accepted body.
-    write(&repo, path, &original.replace("status: accepted", "status: superseded")
-        .replace("must return", "must retry then return"));
+    write(
+        &repo,
+        path,
+        &original
+            .replace("status: accepted", "status: superseded")
+            .replace("must return", "must retry then return"),
+    );
     git(&repo, &["add", path]);
     assert_eq!(diff(&repo)["accepted_decision_changes"][0]["path"], path);
 }
@@ -457,12 +480,40 @@ fn diff_does_not_flag_frontmatter_only_or_draft_decision_edits() {
     let original = "---\nstatus: accepted\n---\n# Ownership\n\nThe caller owns the retry policy.\n";
     write(&repo, path, original);
     git(&repo, &["add", path]);
-    git(&repo, &["-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "Accept retry policy"]);
-    write(&repo, path, &original.replace("status: accepted", "status: superseded\nsuperseded_by: replacement.md"));
-    assert!(diff(&repo)["accepted_decision_changes"].as_array().unwrap().is_empty());
-    write(&repo, "docs/decisions/draft.md", "---\nstatus: draft\n---\n# Draft\n\nA proposed policy.\n");
+    git(
+        &repo,
+        &[
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "-qm",
+            "Accept retry policy",
+        ],
+    );
+    write(
+        &repo,
+        path,
+        &original.replace(
+            "status: accepted",
+            "status: superseded\nsuperseded_by: replacement.md",
+        ),
+    );
+    assert!(diff(&repo)["accepted_decision_changes"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    write(
+        &repo,
+        "docs/decisions/draft.md",
+        "---\nstatus: draft\n---\n# Draft\n\nA proposed policy.\n",
+    );
     git(&repo, &["add", "docs/decisions/draft.md"]);
-    assert!(diff(&repo)["accepted_decision_changes"].as_array().unwrap().is_empty());
+    assert!(diff(&repo)["accepted_decision_changes"]
+        .as_array()
+        .unwrap()
+        .is_empty());
 }
 
 #[test]
@@ -530,7 +581,10 @@ fn current_reports_covered_and_deleted_regions_and_limits_its_code_section_to_ei
         .take_while(|line| !line.starts_with("Unverified:"))
         .collect::<Vec<_>>();
     assert!(section.len() <= 8, "{text}");
-    assert!(section.iter().any(|line| line.contains("more regions")), "{text}");
+    assert!(
+        section.iter().any(|line| line.contains("more regions")),
+        "{text}"
+    );
 }
 
 #[test]

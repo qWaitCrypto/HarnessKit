@@ -13,10 +13,7 @@ fn write(repo: &TestRepo, path: &str, text: &str) {
 }
 
 fn report(repo: &TestRepo) -> Value {
-    serde_json::from_str(
-        &repo.run(&["check", "--rules", "code-drift", "--json", "--all"]),
-    )
-    .unwrap()
+    serde_json::from_str(&repo.run(&["check", "--rules", "code-drift", "--json", "--all"])).unwrap()
 }
 
 #[test]
@@ -70,8 +67,7 @@ fn changelog_mentions_do_not_seal_while_decision_anchors_still_drift() {
     );
     let checks = report(&repo)["checks"].as_array().unwrap().clone();
     assert!(checks.iter().any(|check| {
-        check["rule_id"] == "code-drift"
-            && check["subject_path"] == "docs/decisions/policy.md"
+        check["rule_id"] == "code-drift" && check["subject_path"] == "docs/decisions/policy.md"
     }));
     assert!(!checks.iter().any(|check| {
         check["rule_id"] == "code-drift" && check["subject_path"] == "CHANGELOG.md"

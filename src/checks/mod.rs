@@ -218,7 +218,8 @@ pub(crate) fn filter_and_suppress_checks(
                                 .unwrap_or(false))
                 })
                 .map(|(item, _)| *item);
-            let evidence: serde_json::Value = serde_json::from_str(cell(row, 4)).unwrap_or_default();
+            let evidence: serde_json::Value =
+                serde_json::from_str(cell(row, 4)).unwrap_or_default();
             Some(CheckView {
                 severity: cell(row, 0).to_string(),
                 rule_id,

@@ -46,10 +46,9 @@ fn findings(repo: &TestRepo) -> Vec<Value> {
 }
 
 fn findings_allow_warnings(repo: &TestRepo) -> Vec<Value> {
-    let report: Value = serde_json::from_str(
-        &repo.run(&["check", "--rules", "anchors", "--json", "--all"]),
-    )
-    .unwrap();
+    let report: Value =
+        serde_json::from_str(&repo.run(&["check", "--rules", "anchors", "--json", "--all"]))
+            .unwrap();
     report["checks"].as_array().unwrap().clone()
 }
 
@@ -272,26 +271,54 @@ fn prose_file_and_symbol_references_find_decisions_without_indexing_examples_or_
         "```rust\nsrc/other.rs#unrelated\n```\n\n",
         "    src/other.rs\n\n<!-- src/other.rs -->\n",
     ));
-    let packet: Value = serde_json::from_str(&repo.run(&[
-        "context", "--for", "src/auth/session.rs", "--json",
-    ])).unwrap();
-    assert!(packet["decisions"].as_array().unwrap().iter().any(|path| path == decision));
-    let extracted = edges(&repo).into_iter().filter(|edge| edge["evidence"]["doc"] == decision).collect::<Vec<_>>();
+    let packet: Value =
+        serde_json::from_str(&repo.run(&["context", "--for", "src/auth/session.rs", "--json"]))
+            .unwrap();
+    assert!(packet["decisions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|path| path == decision));
+    let extracted = edges(&repo)
+        .into_iter()
+        .filter(|edge| edge["evidence"]["doc"] == decision)
+        .collect::<Vec<_>>();
     assert_eq!(extracted.len(), 4, "{extracted:?}");
-    assert!(extracted.iter().all(|edge| edge["kind"] == "anchor" && edge["evidence"]["prose"] == true));
-    assert_eq!(extracted.iter().find(|edge| edge["name"] == "refresh_token").unwrap()["evidence"]["line"], 8);
+    assert!(extracted
+        .iter()
+        .all(|edge| edge["kind"] == "anchor" && edge["evidence"]["prose"] == true));
+    assert_eq!(
+        extracted
+            .iter()
+            .find(|edge| edge["name"] == "refresh_token")
+            .unwrap()["evidence"]["line"],
+        8
+    );
     let lock = fs::read_to_string(repo.root.join(".harnesskit/knowledge.lock")).unwrap();
     assert!(lock.contains("src/auth/session.rs#renew_session"), "{lock}");
-    assert!(!lock.contains("src/other.rs") && !lock.contains("src/missing.rs"), "{lock}");
+    assert!(
+        !lock.contains("src/other.rs") && !lock.contains("src/missing.rs"),
+        "{lock}"
+    );
 }
 
 #[test]
 fn prose_references_obey_explicit_collection_mention_policy() {
     let repo = TestRepo::new(Some("standard"));
     write(&repo, "src/policy.rs", "pub fn policy() {}\n");
-    write(&repo, ".harnesskit/schema.yaml", &include_str!("../schemas/file-first-v0.yaml")
-        .replace("anchors: seal\n    template: decision", "anchors: mention\n    template: decision"));
-    write(&repo, "docs/decisions/policy.md", "---\nstatus: accepted\n---\n# Policy\n\nThe policy owns src/policy.rs#policy.\n");
+    write(
+        &repo,
+        ".harnesskit/schema.yaml",
+        &include_str!("../schemas/file-first-v0.yaml").replace(
+            "anchors: seal\n    template: decision",
+            "anchors: mention\n    template: decision",
+        ),
+    );
+    write(
+        &repo,
+        "docs/decisions/policy.md",
+        "---\nstatus: accepted\n---\n# Policy\n\nThe policy owns src/policy.rs#policy.\n",
+    );
     repo.run(&["index"]);
     let extracted = edges(&repo);
     assert_eq!(extracted.len(), 1, "{extracted:?}");
@@ -311,12 +338,18 @@ fn moved_prose_anchors_are_repaired_without_rewriting_examples_or_crlf() {
     write(&repo, "docs/anchors.md", original);
     repo.run(&["index"]);
     fs::rename(repo.root.join("src/old.rs"), repo.root.join("src/new.rs")).unwrap();
-    assert!(findings_allow_warnings(&repo).iter().any(|check| check["rule_id"] == "anchor-moved"));
+    assert!(findings_allow_warnings(&repo)
+        .iter()
+        .any(|check| check["rule_id"] == "anchor-moved"));
     repo.run(&["check", "--rules", "anchors", "--fix", "--json", "--all"]);
     let updated = fs::read_to_string(repo.root.join("docs/anchors.md")).unwrap();
-    assert_eq!(updated, original.replacen("src/old.rs#refresh_token", "src/new.rs#refresh_token", 1));
+    assert_eq!(
+        updated,
+        original.replacen("src/old.rs#refresh_token", "src/new.rs#refresh_token", 1)
+    );
     assert!(findings(&repo).is_empty());
-    let packet: Value = serde_json::from_str(&repo.run(&["context", "--for", "src/new.rs", "--json"])).unwrap();
+    let packet: Value =
+        serde_json::from_str(&repo.run(&["context", "--for", "src/new.rs", "--json"])).unwrap();
     assert_eq!(packet["documents"][0]["path"], "docs/anchors.md");
 }
 
@@ -364,10 +397,9 @@ fn example_documents_suppress_diagnostics_but_keep_real_edges() {
     let checks = findings(&repo);
     assert!(checks.is_empty());
     let edges = edges(&repo);
-    assert!(edges
-        .iter()
-        .any(|edge| edge["evidence"]["doc"] == "docs/design-docs/examples/guide.md"
-            && edge["path"] == "src/known.rs"));
+    assert!(edges.iter().any(|edge| edge["evidence"]["doc"]
+        == "docs/design-docs/examples/guide.md"
+        && edge["path"] == "src/known.rs"));
 }
 
 #[test]
@@ -465,7 +497,9 @@ fn incremental_refresh_re_resolves_code_changes_and_removes_deleted_doc_edges() 
     assert_eq!(edges(&repo).len(), 1);
     fs::remove_file(repo.root.join("src/a.rs")).unwrap();
     let checks = findings_allow_warnings(&repo);
-    assert!(checks.iter().any(|check| check["rule_id"] == "anchor-moved"));
+    assert!(checks
+        .iter()
+        .any(|check| check["rule_id"] == "anchor-moved"));
     assert_eq!(edges(&repo).len(), 1);
     assert_eq!(edges(&repo)[0]["path"], "src/b.rs");
     write(

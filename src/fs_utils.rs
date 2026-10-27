@@ -41,12 +41,7 @@ pub(crate) fn validate_target_dir(path: &Path, allow_missing: bool) -> Result<()
             )
             .into())
         }
-        Err(error) => Err(format!(
-            "cannot access target_dir {}: {}",
-            path.display(),
-            error
-        )
-        .into()),
+        Err(error) => Err(format!("cannot access target_dir {}: {}", path.display(), error).into()),
     }
 }
 

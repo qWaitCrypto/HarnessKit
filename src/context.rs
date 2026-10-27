@@ -51,12 +51,15 @@ pub(crate) fn context_packet_for_doc(
     };
     let snippet = snippet_for_doc(target_dir, doc_path, doc_path);
     let superseded_by = superseded_by(db, doc_path)?;
-    let anchored = !db.query(
-        "SELECT 1 FROM edges e JOIN nodes n ON n.id = e.src JOIN nodes t ON t.id = e.dst
+    let anchored = !db
+        .query(
+            "SELECT 1 FROM edges e JOIN nodes n ON n.id = e.src JOIN nodes t ON t.id = e.dst
          WHERE n.path = ?1 AND t.kind IN ('file', 'symbol')
            AND e.kind IN ('anchor', 'mention') LIMIT 1;",
-        [doc_path],
-    )?.rows.is_empty();
+            [doc_path],
+        )?
+        .rows
+        .is_empty();
     let anchor = QueryCandidate {
         path: cell(row, 0).to_string(),
         title: cell(row, 1).to_string(),

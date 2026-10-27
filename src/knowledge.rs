@@ -20,7 +20,8 @@ use crate::index::cell;
 use crate::sqlite::SqliteConnection;
 use crate::Result;
 
-const LOCK_HEADER: &str = "# HarnessKit knowledge.lock: confirmed document anchors and code fingerprints.";
+const LOCK_HEADER: &str =
+    "# HarnessKit knowledge.lock: confirmed document anchors and code fingerprints.";
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct LockEntry {
@@ -279,11 +280,7 @@ fn refresh_knowledge(
     })
 }
 
-pub(crate) fn acknowledge(
-    root: &Path,
-    db: &SqliteConnection,
-    patterns: &[String],
-) -> Result<bool> {
+pub(crate) fn acknowledge(root: &Path, db: &SqliteConnection, patterns: &[String]) -> Result<bool> {
     if patterns.is_empty() {
         return Ok(false);
     }
@@ -425,7 +422,11 @@ fn current_seals(db: &SqliteConnection) -> Result<BTreeMap<(String, String), Cur
                 && left.fingerprint == right.fingerprint
         });
         let anchor = &key.1;
-        let is_directory = anchor.split_once('#').map(|(path, _)| path).unwrap_or(anchor).ends_with('/');
+        let is_directory = anchor
+            .split_once('#')
+            .map(|(path, _)| path)
+            .unwrap_or(anchor)
+            .ends_with('/');
         let fingerprint = if is_directory {
             let leaves = nodes
                 .iter()
@@ -491,7 +492,10 @@ fn current_doc_anchors(db: &SqliteConnection) -> Result<BTreeSet<(String, String
         .collect())
 }
 
-fn unique_fingerprint_match(db: &SqliteConnection, entry: &LockEntry) -> Result<Option<TargetNode>> {
+fn unique_fingerprint_match(
+    db: &SqliteConnection,
+    entry: &LockEntry,
+) -> Result<Option<TargetNode>> {
     let matches = fingerprint_matches(db, entry)?;
     Ok((matches.len() == 1).then(|| matches[0].clone()))
 }
@@ -507,7 +511,11 @@ fn fingerprint_matches(db: &SqliteConnection, entry: &LockEntry) -> Result<Vec<T
     let matches = rows
         .rows
         .iter()
-        .filter(|row| expected_kind.map(|kind| kind == cell(row, 0)).unwrap_or(true))
+        .filter(|row| {
+            expected_kind
+                .map(|kind| kind == cell(row, 0))
+                .unwrap_or(true)
+        })
         .map(|row| TargetNode {
             kind: cell(row, 0).to_string(),
             path: cell(row, 1).to_string(),
@@ -519,7 +527,9 @@ fn fingerprint_matches(db: &SqliteConnection, entry: &LockEntry) -> Result<Vec<T
 }
 
 fn anchor_kind(anchor: &str) -> Option<&'static str> {
-    let (path, fragment) = anchor.split_once('#').map_or((anchor, None), |(p, f)| (p, Some(f)));
+    let (path, fragment) = anchor
+        .split_once('#')
+        .map_or((anchor, None), |(p, f)| (p, Some(f)));
     if path.ends_with('/') {
         None
     } else if fragment.is_some() || (!path.contains('/') && path.contains("::")) {
@@ -533,7 +543,9 @@ fn anchor_kind(anchor: &str) -> Option<&'static str> {
 
 fn moved_anchor(anchor: &str, target: &TargetNode) -> Option<String> {
     match anchor_kind(anchor) {
-        Some("symbol") if !target.name.is_empty() => Some(format!("{}#{}", target.path, target.name)),
+        Some("symbol") if !target.name.is_empty() => {
+            Some(format!("{}#{}", target.path, target.name))
+        }
         Some("file") => Some(target.path.clone()),
         _ => None,
     }
@@ -602,7 +614,9 @@ fn read_lock(path: &Path) -> Result<(Vec<LockEntry>, bool)> {
         if fields.len() != 3 {
             continue;
         }
-        if fields.iter().any(|field| field.is_empty() || field.contains(char::is_whitespace))
+        if fields
+            .iter()
+            .any(|field| field.is_empty() || field.contains(char::is_whitespace))
             || fields[2].len() != 12
             || !fields[2].bytes().all(|byte| byte.is_ascii_hexdigit())
         {
@@ -630,7 +644,10 @@ fn write_lock(path: &Path, entries: &[LockEntry], had_valid_entry: bool) -> Resu
     // index.  A header-only file remains eligible for its first seal.
     if path.exists() && !had_valid_entry {
         let opaque = fs::read_to_string(path)
-            .map(|text| text.lines().any(|line| !line.trim().is_empty() && !line.trim_start().starts_with('#')))
+            .map(|text| {
+                text.lines()
+                    .any(|line| !line.trim().is_empty() && !line.trim_start().starts_with('#'))
+            })
             .unwrap_or(false);
         if opaque {
             return Ok(());
@@ -675,7 +692,9 @@ fn should_reseal(
         let Some(doc_mtime) = document_mtime(root, &entry.doc) else {
             return false;
         };
-        return lock_mtime.map(|sealed_at| doc_mtime > sealed_at).unwrap_or(false);
+        return lock_mtime
+            .map(|sealed_at| doc_mtime > sealed_at)
+            .unwrap_or(false);
     }
     let target_path = if anchor_path(entry.anchor.as_str()).ends_with('/') {
         anchor_path(entry.anchor.as_str())
@@ -685,7 +704,11 @@ fn should_reseal(
             .unwrap_or_else(|| anchor_path(entry.anchor.as_str()))
     };
     let code_changed = changed_paths
-        .map(|paths| paths.iter().any(|path| path_matches_scope(path, target_path)))
+        .map(|paths| {
+            paths
+                .iter()
+                .any(|path| path_matches_scope(path, target_path))
+        })
         .unwrap_or(false);
     let doc_changed = changed_paths
         .map(|paths| paths.iter().any(|path| path == &entry.doc))
@@ -704,7 +727,10 @@ fn should_reseal(
 }
 
 fn anchor_path(anchor: &str) -> &str {
-    anchor.split_once('#').map(|(path, _)| path).unwrap_or(anchor)
+    anchor
+        .split_once('#')
+        .map(|(path, _)| path)
+        .unwrap_or(anchor)
 }
 
 fn path_matches_scope(path: &str, scope: &str) -> bool {
@@ -748,14 +774,20 @@ fn worktree_changed_paths(root: &Path) -> BTreeSet<String> {
 
 fn change_info(root: &Path, path: &str) -> (String, String, String) {
     let changed_paths = worktree_changed_paths(root);
-    if changed_paths.iter().any(|changed| path_matches_scope(changed, path)) {
+    if changed_paths
+        .iter()
+        .any(|changed| path_matches_scope(changed, path))
+    {
         return (
             "working-tree".to_string(),
             now_unix().to_string(),
             format!("git diff -- {}", path),
         );
     }
-    if let Ok(value) = run_git_capture(root, &["log", "-1", "--format=%H%x00%ct%x00%cI", "--", path]) {
+    if let Ok(value) = run_git_capture(
+        root,
+        &["log", "-1", "--format=%H%x00%ct%x00%cI", "--", path],
+    ) {
         let mut fields = value.split('\0');
         let commit = fields.next().unwrap_or_default().to_string();
         let timestamp = fields.next().unwrap_or_default().to_string();
@@ -764,12 +796,20 @@ fn change_info(root: &Path, path: &str) -> (String, String, String) {
             return (
                 commit.clone(),
                 if iso.is_empty() { timestamp } else { iso },
-                format!("git diff {} -- {}", commit.chars().take(12).collect::<String>(), path),
+                format!(
+                    "git diff {} -- {}",
+                    commit.chars().take(12).collect::<String>(),
+                    path
+                ),
             );
         }
     }
     let timestamp = now_unix().to_string();
-    ("working-tree".to_string(), timestamp, format!("git diff -- {}", path))
+    (
+        "working-tree".to_string(),
+        timestamp,
+        format!("git diff -- {}", path),
+    )
 }
 
 fn code_drift_check(root: &Path, entry: &LockEntry, current: &CurrentSeal) -> Result<IndexCheck> {
@@ -781,7 +821,9 @@ fn code_drift_check(root: &Path, entry: &LockEntry, current: &CurrentSeal) -> Re
         subject_path: entry.doc.clone(),
         message: format!(
             "Anchor `{}` drifted since the document was reviewed ({} at {}).",
-            entry.anchor, commit.chars().take(12).collect::<String>(), changed_at
+            entry.anchor,
+            commit.chars().take(12).collect::<String>(),
+            changed_at
         ),
         hint: Some(hint.clone()),
         fixable: false,
@@ -808,7 +850,10 @@ fn code_drift_check(root: &Path, entry: &LockEntry, current: &CurrentSeal) -> Re
 
 fn anchor_moved_check(entry: &LockEntry, target: &TargetNode) -> IndexCheck {
     let target_anchor = moved_anchor(&entry.anchor, target).unwrap_or_else(|| target.path.clone());
-    let hint = format!("Run `harnesskit check --fix` to rewrite this anchor to `{}`.", target_anchor);
+    let hint = format!(
+        "Run `harnesskit check --fix` to rewrite this anchor to `{}`.",
+        target_anchor
+    );
     let mut check = IndexCheck {
         rule_id: "anchor-moved".to_string(),
         severity: "warning".to_string(),
@@ -843,7 +888,10 @@ fn anchor_broken_check(entry: &LockEntry) -> IndexCheck {
         rule_id: "anchor-broken".to_string(),
         severity: "warning".to_string(),
         subject_path: entry.doc.clone(),
-        message: format!("{} anchor `{}` is broken; no matching code fingerprint was found.", entry.doc, entry.anchor),
+        message: format!(
+            "{} anchor `{}` is broken; no matching code fingerprint was found.",
+            entry.doc, entry.anchor
+        ),
         hint: Some(hint.clone()),
         fixable: false,
         evidence_json: json!({
@@ -911,15 +959,30 @@ mod tests {
 
     #[test]
     fn directory_merkle_is_ordered_and_format_stable() {
-        let first = merkle_fingerprint(&[("a.rs".into(), "111111111111".into()), ("b.rs".into(), "222222222222".into())]);
-        let second = merkle_fingerprint(&[("b.rs".into(), "222222222222".into()), ("a.rs".into(), "111111111111".into())]);
+        let first = merkle_fingerprint(&[
+            ("a.rs".into(), "111111111111".into()),
+            ("b.rs".into(), "222222222222".into()),
+        ]);
+        let second = merkle_fingerprint(&[
+            ("b.rs".into(), "222222222222".into()),
+            ("a.rs".into(), "111111111111".into()),
+        ]);
         assert_eq!(first, second);
-        assert_ne!(first, merkle_fingerprint(&[("a.rs".into(), "111111111111".into()), ("b.rs".into(), "333333333333".into())]));
+        assert_ne!(
+            first,
+            merkle_fingerprint(&[
+                ("a.rs".into(), "111111111111".into()),
+                ("b.rs".into(), "333333333333".into())
+            ])
+        );
     }
 
     #[test]
     fn replacement_only_touches_real_inline_code_spans() {
         let text = "`old#f`\n\n```md\n`old#f`\n```\n";
-        assert_eq!(replace_anchor_code_spans(text, &BTreeMap::from([("old#f".into(), "new#f".into())])), "`new#f`\n\n```md\n`old#f`\n```\n");
+        assert_eq!(
+            replace_anchor_code_spans(text, &BTreeMap::from([("old#f".into(), "new#f".into())])),
+            "`new#f`\n\n```md\n`old#f`\n```\n"
+        );
     }
 }

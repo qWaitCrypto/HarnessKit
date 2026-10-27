@@ -17,7 +17,9 @@ use crate::index::cell;
 use crate::knowledge::read_anchor_lock;
 use crate::output::println;
 use crate::query::BRIDGE_THRESHOLD;
-use crate::render::{compact, cursor_for_offset, cursor_offset, paginate_lines, RenderLine, RenderOptions};
+use crate::render::{
+    compact, cursor_for_offset, cursor_offset, paginate_lines, RenderLine, RenderOptions,
+};
 use crate::schema::Schema;
 use crate::sqlite::SqliteConnection;
 use crate::Result;
@@ -66,7 +68,11 @@ pub(crate) fn suggest_anchors(
         } else {
             normalize_path(Path::new(doc))
         };
-        if db.query("SELECT path FROM docs WHERE path = ?1;", [&doc])?.rows.is_empty() {
+        if db
+            .query("SELECT path FROM docs WHERE path = ?1;", [&doc])?
+            .rows
+            .is_empty()
+        {
             return Err(format!("document not found in fact store: {}", doc).into());
         }
         doc_paths.insert(doc, BTreeSet::new());
@@ -77,13 +83,7 @@ pub(crate) fn suggest_anchors(
         if validate_diff_repository(root).is_err() {
             return Ok(Vec::new());
         }
-        let diff = build_diff_context(
-            db,
-            root,
-            schema,
-            None,
-            &read_anchor_lock(root)?,
-        )?;
+        let diff = build_diff_context(db, root, schema, None, &read_anchor_lock(root)?)?;
         for file in &diff.files {
             let preferred = file
                 .documents
@@ -138,8 +138,12 @@ pub(crate) fn suggest_anchors(
         if evidence["ambiguous"].as_bool() == Some(true) {
             continue;
         }
-        let Some(doc) = evidence["doc"].as_str() else { continue };
-        let Some(paths) = doc_paths.get(doc) else { continue };
+        let Some(doc) = evidence["doc"].as_str() else {
+            continue;
+        };
+        let Some(paths) = doc_paths.get(doc) else {
+            continue;
+        };
         let path = cell(row, 4).to_string();
         if !paths.is_empty() && !paths.contains(&path) {
             continue;
@@ -150,16 +154,20 @@ pub(crate) fn suggest_anchors(
             continue;
         }
         let key = (doc.to_string(), anchor.clone());
-        let entry = accumulators.entry(key).or_insert_with(|| SuggestionAccumulator {
-            doc: doc.to_string(),
-            section: evidence["section"].as_str().unwrap_or_default().to_string(),
-            anchor,
-            ..SuggestionAccumulator::default()
-        });
+        let entry = accumulators
+            .entry(key)
+            .or_insert_with(|| SuggestionAccumulator {
+                doc: doc.to_string(),
+                section: evidence["section"].as_str().unwrap_or_default().to_string(),
+                anchor,
+                ..SuggestionAccumulator::default()
+            });
         if entry.section.is_empty() {
             entry.section = evidence["section"].as_str().unwrap_or_default().to_string();
         }
-        entry.score = entry.score.max(2.0 + cell(row, 2).parse::<f64>().unwrap_or(0.0));
+        entry.score = entry
+            .score
+            .max(2.0 + cell(row, 2).parse::<f64>().unwrap_or(0.0));
         entry.mention = Some(json!({
             "kind": "mention",
             "confidence": "INFERRED",
@@ -187,7 +195,9 @@ pub(crate) fn suggest_anchors(
             continue;
         }
         let doc = cell(row, 0);
-        let Some(paths) = doc_paths.get(doc) else { continue };
+        let Some(paths) = doc_paths.get(doc) else {
+            continue;
+        };
         let path = cell(row, 1).to_string();
         if !paths.is_empty() && !paths.contains(&path) {
             continue;
@@ -207,11 +217,13 @@ pub(crate) fn suggest_anchors(
             continue;
         }
         let key = (doc.to_string(), anchor.clone());
-        let entry = accumulators.entry(key).or_insert_with(|| SuggestionAccumulator {
-            doc: doc.to_string(),
-            anchor,
-            ..SuggestionAccumulator::default()
-        });
+        let entry = accumulators
+            .entry(key)
+            .or_insert_with(|| SuggestionAccumulator {
+                doc: doc.to_string(),
+                anchor,
+                ..SuggestionAccumulator::default()
+            });
         entry.score = entry.score.max(
             1.0 + cell(row, 2).parse::<f64>().unwrap_or(0.0)
                 + cell(row, 3).parse::<f64>().unwrap_or(0.0).min(8.0) * 0.05,
@@ -294,11 +306,13 @@ pub(crate) fn suggest_anchors(
 }
 
 fn suggestion_score(suggestion: &AnchorSuggestion) -> f64 {
-    let mention = suggestion.evidence["mention"]["weight"].as_f64().unwrap_or(0.0);
-    let cochange = suggestion.evidence["cochange"]["weight"].as_f64().unwrap_or(0.0);
-    2.0 * f64::from(suggestion.evidence["mention"].is_object())
-        + mention
-        + cochange
+    let mention = suggestion.evidence["mention"]["weight"]
+        .as_f64()
+        .unwrap_or(0.0);
+    let cochange = suggestion.evidence["cochange"]["weight"]
+        .as_f64()
+        .unwrap_or(0.0);
+    2.0 * f64::from(suggestion.evidence["mention"].is_object()) + mention + cochange
 }
 
 fn document_fallback_section(db: &SqliteConnection, doc: &str) -> Result<String> {
@@ -323,7 +337,10 @@ fn existing_anchors(db: &SqliteConnection) -> Result<BTreeMap<String, Vec<String
     for row in &rows.rows {
         let evidence: Value = serde_json::from_str(cell(row, 0)).unwrap_or_default();
         if let (Some(doc), Some(anchor)) = (evidence["doc"].as_str(), evidence["anchor"].as_str()) {
-            anchors.entry(doc.to_string()).or_default().push(anchor.to_string());
+            anchors
+                .entry(doc.to_string())
+                .or_default()
+                .push(anchor.to_string());
         }
     }
     Ok(anchors)
@@ -337,9 +354,10 @@ fn anchor_is_covered(
 ) -> bool {
     existing.get(doc).into_iter().flatten().any(|anchor| {
         let (anchor_path, fragment) = anchor.split_once('#').unwrap_or((anchor, ""));
-        let path_match = anchor_path == path
-            || (anchor_path.ends_with('/') && path.starts_with(anchor_path));
-        path_match && (fragment.is_empty() || fragment == name || fragment.ends_with(&format!("::{name}")))
+        let path_match =
+            anchor_path == path || (anchor_path.ends_with('/') && path.starts_with(anchor_path));
+        path_match
+            && (fragment.is_empty() || fragment == name || fragment.ends_with(&format!("::{name}")))
     })
 }
 
@@ -351,7 +369,10 @@ pub(crate) fn apply_anchor_suggestions(
     let mut selected = indexes.to_vec();
     selected.sort_unstable();
     selected.dedup();
-    if let Some(index) = selected.iter().find(|index| **index == 0 || **index > suggestions.len()) {
+    if let Some(index) = selected
+        .iter()
+        .find(|index| **index == 0 || **index > suggestions.len())
+    {
         return Err(format!("anchor suggestion index out of range: {}", index).into());
     }
     let mut documents = BTreeMap::<String, String>::new();
@@ -455,7 +476,11 @@ fn render_suggestion_lines(
             "{}. {} §{} — Code: `{}`",
             suggestion.index,
             suggestion.doc,
-            if suggestion.section.is_empty() { "document" } else { &suggestion.section },
+            if suggestion.section.is_empty() {
+                "document"
+            } else {
+                &suggestion.section
+            },
             suggestion.anchor
         )));
         lines.push(RenderLine::content(format!("   {}", suggestion.reason)));
@@ -465,7 +490,10 @@ fn render_suggestion_lines(
         )));
     }
     if !applied.is_empty() {
-        lines.push(RenderLine::hint(format!("Applied {} anchor suggestion(s).", applied.len())));
+        lines.push(RenderLine::hint(format!(
+            "Applied {} anchor suggestion(s).",
+            applied.len()
+        )));
     }
     lines
 }
@@ -502,7 +530,10 @@ pub(crate) fn render_suggest_json(
     while end < suggestions.len() {
         let cost = crate::render::token_cost(&format!(
             "{} {} {} {}",
-            suggestions[end].doc, suggestions[end].section, suggestions[end].anchor, suggestions[end].reason
+            suggestions[end].doc,
+            suggestions[end].section,
+            suggestions[end].anchor,
+            suggestions[end].reason
         ));
         if end > offset && used + cost > options.budget {
             break;
@@ -530,4 +561,3 @@ pub(crate) fn render_suggest_json(
         options.full,
     )
 }
-

@@ -286,7 +286,9 @@ pub(crate) fn parse_schema(text: &str) -> Result<Schema> {
                         "cochange_ignore" => {
                             schema.cochange_ignore = Some(parse_inline_list(&value));
                         }
-                        "cochange_max_files" | "max_cochange_files" | "max_commit_files"
+                        "cochange_max_files"
+                        | "max_cochange_files"
+                        | "max_commit_files"
                         | "undocumented_hotspot_min_commits"
                         | "hotspot_min_commits"
                         | "undocumented_hotspot_threshold"
@@ -300,7 +302,8 @@ pub(crate) fn parse_schema(text: &str) -> Result<Schema> {
                                 );
                             }
                             match key.as_str() {
-                                "cochange_max_files" | "max_cochange_files" | "max_commit_files" => {
+                                "cochange_max_files" | "max_cochange_files"
+                                | "max_commit_files" => {
                                     schema.rules.cochange_max_files = Some(parsed)
                                 }
                                 "undocumented_hotspot_max" | "hotspot_max" => {

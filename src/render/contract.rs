@@ -139,11 +139,7 @@ pub(crate) fn paginate_lines(
         used += cost;
         index += 1;
     }
-    let omitted = entries
-        .iter()
-        .skip(index)
-        .map(Vec::len)
-        .sum::<usize>();
+    let omitted = entries.iter().skip(index).map(Vec::len).sum::<usize>();
     let next_cursor = (index < entries.len()).then(|| encode_cursor(index, command));
     if omitted > 0 {
         let page = options.page.saturating_add(1);
@@ -165,8 +161,7 @@ pub(crate) fn paginate_lines(
 fn group_lines(lines: Vec<RenderLine>) -> Vec<Vec<RenderLine>> {
     let mut entries = Vec::<Vec<RenderLine>>::new();
     for line in lines {
-        let continuation =
-            line.priority == 1 || line.text.starts_with(char::is_whitespace);
+        let continuation = line.priority == 1 || line.text.starts_with(char::is_whitespace);
         if entries.is_empty() || !continuation {
             entries.push(vec![line]);
         } else if let Some(entry) = entries.last_mut() {
@@ -305,7 +300,10 @@ pub(crate) fn highlight_terms(text: &str, terms: &[String]) -> String {
 
 pub(crate) fn kwic_excerpt(text: &str, query: &str, fallback: &str, max_chars: usize) -> String {
     let fallback = if text.trim().is_empty() { fallback } else { "" };
-    highlight(&preferred_excerpt(text, query, &[], fallback, max_chars), query)
+    highlight(
+        &preferred_excerpt(text, query, &[], fallback, max_chars),
+        query,
+    )
 }
 
 /// Prefer the actual rule or code reference within the selected section. Query
@@ -320,10 +318,7 @@ pub(crate) fn preferred_excerpt(
 ) -> String {
     let terms = query_tokens_for_render(query);
     let mut best = None::<(String, (bool, usize, usize, usize))>;
-    for sentence in sentences(text)
-        .into_iter()
-        .flat_map(fenced_candidates)
-    {
+    for sentence in sentences(text).into_iter().flat_map(fenced_candidates) {
         let lower = sentence.to_lowercase();
         let prose = !sentence.trim_start().starts_with('#');
         if !prose && !fallback.is_empty() {
@@ -334,13 +329,24 @@ pub(crate) fn preferred_excerpt(
             .filter(|term| crate::query::matching_offset(&lower, term).is_some())
             .count();
         let constraints = if prose { constraint_score(&lower) } else { 0 };
-        let anchored = usize::from(prose && (anchors.iter().any(|anchor| {
-            !anchor.is_empty() && sentence.contains(anchor)
-        }) || sentence.split_whitespace().any(|word| {
-            word.contains('/') && !word.contains("://")
-                && (word.contains('#') || word.rsplit('/').next().unwrap_or("").contains('.'))
-        })));
-        let score = (prose && count > 0, if prose { count } else { 0 }, constraints, anchored);
+        let anchored = usize::from(
+            prose
+                && (anchors
+                    .iter()
+                    .any(|anchor| !anchor.is_empty() && sentence.contains(anchor))
+                    || sentence.split_whitespace().any(|word| {
+                        word.contains('/')
+                            && !word.contains("://")
+                            && (word.contains('#')
+                                || word.rsplit('/').next().unwrap_or("").contains('.'))
+                    })),
+        );
+        let score = (
+            prose && count > 0,
+            if prose { count } else { 0 },
+            constraints,
+            anchored,
+        );
         if (count > 0 || constraints > 0 || anchored > 0)
             && best
                 .as_ref()
@@ -396,11 +402,18 @@ pub(crate) fn preferred_excerpt(
 }
 
 pub(crate) fn constraint_score(text: &str) -> usize {
-    let words = text.split(|ch: char| !ch.is_alphabetic()).collect::<BTreeSet<_>>();
+    let words = text
+        .split(|ch: char| !ch.is_alphabetic())
+        .collect::<BTreeSet<_>>();
     ["must", "never", "only", "not", "cannot", "shall"]
-        .iter().filter(|word| words.contains(**word)).count()
+        .iter()
+        .filter(|word| words.contains(**word))
+        .count()
         + usize::from(words.contains("returns") && words.contains("caller"))
-        + ["必须", "不得", "禁止", "只能"].iter().filter(|word| text.contains(**word)).count()
+        + ["必须", "不得", "禁止", "只能"]
+            .iter()
+            .filter(|word| text.contains(**word))
+            .count()
 }
 
 fn fenced_candidates(sentence: &str) -> impl Iterator<Item = String> + '_ {

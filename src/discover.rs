@@ -6,8 +6,8 @@ use crate::external_refs::resolve_mention;
 use crate::fs_utils::{normalize_path, read_text_lossy};
 use crate::parse::parse_doc_text;
 use crate::schema::{
-    configured_architecture_path, core_file_rel_path, glob_matcher, parse_schema,
-    AnchorPolicy, DocCollectionSpec, Schema, BUNDLED_SCHEMA_TEXT,
+    configured_architecture_path, core_file_rel_path, glob_matcher, parse_schema, AnchorPolicy,
+    DocCollectionSpec, Schema, BUNDLED_SCHEMA_TEXT,
 };
 use crate::Result;
 
@@ -554,7 +554,11 @@ pub(crate) fn anchor_policy_for_path(schema: &Schema, path: &str) -> AnchorPolic
         return AnchorPolicy::Mention;
     }
     if let Some(collection) = configured_collection.as_deref() {
-        if let Some(spec) = schema.doc_collections.iter().find(|spec| spec.name == collection) {
+        if let Some(spec) = schema
+            .doc_collections
+            .iter()
+            .find(|spec| spec.name == collection)
+        {
             if let Some(policy) = spec.anchors {
                 return policy;
             }

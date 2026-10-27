@@ -57,7 +57,11 @@ pub(super) fn add_undocumented_hotspot_checks(
          ORDER BY files.commit_count DESC, files.path ASC;",
         [threshold.to_string()],
     )?;
-    for row in rows.rows.iter().filter(|row| !covered_paths.contains(cell(row, 0))) {
+    for row in rows
+        .rows
+        .iter()
+        .filter(|row| !covered_paths.contains(cell(row, 0)))
+    {
         let path = cell(row, 0);
         if excluded_hotspot_path(path) {
             continue;
@@ -104,8 +108,17 @@ fn excluded_hotspot_path(path: &str) -> bool {
     if parts.iter().any(|part| {
         matches!(
             *part,
-            "test" | "tests" | "__tests__" | "testing" | "fixtures" | "fixture"
-                | "generated" | "vendor" | "target" | "build" | "dist"
+            "test"
+                | "tests"
+                | "__tests__"
+                | "testing"
+                | "fixtures"
+                | "fixture"
+                | "generated"
+                | "vendor"
+                | "target"
+                | "build"
+                | "dist"
         )
     }) {
         return true;
@@ -120,4 +133,3 @@ fn excluded_hotspot_path(path: &str) -> bool {
         || filename.contains(".generated.")
         || filename.ends_with("_generated.rs")
 }
-

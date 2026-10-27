@@ -162,7 +162,12 @@ pub(crate) fn build_diff_context(
     totals.files = files.len();
     totals.drifting_anchors = predicted_drift.len();
     totals.accepted_decisions_changed = accepted_decision_changes.len();
-    cap(&mut accepted_decision_changes, DOC_LIMIT, "accepted_decision_changes", &mut truncated);
+    cap(
+        &mut accepted_decision_changes,
+        DOC_LIMIT,
+        "accepted_decision_changes",
+        &mut truncated,
+    );
     cap(&mut files, FILE_LIMIT, "files", &mut truncated);
     cap(
         &mut uncovered_regions,
@@ -401,7 +406,11 @@ fn accepted_decision_body_changed(
     let Some(old_text) = decode(&old) else {
         return Ok(false);
     };
-    let Some(new_text) = (if new.is_none() { Some(String::new()) } else { decode(&new) }) else {
+    let Some(new_text) = (if new.is_none() {
+        Some(String::new())
+    } else {
+        decode(&new)
+    }) else {
         return Ok(false);
     };
     let old_doc = parse_doc_text(path, &old_text);
@@ -510,7 +519,9 @@ pub(super) fn snapshot_code_changes(
         hint: None,
     };
     let Some(snapshot) = snapshot else {
-        summary.hint = Some("No snapshot yet; run history snapshot -m <message> to establish a code baseline.");
+        summary.hint = Some(
+            "No snapshot yet; run history snapshot -m <message> to establish a code baseline.",
+        );
         return Ok(summary);
     };
     let graph = CodeGraph::load(db, &read_anchor_lock(root)?)?;

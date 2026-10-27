@@ -338,13 +338,12 @@ fn refresh_fact_store_with_knowledge(context: &EngineContext, persist: bool) -> 
     crate::code::refresh_code_facts(&db, &context.target_dir, &context.schema)?;
     let mut artifact = read_index_artifact_from_fact_store(&db)?;
     let sealed_docs = sealed_doc_paths(&context.schema, &artifact.docs);
-    let mut anchor_checks =
-        crate::anchors::refresh_anchor_facts(
-            &db,
-            &context.target_dir,
-            &artifact.docs,
-            &sealed_docs,
-        )?;
+    let mut anchor_checks = crate::anchors::refresh_anchor_facts(
+        &db,
+        &context.target_dir,
+        &artifact.docs,
+        &sealed_docs,
+    )?;
     let knowledge = if persist {
         crate::knowledge::refresh(&context.target_dir, &db, &sealed_docs)?
     } else {

@@ -345,7 +345,8 @@ impl Graph {
             node.status = cell(row, 7).to_string();
             node.heading = cell(row, 8).to_string();
             if !node.is_code() {
-                node.summary = crate::render::preferred_excerpt(cell(row, 10), query, &[], &node.summary, 440);
+                node.summary =
+                    crate::render::preferred_excerpt(cell(row, 10), query, &[], &node.summary, 440);
             }
         }
         Ok(node)
@@ -577,7 +578,11 @@ pub(crate) fn query_bundles(
             }
             let mut primary = graph.bundle_node(db, &id, query)?;
             primary.summary = crate::render::preferred_excerpt(
-                &candidate.snippet, query, &[], &candidate.summary, 440,
+                &candidate.snippet,
+                query,
+                &[],
+                &candidate.summary,
+                440,
             );
             primary.match_info = candidate.match_info.clone();
             bundles.push(QueryBundle {
@@ -639,9 +644,9 @@ pub(crate) fn query_bundles(
     });
     if let Some((_, best_score)) = ranked.first() {
         let floor = *best_score * RELEVANCE_FLOOR;
-        let has_strong_document = ranked.iter().any(|(id, score)| {
-            **score >= floor && !graph.nodes[id.as_str()].is_code()
-        });
+        let has_strong_document = ranked
+            .iter()
+            .any(|(id, score)| **score >= floor && !graph.nodes[id.as_str()].is_code());
         ranked.retain(|(id, score)| {
             if **score >= floor {
                 return true;

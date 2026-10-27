@@ -439,7 +439,13 @@ fn unmanaged_hints_remain_pasteable_yaml_in_every_text_format() {
             args.extend_from_slice(&flags);
             let output = repo.run(&args);
             assert!(output.contains("Hint: include:"), "{}", output);
-            assert_eq!(output.lines().filter(|line| line.starts_with("Hint:")).count(), 1);
+            assert_eq!(
+                output
+                    .lines()
+                    .filter(|line| line.starts_with("Hint:"))
+                    .count(),
+                1
+            );
         }
         schema(&repo, hint);
         let fixed = json(
@@ -891,7 +897,13 @@ fn repository_schema_keeps_s11_dogfood_clean_with_docs_and_root_documents() {
     ] {
         fs::copy(source.join(file), repo.root.join(file)).unwrap();
     }
-    for dir in ["docs", "agent-surfaces", "examples", "tests/fixtures", "schemas"] {
+    for dir in [
+        "docs",
+        "agent-surfaces",
+        "examples",
+        "tests/fixtures",
+        "schemas",
+    ] {
         copy_tree(&source.join(dir), &repo.root.join(dir));
     }
     write(

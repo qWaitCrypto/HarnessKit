@@ -2,8 +2,8 @@ mod args;
 
 use args::{
     option_value, CheckArgs, CheckFormat, Cli, Command, ContextArgs, DiffArgs, DoctorArgs,
-    HistoryCommand, HookCommand, InputArgs, InstallArgs, MigrateArgs, QueryArgs,
-    RestoreArgs, ShowArgs, SnapshotArgs, SuggestAnchorsArgs,
+    HistoryCommand, HookCommand, InputArgs, InstallArgs, MigrateArgs, QueryArgs, RestoreArgs,
+    ShowArgs, SnapshotArgs, SuggestAnchorsArgs,
 };
 pub(crate) use args::{CommonArgs, TargetArgs};
 use clap::{CommandFactory, Parser};
@@ -36,15 +36,14 @@ use crate::query::{
 };
 use crate::render::{
     print_check_output, print_context_packet, print_context_packet_with_options,
-    print_current_context_with_options, print_doctor_report,
-    print_handoff_context, print_history_diff, print_history_list, print_history_snapshot_result,
-    print_history_status, print_index_result, print_init_preview, print_init_result,
-    print_init_summary, print_inspect_output, print_list_docs_rows,
-    print_query_bundles_with_options, print_query_candidates_with_options,
-    print_rank_rows, print_refs_output, print_restore_plan,
+    print_current_context_with_options, print_doctor_report, print_handoff_context,
+    print_history_diff, print_history_list, print_history_snapshot_result, print_history_status,
+    print_index_result, print_init_preview, print_init_result, print_init_summary,
+    print_inspect_output, print_list_docs_rows, print_query_bundles_with_options,
+    print_query_candidates_with_options, print_rank_rows, print_refs_output, print_restore_plan,
     render_check_json, render_check_json_page, render_context_packet_json,
-    render_context_packet_json_page, render_doctor_json, render_query_json_page,
-    render_covered_json_page, RenderOptions,
+    render_context_packet_json_page, render_covered_json_page, render_doctor_json,
+    render_query_json_page, RenderOptions,
 };
 use crate::schema::{
     default_context_schema_arg, load_schema, parse_schema, render_schema_copy,
@@ -53,8 +52,8 @@ use crate::schema::{
 use crate::templates::{materialize_from_schema, validate_init_templates};
 use crate::update::{detect_release_target, update_from_release};
 use crate::usage;
-use crate::{hooks, suggest};
 use crate::Result;
+use crate::{hooks, suggest};
 
 #[derive(Default)]
 pub(crate) struct CommandOptions {
@@ -82,7 +81,9 @@ fn render_options(options: &CommonArgs) -> RenderOptions {
 
 fn relevant_query_hint(hints: &[String]) -> Option<String> {
     if hints.iter().any(|hint| hint.contains("schema include")) {
-        return Some("Review coverage and add a schema include mapping for unmanaged results.".to_string());
+        return Some(
+            "Review coverage and add a schema include mapping for unmanaged results.".to_string(),
+        );
     }
     hints
         .iter()
@@ -284,8 +285,8 @@ fn run_check(args: &CheckArgs) -> Result<()> {
         .filter(|check| !check.suppressed && check.severity == "error")
         .count();
     if format == CheckFormat::Json {
-        let next_cursor = (checks.len() > 20)
-            .then(|| crate::render::cursor_for_offset(20, "check"));
+        let next_cursor =
+            (checks.len() > 20).then(|| crate::render::cursor_for_offset(20, "check"));
         println!(
             "{}",
             render_check_json_page(
@@ -315,10 +316,14 @@ fn run_check(args: &CheckArgs) -> Result<()> {
         &checks,
         &baseline,
         full,
-        orphan_hints
-            .first()
-            .map(String::as_str)
-            .or_else(|| args.target.options.verbose.then(|| hints.first()).flatten().map(String::as_str)),
+        orphan_hints.first().map(String::as_str).or_else(|| {
+            args.target
+                .options
+                .verbose
+                .then(|| hints.first())
+                .flatten()
+                .map(String::as_str)
+        }),
         &check_render_options,
     );
     // Check keeps one compact coverage line for maintenance triage.  The
@@ -354,7 +359,9 @@ fn run_doctor(doctor_args: &DoctorArgs) -> Result<()> {
             &schema_load.text,
             context.target_dir.join(".harnesskit/schema.yaml").is_file(),
         ) {
-            report.hints.push("Run harnesskit migrate --plan".to_string());
+            report
+                .hints
+                .push("Run harnesskit migrate --plan".to_string());
         }
     }
     if doctor_args.code {
@@ -451,7 +458,11 @@ fn run_migrate(args: &MigrateArgs) -> Result<()> {
         lock_was_missing,
         crate::knowledge::has_resolved_anchors(&db)?,
     )?;
-    let only = args.only.as_deref().map(migration::normalize_category).transpose()?;
+    let only = args
+        .only
+        .as_deref()
+        .map(migration::normalize_category)
+        .transpose()?;
     let mut visible = analysis.clone();
     if let Some(category) = &only {
         visible.items.retain(|item| item.category == *category);
@@ -707,11 +718,8 @@ fn run_query(query_args: &QueryArgs) -> Result<()> {
         render_options.full
     );
     let cache_key = crate::render::cache::key(&generation, &descriptor);
-    let cached: Option<CachedQuerySet> = crate::render::cache::read(
-        &context.target_dir,
-        &cache_key,
-        &generation,
-    )?;
+    let cached: Option<CachedQuerySet> =
+        crate::render::cache::read(&context.target_dir, &cache_key, &generation)?;
     let cached = if let Some(cached) = cached {
         cached
     } else {
@@ -729,13 +737,11 @@ fn run_query(query_args: &QueryArgs) -> Result<()> {
             cache_limit,
             legacy.then_some(candidates.as_slice()),
         )?;
-        let cached = CachedQuerySet { candidates, bundles };
-        let _ = crate::render::cache::write(
-            &context.target_dir,
-            &cache_key,
-            &generation,
-            &cached,
-        );
+        let cached = CachedQuerySet {
+            candidates,
+            bundles,
+        };
+        let _ = crate::render::cache::write(&context.target_dir, &cache_key, &generation, &cached);
         cached
     };
     let result_offset = render_options
@@ -773,15 +779,13 @@ fn run_query(query_args: &QueryArgs) -> Result<()> {
     } else {
         cached.bundles.len()
     };
-    let truncated_results = total_results.saturating_sub(
-        if legacy {
-            result_end.min(total_results)
-        } else {
-            bundle_end.min(total_results)
-        },
-    );
-    let next_cursor = (result_end < total_results)
-        .then(|| crate::render::cursor_for_offset(result_end, "query"));
+    let truncated_results = total_results.saturating_sub(if legacy {
+        result_end.min(total_results)
+    } else {
+        bundle_end.min(total_results)
+    });
+    let next_cursor =
+        (result_end < total_results).then(|| crate::render::cursor_for_offset(result_end, "query"));
     let relaxed = if legacy {
         candidates.iter().any(|candidate| {
             candidate
@@ -999,7 +1003,10 @@ fn run_context(args: &ContextArgs) -> Result<()> {
                 hints.push(format!("Suggestion: add a code anchor such as `{example}` to the relevant decision or note; directories such as `src/` are also valid."));
             }
             if packet.ambiguous {
-                hints.push("The symbol has multiple matches; use --for <path#symbol> to narrow it.".to_string());
+                hints.push(
+                    "The symbol has multiple matches; use --for <path#symbol> to narrow it."
+                        .to_string(),
+                );
             }
             if target.options.verbose {
                 hints.extend(indexed_hints(&context, &db, &target.options)?);
@@ -1222,31 +1229,18 @@ fn run_suggest_anchors(args: &SuggestAnchorsArgs) -> Result<()> {
     let context = load_engine_context(&target)?;
     refresh_fact_store(&context)?;
     let db = open_fact_store(&context.target_dir)?;
-    let suggestions = suggest::suggest_anchors(
-        &db,
-        &context.target_dir,
-        &context.schema,
-        doc.as_deref(),
-    )?;
+    let suggestions =
+        suggest::suggest_anchors(&db, &context.target_dir, &context.schema, doc.as_deref())?;
     if !args.apply.is_empty() {
-        let applied = suggest::apply_anchor_suggestions(
-            &context.target_dir,
-            &suggestions,
-            &args.apply,
-        )?;
+        let applied =
+            suggest::apply_anchor_suggestions(&context.target_dir, &suggestions, &args.apply)?;
         if args.input.target.options.json {
             let coverage = discover_docs(&context.target_dir, &context.schema)?;
             let hints = vec![format!("Applied {} anchor suggestion(s).", applied.len())];
             let options = render_options(&args.input.target.options);
             println!(
                 "{}",
-                suggest::render_suggest_json(
-                    &suggestions,
-                    &coverage,
-                    &hints,
-                    &options,
-                    &applied,
-                )
+                suggest::render_suggest_json(&suggestions, &coverage, &hints, &options, &applied,)
             );
         } else {
             let options = render_options(&args.input.target.options);
@@ -1258,9 +1252,15 @@ fn run_suggest_anchors(args: &SuggestAnchorsArgs) -> Result<()> {
     let options = render_options(&args.input.target.options);
     let coverage = discover_docs(&context.target_dir, &context.schema)?;
     let hints = if suggestions.is_empty() {
-        vec!["No new anchor suggestions were found from mentions or same-commit history.".to_string()]
+        vec![
+            "No new anchor suggestions were found from mentions or same-commit history."
+                .to_string(),
+        ]
     } else {
-        vec!["Review the evidence, then rerun with --apply <N...> to append selected Code lines.".to_string()]
+        vec![
+            "Review the evidence, then rerun with --apply <N...> to append selected Code lines."
+                .to_string(),
+        ]
     };
     if args.input.target.options.json {
         println!(
@@ -1280,7 +1280,9 @@ fn run_hook(command: Option<HookCommand>) -> Result<()> {
     // Hooks are an agent safety surface: every parsing, indexing, and I/O
     // failure is deliberately swallowed so an unavailable HarnessKit state
     // never blocks the edit that triggered it.
-    let Some(command) = command else { return Ok(()); };
+    let Some(command) = command else {
+        return Ok(());
+    };
     let result = match command {
         HookCommand::PreEdit(args) => hooks::run_hook_pre_edit(args.path.as_deref()),
         HookCommand::PostEdit(args) => hooks::run_hook_post_edit(args.path.as_deref()),

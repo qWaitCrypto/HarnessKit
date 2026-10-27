@@ -5,9 +5,9 @@ mod json;
 
 pub(crate) use code_context::{print_code_context_with_options, print_diff_context_with_options};
 pub(crate) use contract::{
-    compact, constraint_score, cursor_for_offset, cursor_offset, edge_badge, freshness_badge, highlight,
-    kwic_excerpt, local_anchor_names, merge_names, paginate_lines, preferred_excerpt, short_hint, token_cost,
-    RenderLine, RenderOptions, RenderedPage,
+    compact, constraint_score, cursor_for_offset, cursor_offset, edge_badge, freshness_badge,
+    highlight, kwic_excerpt, local_anchor_names, merge_names, paginate_lines, preferred_excerpt,
+    short_hint, token_cost, RenderLine, RenderOptions, RenderedPage,
 };
 
 #[allow(unused_imports)]
@@ -798,10 +798,7 @@ fn merge_document_bundles(bundles: &[QueryBundle]) -> Vec<QueryBundle> {
                         [existing.primary.name.clone(), bundle.primary.name.clone()],
                         usize::MAX,
                     );
-                    append_signature(
-                        &mut existing.primary.signature,
-                        &bundle.primary.signature,
-                    );
+                    append_signature(&mut existing.primary.signature, &bundle.primary.signature);
                 }
                 if !bundle.primary.heading.is_empty()
                     && !existing.primary.heading.contains(&bundle.primary.heading)
@@ -869,11 +866,7 @@ fn merge_document_bundles(bundles: &[QueryBundle]) -> Vec<QueryBundle> {
 
 fn append_signature(existing: &mut String, signature: &str) {
     let signature = signature.trim();
-    if signature.is_empty()
-        || existing
-            .split("; ")
-            .any(|part| part.trim() == signature)
-    {
+    if signature.is_empty() || existing.split("; ").any(|part| part.trim() == signature) {
         return;
     }
     if !existing.is_empty() {

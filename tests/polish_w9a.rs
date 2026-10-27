@@ -209,7 +209,11 @@ fn expanded_merged_file_signatures_are_neither_prefixed_nor_repeated() {
     let output = repo.run(&["query", "migration plan", "--expand", "2"]);
     assert!(!output.contains("— ; struct Layout"), "{output}");
     let plain = output.replace('«', "").replace('»', "");
-    assert_eq!(plain.matches("struct LayoutMigration;").count(), 1, "{output}");
+    assert_eq!(
+        plain.matches("struct LayoutMigration;").count(),
+        1,
+        "{output}"
+    );
 }
 
 #[test]
@@ -229,7 +233,10 @@ fn fenced_kwic_uses_the_hit_line_for_docs_and_readme() {
     assert!(!output.contains("```"), "{output}");
     assert!(output.contains("docs/commands.md"), "{output}");
     assert!(output.contains("docs/readme.md"), "{output}");
-    assert!(output.contains("export HARNESSKIT_«USAGE»_«LOG»=off"), "{output}");
+    assert!(
+        output.contains("export HARNESSKIT_«USAGE»_«LOG»=off"),
+        "{output}"
+    );
     assert!(!output.contains("harnesskit doctor --«usage»"), "{output}");
 }
 
@@ -246,16 +253,16 @@ fn mixed_relevance_threshold_drops_weak_test_results_after_strong_documents() {
         "tests/noisy.rs",
         "/// Usage log appears in a test helper.\npub fn noisy_usage_log() {}\n",
     );
-    let report: Value = serde_json::from_str(
-        &repo.run(&["query", "usage log", "--json", "--limit", "20"]),
-    )
-    .unwrap();
+    let report: Value =
+        serde_json::from_str(&repo.run(&["query", "usage log", "--json", "--limit", "20"]))
+            .unwrap();
     let bundles = report["bundles"].as_array().unwrap();
     assert_eq!(bundles[0]["primary"]["path"], "docs/usage.md", "{report}");
     assert!(
-        bundles
-            .iter()
-            .all(|bundle| !bundle["primary"]["path"].as_str().unwrap().starts_with("tests/")),
+        bundles.iter().all(|bundle| !bundle["primary"]["path"]
+            .as_str()
+            .unwrap()
+            .starts_with("tests/")),
         "{report}"
     );
 }
@@ -278,7 +285,11 @@ fn diff_text_keeps_each_file_documents_adjacent_and_summarizes_truncation() {
         .map(|number| format!("src/new_{number}.rs"))
         .collect::<Vec<_>>();
     for (number, path) in new_files.iter().enumerate() {
-        write(&repo, path, &format!("pub fn new_{number}() -> u64 {{ {number} }}\n"));
+        write(
+            &repo,
+            path,
+            &format!("pub fn new_{number}() -> u64 {{ {number} }}\n"),
+        );
     }
     let mut add_args = vec!["add"];
     add_args.extend(new_files.iter().map(String::as_str));

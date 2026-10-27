@@ -642,8 +642,11 @@ pub(crate) fn snippet_for_doc(
             .filter_map(|term| matching_offset(&lower, term))
             .collect::<Vec<_>>();
         let count = offsets.len();
-        let score = (count, crate::render::constraint_score(&lower),
-            trimmed.contains('/') && !trimmed.contains("://"));
+        let score = (
+            count,
+            crate::render::constraint_score(&lower),
+            trimmed.contains('/') && !trimmed.contains("://"),
+        );
         if count > 0 && score > best_score {
             let first_match = *offsets.iter().min().unwrap();
             // Lowercasing can expand a character (e.g. İ -> i + combining dot).

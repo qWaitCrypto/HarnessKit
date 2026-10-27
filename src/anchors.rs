@@ -294,15 +294,31 @@ fn delete_source(db: &SqliteConnection, path: &str) -> Result<()> {
     db.execute("DELETE FROM inline_code_spans WHERE doc_path = ?1;", [path])
 }
 
-pub(crate) fn replace_prose_references(text: &str, replacements: &BTreeMap<String, String>) -> String {
+pub(crate) fn replace_prose_references(
+    text: &str,
+    replacements: &BTreeMap<String, String>,
+) -> String {
     let line_offsets = std::iter::once(0)
         .chain(text.match_indices('\n').map(|(index, _)| index + 1))
         .collect::<Vec<_>>();
     let mut edits = Vec::new();
-    for span in markdown::parse("", text).spans.into_iter().filter(|span| span.prose) {
-        let Some(replacement) = replacements.get(&span.text) else { continue; };
-        let Some(line_start) = line_offsets.get(span.line.saturating_sub(1)).copied() else { continue; };
-        let Some((column_offset, _)) = text[line_start..].char_indices().nth(span.column.saturating_sub(1)) else { continue; };
+    for span in markdown::parse("", text)
+        .spans
+        .into_iter()
+        .filter(|span| span.prose)
+    {
+        let Some(replacement) = replacements.get(&span.text) else {
+            continue;
+        };
+        let Some(line_start) = line_offsets.get(span.line.saturating_sub(1)).copied() else {
+            continue;
+        };
+        let Some((column_offset, _)) = text[line_start..]
+            .char_indices()
+            .nth(span.column.saturating_sub(1))
+        else {
+            continue;
+        };
         let start = line_start + column_offset;
         let end = start + span.text.len();
         if text.get(start..end) == Some(span.text.as_str()) {
@@ -367,15 +383,13 @@ fn resolve(
 
     let paths = path_candidates(doc, path);
     let directory = path.ends_with('/');
-    let resolved_path = paths
-        .iter()
-        .find(|path| {
-            if evidence["prose"].as_bool() == Some(true) {
-                targets.files.contains_key(*path)
-            } else {
-                !targets.path_targets(path, directory).is_empty()
-            }
-        });
+    let resolved_path = paths.iter().find(|path| {
+        if evidence["prose"].as_bool() == Some(true) {
+            targets.files.contains_key(*path)
+        } else {
+            !targets.path_targets(path, directory).is_empty()
+        }
+    });
     // An unqualified, missing path is ordinary prose. A qualified anchor is
     // only actionable after its file has been found in the indexed scope.
     let Some(path) = resolved_path else {

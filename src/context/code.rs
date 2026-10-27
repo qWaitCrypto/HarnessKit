@@ -211,10 +211,13 @@ impl CodeGraph {
         }
         let mut docs = found.into_values().collect::<Vec<_>>();
         for doc in &mut docs {
-            let anchors = doc.links.iter().flat_map(|link| {
-                [link.code.path.as_str(), link.code.name.as_str()]
-            }).collect::<Vec<_>>();
-            doc.summary = crate::render::preferred_excerpt(&doc.body, "", &anchors, &doc.summary, 240);
+            let anchors = doc
+                .links
+                .iter()
+                .flat_map(|link| [link.code.path.as_str(), link.code.name.as_str()])
+                .collect::<Vec<_>>();
+            doc.summary =
+                crate::render::preferred_excerpt(&doc.body, "", &anchors, &doc.summary, 240);
         }
         docs.sort_by(|a, b| a.priority().cmp(&b.priority()));
         docs

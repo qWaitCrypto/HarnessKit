@@ -37,7 +37,9 @@ enum HookOutput {
 }
 
 pub(crate) fn run_hook_pre_edit(path_arg: Option<&str>) -> Result<()> {
-    let Some(context) = hook_context(path_arg)? else { return Ok(()); };
+    let Some(context) = hook_context(path_arg)? else {
+        return Ok(());
+    };
     let db_path = context.root.join(".harnesskit/state/facts.sqlite");
     if !db_path.exists() {
         return Ok(());
@@ -49,7 +51,11 @@ pub(crate) fn run_hook_pre_edit(path_arg: Option<&str>) -> Result<()> {
         .session
         .as_deref()
         .map(|session| state_dir.join(state_key(session, &context.path)));
-    if marker.as_ref().map(|marker| marker.exists()).unwrap_or(false) {
+    if marker
+        .as_ref()
+        .map(|marker| marker.exists())
+        .unwrap_or(false)
+    {
         return Ok(());
     }
     let constraints = if accepted_decision(&db, &context.path)? {
@@ -71,24 +77,30 @@ pub(crate) fn run_hook_pre_edit(path_arg: Option<&str>) -> Result<()> {
 }
 
 pub(crate) fn run_hook_post_edit(path_arg: Option<&str>) -> Result<()> {
-    let Some(context) = hook_context(path_arg)? else { return Ok(()); };
+    let Some(context) = hook_context(path_arg)? else {
+        return Ok(());
+    };
     let db_path = context.root.join(".harnesskit/state/facts.sqlite");
-    let db = db_path.exists().then(|| SqliteConnection::open(&db_path)).transpose()?;
+    let db = db_path
+        .exists()
+        .then(|| SqliteConnection::open(&db_path))
+        .transpose()?;
     let lock = read_anchor_lock(&context.root)?;
     let source = context.root.join(&context.path);
     let text = fs::read_to_string(&source).ok();
     let mut messages = Vec::new();
     if let (Some(db), Some(text)) = (db.as_ref(), text.as_deref()) {
         if accepted_decision_body_changed(db, &context.root, &context.path, text)? {
-            messages.push(
-                crate::lifecycle::ACCEPTED_DECISION_CHANGED.to_string(),
-            );
+            messages.push(crate::lifecycle::ACCEPTED_DECISION_CHANGED.to_string());
         }
     }
     if !lock.is_empty() {
         if let Some(text) = text {
             let regions = regions_for_text(&context.path, &text)?;
-            for entry in lock.iter().filter(|entry| entry_affects_path(entry, &context.path)) {
+            for entry in lock
+                .iter()
+                .filter(|entry| entry_affects_path(entry, &context.path))
+            {
                 if anchor_drifted(entry, &regions) {
                     messages.push(limit_hook_line(&format!(
                         "Anchor drift: code changed since review; update the document or confirm unchanged requirements with `harnesskit check --ack {}`.",
@@ -114,12 +126,25 @@ fn accepted_decision(db: &SqliteConnection, path: &str) -> Result<bool> {
     }) == Some(true))
 }
 
-fn accepted_decision_body_changed(db: &SqliteConnection, root: &Path, path: &str, current: &str) -> Result<bool> {
-    let rows = db.query("SELECT role, COALESCE(status, ''), body_tokens FROM docs WHERE path = ?1", [path])?;
-    let Some(row) = rows.rows.first().filter(|row| matches!(cell(row, 0), "decisions" | "decision")) else {
+fn accepted_decision_body_changed(
+    db: &SqliteConnection,
+    root: &Path,
+    path: &str,
+    current: &str,
+) -> Result<bool> {
+    let rows = db.query(
+        "SELECT role, COALESCE(status, ''), body_tokens FROM docs WHERE path = ?1",
+        [path],
+    )?;
+    let Some(row) = rows
+        .rows
+        .first()
+        .filter(|row| matches!(cell(row, 0), "decisions" | "decision"))
+    else {
         return Ok(false);
     };
-    let prefix = crate::git::run_git_capture(root, &["rev-parse", "--show-prefix"]).unwrap_or_default();
+    let prefix =
+        crate::git::run_git_capture(root, &["rev-parse", "--show-prefix"]).unwrap_or_default();
     let old = std::process::Command::new("git")
         .args(["show", &format!("HEAD:{prefix}{path}")])
         .current_dir(root)
@@ -131,9 +156,18 @@ fn accepted_decision_body_changed(db: &SqliteConnection, root: &Path, path: &str
     let before = parse_doc_text(path, old);
     let after = parse_doc_text(path, current);
     let accepted = cell(row, 1).eq_ignore_ascii_case("accepted")
-        || before.frontmatter.get("status").map(|status| status.eq_ignore_ascii_case("accepted")).unwrap_or(false)
-        || after.frontmatter.get("status").map(|status| status.eq_ignore_ascii_case("accepted")).unwrap_or(false);
-    Ok(accepted && before.body_text.trim_start_matches('\n') != after.body_text.trim_start_matches('\n'))
+        || before
+            .frontmatter
+            .get("status")
+            .map(|status| status.eq_ignore_ascii_case("accepted"))
+            .unwrap_or(false)
+        || after
+            .frontmatter
+            .get("status")
+            .map(|status| status.eq_ignore_ascii_case("accepted"))
+            .unwrap_or(false);
+    Ok(accepted
+        && before.body_text.trim_start_matches('\n') != after.body_text.trim_start_matches('\n'))
 }
 
 fn hook_constraints(db: &SqliteConnection, path: &str) -> Result<Vec<String>> {
@@ -152,7 +186,9 @@ fn hook_constraints(db: &SqliteConnection, path: &str) -> Result<Vec<String>> {
     let mut candidates = Vec::<(u8, String, String)>::new();
     for row in &rows.rows {
         let evidence: Value = serde_json::from_str(cell(row, 3)).unwrap_or_default();
-        let Some(doc) = evidence["doc"].as_str() else { continue };
+        let Some(doc) = evidence["doc"].as_str() else {
+            continue;
+        };
         let role = cell(row, 6);
         let status = cell(row, 7);
         let kind = cell(row, 1);
@@ -161,20 +197,39 @@ fn hook_constraints(db: &SqliteConnection, path: &str) -> Result<Vec<String>> {
             0
         } else if kind == "mention" {
             1
-        } else if status == "active" || role.starts_with("exec_plans") || role.starts_with("worklog") {
+        } else if status == "active"
+            || role.starts_with("exec_plans")
+            || role.starts_with("worklog")
+        {
             2
         } else {
             3
         };
         let section = evidence["section"].as_str().unwrap_or_default();
         let snippet = crate::render::local_anchor_names(
-            &crate::render::preferred_excerpt(cell(row, 9), "", &[path, cell(row, 5)], cell(row, 8), 180),
+            &crate::render::preferred_excerpt(
+                cell(row, 9),
+                "",
+                &[path, cell(row, 5)],
+                cell(row, 8),
+                180,
+            ),
             path,
         );
-        let snippet = if cell(row, 10).is_empty() { snippet } else {
-            format!("{}; {}", snippet.trim_end_matches(['.', '。', '!', '?', '！', '？']), cell(row, 10))
+        let snippet = if cell(row, 10).is_empty() {
+            snippet
+        } else {
+            format!(
+                "{}; {}",
+                snippet.trim_end_matches(['.', '。', '!', '?', '！', '？']),
+                cell(row, 10)
+            )
         };
-        let prefix = if constraint { "Constraint:" } else { "Related ~:" };
+        let prefix = if constraint {
+            "Constraint:"
+        } else {
+            "Related ~:"
+        };
         let line = if section.is_empty() {
             format!("{prefix} {doc}: {snippet}")
         } else {
@@ -182,7 +237,8 @@ fn hook_constraints(db: &SqliteConnection, path: &str) -> Result<Vec<String>> {
         };
         candidates.push((priority, doc.to_string(), limit_hook_line(&line)));
     }
-    candidates.sort_by(|left, right| (&left.0, &left.1, &left.2).cmp(&(&right.0, &right.1, &right.2)));
+    candidates
+        .sort_by(|left, right| (&left.0, &left.1, &left.2).cmp(&(&right.0, &right.1, &right.2)));
     candidates.dedup_by(|left, right| left.1 == right.1);
     Ok(candidates.into_iter().map(|(_, _, line)| line).collect())
 }
@@ -202,7 +258,11 @@ fn limit_hook_line(line: &str) -> String {
 }
 
 fn entry_affects_path(entry: &LockEntry, path: &str) -> bool {
-    let anchor_path = entry.anchor.split_once('#').map(|(path, _)| path).unwrap_or(&entry.anchor);
+    let anchor_path = entry
+        .anchor
+        .split_once('#')
+        .map(|(path, _)| path)
+        .unwrap_or(&entry.anchor);
     anchor_path == path
         || (anchor_path.ends_with('/') && path.starts_with(anchor_path))
         || (entry.anchor.split_once('#').is_none() && entry.anchor.contains("::"))
@@ -226,10 +286,13 @@ fn anchor_drifted(entry: &LockEntry, regions: &[CodeRegion]) -> bool {
             && if name.is_empty() {
                 region.kind == "file"
             } else {
-                region.kind == "symbol" && (region.name == name || region.name.ends_with(&format!("::{name}")))
+                region.kind == "symbol"
+                    && (region.name == name || region.name.ends_with(&format!("::{name}")))
             }
     });
-    target.map(|region| region.fingerprint.as_str() != entry.fingerprint).unwrap_or(true)
+    target
+        .map(|region| region.fingerprint.as_str() != entry.fingerprint)
+        .unwrap_or(true)
 }
 
 fn hook_context(path_arg: Option<&str>) -> Result<Option<HookContext>> {
@@ -249,15 +312,25 @@ fn hook_context(path_arg: Option<&str>) -> Result<Option<HookContext>> {
     };
     let path = path_arg
         .map(str::to_string)
-        .or_else(|| json_input.as_ref().and_then(|value| {
-            value
-                .get("tool_input")
-                .and_then(|input| input.get("file_path"))
+        .or_else(|| {
+            json_input.as_ref().and_then(|value| {
+                value
+                    .get("tool_input")
+                    .and_then(|input| input.get("file_path"))
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            })
+        })
+        .or_else(|| {
+            json_input
+                .as_ref()
+                .and_then(|value| value.get("file_path"))
                 .and_then(Value::as_str)
                 .map(str::to_string)
-        }))
-        .or_else(|| json_input.as_ref().and_then(|value| value.get("file_path")).and_then(Value::as_str).map(str::to_string));
-    let Some(path) = path else { return Ok(None); };
+        });
+    let Some(path) = path else {
+        return Ok(None);
+    };
     let session = json_input
         .as_ref()
         .and_then(|value| value.get("session_id"))
@@ -272,17 +345,24 @@ fn hook_context(path_arg: Option<&str>) -> Result<Option<HookContext>> {
         .map(str::to_string);
     let raw = PathBuf::from(&path);
     let start = if raw.is_absolute() {
-        if raw.is_dir() { raw.clone() } else { raw.parent().unwrap_or(Path::new("/")).to_path_buf() }
+        if raw.is_dir() {
+            raw.clone()
+        } else {
+            raw.parent().unwrap_or(Path::new("/")).to_path_buf()
+        }
     } else {
         std::env::current_dir()?
     };
-    let root = find_project_root(&start).unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+    let root = find_project_root(&start)
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
     let relative = if raw.is_absolute() {
         raw.strip_prefix(&root).ok().map(normalize_path)
     } else {
         Some(normalize_path(Path::new(&path)))
     };
-    let Some(relative) = relative else { return Ok(None); };
+    let Some(relative) = relative else {
+        return Ok(None);
+    };
     let hook_event_name = (output == HookOutput::ClaudeJson)
         .then(|| {
             json_input
@@ -335,7 +415,7 @@ fn find_project_root(start: &Path) -> Option<PathBuf> {
     start.ancestors().find_map(|ancestor| {
         (ancestor.join(".harnesskit/state/facts.sqlite").is_file()
             || ancestor.join(".harnesskit/schema.yaml").is_file())
-            .then(|| ancestor.to_path_buf())
+        .then(|| ancestor.to_path_buf())
     })
 }
 
@@ -346,11 +426,18 @@ fn state_key(session: &str, path: &str) -> String {
 }
 
 fn cleanup_hook_state(state_dir: &Path) {
-    let Ok(entries) = fs::read_dir(state_dir) else { return; };
+    let Ok(entries) = fs::read_dir(state_dir) else {
+        return;
+    };
     let cutoff = SystemTime::now().checked_sub(HOOK_SESSION_TTL);
     for entry in entries.flatten() {
         let remove = cutoff
-            .zip(entry.metadata().ok().and_then(|metadata| metadata.modified().ok()))
+            .zip(
+                entry
+                    .metadata()
+                    .ok()
+                    .and_then(|metadata| metadata.modified().ok()),
+            )
             .map(|(cutoff, modified)| modified < cutoff)
             .unwrap_or(false);
         if remove {
@@ -401,8 +488,15 @@ pub(crate) fn install_hooks(target: &Path, write: bool) -> Result<()> {
         Value::Object(serde_json::Map::new())
     };
     merge_hook_settings(&mut settings, &fragment)?;
-    fs::write(&settings_path, serde_json::to_string_pretty(&settings)? + "\n")?;
-    println!("Wrote {} (backup: {}).", settings_path.display(), backup_path.display());
+    fs::write(
+        &settings_path,
+        serde_json::to_string_pretty(&settings)? + "\n",
+    )?;
+    println!(
+        "Wrote {} (backup: {}).",
+        settings_path.display(),
+        backup_path.display()
+    );
     Ok(())
 }
 
@@ -421,12 +515,15 @@ fn merge_hook_settings(settings: &mut Value, fragment: &Value) -> Result<()> {
             .and_then(|items| items.first())
             .cloned()
             .unwrap_or(Value::Null);
-        let list = hooks.entry(event).or_insert_with(|| Value::Array(Vec::new()));
-        let values = list.as_array_mut().ok_or("Claude Code hook list must be an array")?;
+        let list = hooks
+            .entry(event)
+            .or_insert_with(|| Value::Array(Vec::new()));
+        let values = list
+            .as_array_mut()
+            .ok_or("Claude Code hook list must be an array")?;
         if !values.iter().any(|value| value == &addition) {
             values.push(addition);
         }
     }
     Ok(())
 }
-

@@ -518,16 +518,23 @@ fn snippets_use_matching_lines_including_headings_and_late_unicode_hits() {
 #[test]
 fn pure_document_snippets_prefer_matching_constraints_over_introductory_lines() {
     let repo = TestRepo::new(None);
-    write(&repo, "docs/ownership.md", concat!(
-        "# Ownership\n\nThe renewal operation handles session requests.\n\n",
-        "The renewal operation must never retry inside the refresher.\n",
-    ));
+    write(
+        &repo,
+        "docs/ownership.md",
+        concat!(
+            "# Ownership\n\nThe renewal operation handles session requests.\n\n",
+            "The renewal operation must never retry inside the refresher.\n",
+        ),
+    );
     let report = query(&repo, "renewal operation");
     let expected = "The renewal operation must never retry inside the refresher.";
     assert_eq!(report["candidates"][0]["snippet"], expected);
     assert_eq!(report["bundles"][0]["primary"]["summary"], expected);
     let text = repo.run(&["query", "renewal operation"]);
-    assert!(text.contains("must never retry inside the refresher"), "{text}");
+    assert!(
+        text.contains("must never retry inside the refresher"),
+        "{text}"
+    );
     assert!(!text.contains("handles session requests"), "{text}");
 }
 

@@ -417,16 +417,26 @@ fn context_and_query_prefer_the_constraint_sentence_within_the_anchored_section(
         "It is implemented by src/auth/session.rs#renew_session.\n\n",
         "## Other policy\n\nOther callers must never delete records.\n",
     ));
-    let expected = "The renewal operation returns any failure to its caller; the caller owns retry policy.";
-    let context: Value = serde_json::from_str(&repo.run(&["context", "--for", "src/auth/session.rs", "--json"])).unwrap();
+    let expected =
+        "The renewal operation returns any failure to its caller; the caller owns retry policy.";
+    let context: Value =
+        serde_json::from_str(&repo.run(&["context", "--for", "src/auth/session.rs", "--json"]))
+            .unwrap();
     assert_eq!(context["documents"][0]["summary"], expected, "{context}");
     let results = query(&repo, "renewal operation", &["--docs"]);
-    let policy = nodes(&results).into_iter().find(|node| node["heading"] == "Policy").unwrap();
+    let policy = nodes(&results)
+        .into_iter()
+        .find(|node| node["heading"] == "Policy")
+        .unwrap();
     assert_eq!(policy["summary"], expected, "{results}");
     let text = repo.run(&["query", "renewal operation", "--docs"]);
     assert!(text.contains("returns any failure to its caller"), "{text}");
     assert!(!text.contains("handles session requests"), "{text}");
-    let hook = repo.command(&["hook", "pre-edit", "src/auth/session.rs"]).stdin(std::process::Stdio::null()).output().unwrap();
+    let hook = repo
+        .command(&["hook", "pre-edit", "src/auth/session.rs"])
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap();
     assert_success(&hook, &["hook", "pre-edit"]);
     let hook = String::from_utf8(hook.stdout).unwrap();
     assert!(hook.contains("returns any failure to its caller"), "{hook}");

@@ -9,6 +9,7 @@ mod external_refs;
 mod fs_utils;
 mod git;
 mod history;
+mod hooks;
 mod index;
 mod knowledge;
 mod lifecycle;
@@ -20,12 +21,11 @@ mod render;
 mod schema;
 mod skills;
 mod sqlite;
+mod suggest;
 mod templates;
 mod update;
 mod usage;
 mod weave;
-mod hooks;
-mod suggest;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 

@@ -43,7 +43,9 @@ pub(crate) fn generation(db: &SqliteConnection) -> Result<String> {
     for row in states.rows {
         values.push(format!("{}={}", cell(&row, 0), cell(&row, 1)));
     }
-    Ok(blake3::hash(values.join("\n").as_bytes()).to_hex().to_string())
+    Ok(blake3::hash(values.join("\n").as_bytes())
+        .to_hex()
+        .to_string())
 }
 
 pub(crate) fn key(generation: &str, descriptor: &str) -> String {
@@ -111,14 +113,13 @@ fn prune(dir: &Path) {
         .flatten()
         .filter_map(|entry| {
             let entry = entry.ok()?;
-            (entry.path().extension().and_then(|ext| ext.to_str()) == Some("json"))
-                .then(|| {
-                    let modified = entry
-                        .metadata()
-                        .and_then(|metadata| metadata.modified())
-                        .ok();
-                    (entry.path(), modified)
-                })
+            (entry.path().extension().and_then(|ext| ext.to_str()) == Some("json")).then(|| {
+                let modified = entry
+                    .metadata()
+                    .and_then(|metadata| metadata.modified())
+                    .ok();
+                (entry.path(), modified)
+            })
         })
         .collect::<Vec<_>>();
     if files.len() <= CACHE_LIMIT {
@@ -142,4 +143,3 @@ fn filetime_touch(path: &Path) -> std::io::Result<()> {
     let file = fs::OpenOptions::new().write(true).open(path)?;
     file.set_len(metadata.len())
 }
-

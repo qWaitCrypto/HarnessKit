@@ -84,8 +84,8 @@ pub(super) fn parse(path: &str, text: &str) -> Document {
                         {
                             continue;
                         }
-                        let candidate_line = line_offsets
-                            .partition_point(|start| *start <= candidate_offset);
+                        let candidate_line =
+                            line_offsets.partition_point(|start| *start <= candidate_offset);
                         let line_start = line_offsets[candidate_line.saturating_sub(1)];
                         let column = text[line_start..candidate_offset].chars().count() + 1;
                         raw_spans.push((section, candidate_line, column, candidate, true));
@@ -140,21 +140,61 @@ fn prose_path_candidates(text: &str) -> Vec<(String, usize)> {
     let mut candidates = Vec::new();
     let mut offset = 0;
     for token in text.split_inclusive(|ch: char| {
-        ch.is_whitespace() || matches!(ch, '(' | ')' | '[' | ']' | '"' | '\'' | ',' | ';' | '。' | '，' | '；' | '：' | '！' | '？')
+        ch.is_whitespace()
+            || matches!(
+                ch,
+                '(' | ')'
+                    | '['
+                    | ']'
+                    | '"'
+                    | '\''
+                    | ','
+                    | ';'
+                    | '。'
+                    | '，'
+                    | '；'
+                    | '：'
+                    | '！'
+                    | '？'
+            )
     }) {
         let candidate = token.trim().trim_end_matches(|ch: char| {
-            matches!(ch, '(' | ')' | '[' | ']' | '"' | '\'' | ',' | ';' | ':' | '.' | '!' | '?' | '。' | '，' | '；' | '：' | '！' | '？')
+            matches!(
+                ch,
+                '(' | ')'
+                    | '['
+                    | ']'
+                    | '"'
+                    | '\''
+                    | ','
+                    | ';'
+                    | ':'
+                    | '.'
+                    | '!'
+                    | '?'
+                    | '。'
+                    | '，'
+                    | '；'
+                    | '：'
+                    | '！'
+                    | '？'
+            )
         });
         let token_offset = offset;
         offset += token.len();
         if candidate.len() < 3
             || candidate.contains(['`', '\\', '=', '<', '>', '{', '}', '?', '@'])
-            || candidate.contains("://") || candidate.starts_with('/')
+            || candidate.contains("://")
+            || candidate.starts_with('/')
         {
             continue;
         }
-        let path = candidate.split_once('#').map(|(path, _)| path).unwrap_or(candidate);
-        let filename = path.contains('/') || path.contains('.')
+        let path = candidate
+            .split_once('#')
+            .map(|(path, _)| path)
+            .unwrap_or(candidate);
+        let filename = path.contains('/')
+            || path.contains('.')
             || path.chars().next().map(char::is_uppercase).unwrap_or(false);
         if path.ends_with('/') || path.contains(':') || !filename {
             continue;

@@ -67,7 +67,12 @@ fn hook(
             session, path
         ),
     };
-    child.stdin.take().unwrap().write_all(input.as_bytes()).unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(input.as_bytes())
+        .unwrap();
     let output = child.wait_with_output().unwrap();
     assert!(output.status.success());
     String::from_utf8(output.stdout).unwrap()
@@ -101,7 +106,8 @@ fn suggest_anchors_renders_evidence_and_applies_only_code_lines() {
         "docs/exec-plans/active/refresh.md",
         &format!(
             "# Refresh plan\n\nThe active plan tracks `refresh_token`. {}\n",
-            "This active plan tracks the refresh implementation and its operational constraints. ".repeat(12)
+            "This active plan tracks the refresh implementation and its operational constraints. "
+                .repeat(12)
         ),
     );
     commit_all(&repo, "refresh docs");
@@ -109,13 +115,21 @@ fn suggest_anchors_renders_evidence_and_applies_only_code_lines() {
 
     let json = repo.run(&["suggest-anchors", "docs/decisions/refresh.md", "--json"]);
     let report: Value = serde_json::from_str(&json).unwrap();
-    assert_eq!(report["suggestions"][0]["anchor"], "src/auth.rs#refresh_token");
+    assert_eq!(
+        report["suggestions"][0]["anchor"],
+        "src/auth.rs#refresh_token"
+    );
     assert!(report["suggestions"][0]["reason"]
         .as_str()
         .unwrap()
         .contains("Document mentions"));
 
-    repo.run(&["suggest-anchors", "docs/decisions/refresh.md", "--apply", "1"]);
+    repo.run(&[
+        "suggest-anchors",
+        "docs/decisions/refresh.md",
+        "--apply",
+        "1",
+    ]);
     let updated = fs::read_to_string(repo.root.join("docs/decisions/refresh.md")).unwrap();
     assert!(updated.contains("The policy mentions `refresh_token`."));
     assert!(updated.contains("Code: `src/auth.rs#refresh_token`"));
@@ -139,7 +153,8 @@ fn hooks_read_claude_json_deduplicate_and_report_drift() {
         "docs/exec-plans/active/refresh.md",
         &format!(
             "# Refresh plan\n\nThe active plan tracks `refresh_token`. {}\n",
-            "This active plan tracks the refresh implementation and its operational constraints. ".repeat(12)
+            "This active plan tracks the refresh implementation and its operational constraints. "
+                .repeat(12)
         ),
     );
     commit_all(&repo, "refresh docs");
@@ -178,7 +193,12 @@ fn hooks_read_claude_json_deduplicate_and_report_drift() {
     )
     .is_empty());
 
-    repo.run(&["suggest-anchors", "docs/decisions/refresh.md", "--apply", "1"]);
+    repo.run(&[
+        "suggest-anchors",
+        "docs/decisions/refresh.md",
+        "--apply",
+        "1",
+    ]);
     repo.run(&["index", "."]);
     write(
         &repo,
@@ -197,7 +217,10 @@ fn hooks_read_claude_json_deduplicate_and_report_drift() {
         Some("PostToolUse"),
     );
     let post_json: Value = serde_json::from_str(&post_json).unwrap();
-    assert_eq!(post_json["hookSpecificOutput"]["hookEventName"], "PostToolUse");
+    assert_eq!(
+        post_json["hookSpecificOutput"]["hookEventName"],
+        "PostToolUse"
+    );
     assert!(post_json["hookSpecificOutput"]["additionalContext"]
         .as_str()
         .unwrap()
@@ -216,10 +239,20 @@ fn accepted_decision_hooks_warn_on_body_edits_and_ignore_metadata_only_changes()
     let pre = direct_hook(&repo, "pre-edit", path);
     assert!(pre.contains(reminder), "{pre}");
     assert_eq!(pre.lines().count(), 1);
-    write(&repo, path, &original.replace("authority: canonical", "authority: supporting"));
+    write(
+        &repo,
+        path,
+        &original.replace("authority: canonical", "authority: supporting"),
+    );
     assert!(direct_hook(&repo, "post-edit", path).is_empty());
     write(&repo, path, &original.replace("must handle", "must ignore"));
-    let post = hook(&repo, "post-edit", "decision-body", path, Some("PostToolUse"));
+    let post = hook(
+        &repo,
+        "post-edit",
+        "decision-body",
+        path,
+        Some("PostToolUse"),
+    );
     let post: Value = serde_json::from_str(&post).unwrap();
     assert_eq!(post["hookSpecificOutput"]["additionalContext"], reminder);
 
@@ -241,22 +274,43 @@ fn install_hooks_previews_then_backs_up_existing_settings() {
     repo.run(&["install", "--hooks", "--write", "."]);
     assert!(repo.root.join(".claude/settings.json").exists());
     assert!(repo.root.join(".claude/settings.json.bak").exists());
-    let settings: Value = serde_json::from_str(
-        &fs::read_to_string(repo.root.join(".claude/settings.json")).unwrap(),
-    )
-    .unwrap();
-    assert_eq!(settings["hooks"]["PreToolUse"][0]["matcher"], "Edit|Write|MultiEdit");
+    let settings: Value =
+        serde_json::from_str(&fs::read_to_string(repo.root.join(".claude/settings.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        settings["hooks"]["PreToolUse"][0]["matcher"],
+        "Edit|Write|MultiEdit"
+    );
 }
 
 #[test]
 fn undocumented_hotspot_is_info_limited_and_excludes_tests() {
     let repo = project();
-    write(&repo, "src/hot.rs", "pub fn hot(value: u64) -> u64 { value + 1 }\n");
-    write(&repo, "tests/hot.rs", "pub fn test_hot(value: u64) -> u64 { value + 1 }\n");
+    write(
+        &repo,
+        "src/hot.rs",
+        "pub fn hot(value: u64) -> u64 { value + 1 }\n",
+    );
+    write(
+        &repo,
+        "tests/hot.rs",
+        "pub fn test_hot(value: u64) -> u64 { value + 1 }\n",
+    );
     repo.run(&["index", "."]);
     for value in ["2", "3", "4"] {
-        write(&repo, "src/hot.rs", &format!("pub fn hot(value: u64) -> u64 {{ value + {} }}\n", value));
-        write(&repo, "tests/hot.rs", &format!("pub fn test_hot(value: u64) -> u64 {{ value + {} }}\n", value));
+        write(
+            &repo,
+            "src/hot.rs",
+            &format!("pub fn hot(value: u64) -> u64 {{ value + {} }}\n", value),
+        );
+        write(
+            &repo,
+            "tests/hot.rs",
+            &format!(
+                "pub fn test_hot(value: u64) -> u64 {{ value + {} }}\n",
+                value
+            ),
+        );
         let add = std::process::Command::new("git")
             .args(["add", "src/hot.rs", "tests/hot.rs"])
             .current_dir(&repo.root)
@@ -264,7 +318,15 @@ fn undocumented_hotspot_is_info_limited_and_excludes_tests() {
             .unwrap();
         assert!(add.status.success());
         let commit = std::process::Command::new("git")
-            .args(["-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", value])
+            .args([
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "commit",
+                "-qm",
+                value,
+            ])
             .current_dir(&repo.root)
             .output()
             .unwrap();
@@ -277,8 +339,12 @@ fn undocumented_hotspot_is_info_limited_and_excludes_tests() {
         .iter()
         .filter(|check| check["rule_id"] == "undocumented-hotspot")
         .collect::<Vec<_>>();
-    assert!(hotspots.iter().any(|check| check["subject_path"] == "src/hot.rs"));
-    assert!(hotspots.iter().all(|check| check["subject_path"] != "tests/hot.rs"));
+    assert!(hotspots
+        .iter()
+        .any(|check| check["subject_path"] == "src/hot.rs"));
+    assert!(hotspots
+        .iter()
+        .all(|check| check["subject_path"] != "tests/hot.rs"));
     let text = repo.run(&["check", ".", "--all", "--rules", "weave"]);
     assert_eq!(text.matches("Hint: ").count(), 1, "{}", text);
 }
