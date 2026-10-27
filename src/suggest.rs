@@ -404,10 +404,7 @@ fn append_code_line(text: &mut String, section: &str, code_line: &str) {
     let insertion = section_end(text, section);
     let mut addition = String::new();
     let before = &text[..insertion];
-    if before.is_empty() {
-        addition.push_str(code_line);
-        addition.push('\n');
-    } else if before.ends_with("\n\n") {
+    if before.is_empty() || before.ends_with("\n\n") {
         addition.push_str(code_line);
         addition.push('\n');
     } else if before.ends_with('\n') {

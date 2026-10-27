@@ -91,9 +91,8 @@ pub(super) fn fingerprint(context: &EngineContext, db: &SqliteConnection) -> Res
             hash.update(&[u8::from(metadata.file_type().is_symlink())]);
         }
     }
-    for args in [vec!["rev-parse", "HEAD", "--symbolic-full-name", "HEAD"]] {
-        hash.update(run_git_capture(root, &args).unwrap_or_default().as_bytes());
-    }
+    let args = vec!["rev-parse", "HEAD", "--symbolic-full-name", "HEAD"];
+    hash.update(run_git_capture(root, &args).unwrap_or_default().as_bytes());
     for path in [
         ".harnesskit/knowledge.lock",
         ".harnesskit/history/refs/latest",

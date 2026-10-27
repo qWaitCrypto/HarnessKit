@@ -52,6 +52,7 @@ pub(super) enum Command {
     /// Print or install agent hook settings.
     Install(InstallArgs),
     #[command(external_subcommand)]
+    #[allow(dead_code)]
     Unknown(Vec<String>),
 }
 

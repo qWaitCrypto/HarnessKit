@@ -253,16 +253,11 @@ fn refresh_knowledge(
     // A newly written anchor gets its first seal only after W2 resolved it.
     for ((doc, anchor), current) in &current_anchors {
         let key = (doc.clone(), anchor.clone());
-        if !next.contains_key(&key) {
-            next.insert(
-                key,
-                LockEntry {
-                    doc: doc.clone(),
-                    anchor: anchor.clone(),
-                    fingerprint: current.fingerprint.clone(),
-                },
-            );
-        }
+        next.entry(key).or_insert_with(|| LockEntry {
+            doc: doc.clone(),
+            anchor: anchor.clone(),
+            fingerprint: current.fingerprint.clone(),
+        });
     }
 
     let next_entries = next.into_values().collect::<Vec<_>>();
@@ -532,9 +527,10 @@ fn anchor_kind(anchor: &str) -> Option<&'static str> {
         .map_or((anchor, None), |(p, f)| (p, Some(f)));
     if path.ends_with('/') {
         None
-    } else if fragment.is_some() || (!path.contains('/') && path.contains("::")) {
-        Some("symbol")
-    } else if anchor.contains("::") && fragment.is_none() {
+    } else if fragment.is_some()
+        || (!path.contains('/') && path.contains("::"))
+        || (anchor.contains("::") && fragment.is_none())
+    {
         Some("symbol")
     } else {
         Some("file")

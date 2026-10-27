@@ -640,7 +640,7 @@ pub(crate) fn print_query_bundles_with_options(
             .next()
             .unwrap_or("");
         let badge = if badge.is_empty() {
-            primary_issue.is_empty().then_some("").unwrap_or("")
+            ""
         } else {
             badge
         };
@@ -811,7 +811,7 @@ fn merge_document_bundles(bundles: &[QueryBundle]) -> Vec<QueryBundle> {
                 if !bundle.primary.summary.is_empty()
                     && !existing.primary.summary.contains(&bundle.primary.summary)
                 {
-                    existing.primary.summary.push_str(" ");
+                    existing.primary.summary.push(' ');
                     existing.primary.summary.push_str(&bundle.primary.summary);
                 }
                 existing.related.extend(bundle.related.clone());
@@ -909,7 +909,7 @@ pub(crate) fn print_context_packet_with_options(
         kwic_excerpt(&packet.anchor.summary, input, &packet.anchor.title, 160)
     };
     if !excerpt.is_empty() {
-        lines.push(RenderLine::content(format!("{}", excerpt)));
+        lines.push(RenderLine::content(excerpt.to_string()));
     }
     if !packet.incoming.is_empty() {
         lines.push(RenderLine::related("Incoming refs:"));
@@ -1151,6 +1151,7 @@ pub(crate) fn print_index_result(target_dir: &Path, doc_count: usize, relation_c
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn print_check_output(
     target_dir: &Path,
     docs_count: usize,

@@ -477,6 +477,7 @@ fn cochange_factors(stats: &CochangeStats, doc: &str, code: &str, pair: &PairSta
     (cosine.clamp(0.0, 1.0), idf.clamp(0.0, 1.0))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn write_cochange_state(
     db: &SqliteConnection,
     stats: &CochangeStats,

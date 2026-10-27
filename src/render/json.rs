@@ -232,6 +232,7 @@ pub(crate) fn render_doctor_json(report: &DoctorReport) -> String {
     }, false)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn render_check_json(
     target_dir: &Path,
     docs_count: usize,
@@ -255,6 +256,7 @@ pub(crate) fn render_check_json(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn render_check_json_page(
     target_dir: &Path,
     docs_count: usize,
@@ -397,6 +399,7 @@ pub(crate) fn render_query_json(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn render_query_json_page(
     query_terms: &str,
     candidates: &[QueryCandidate],
@@ -452,6 +455,7 @@ pub(crate) fn render_context_packet_json(
     render_context_packet_json_page(kind, input, packet, coverage, hints, None, 0, false)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn render_context_packet_json_page(
     kind: &str,
     input: &str,
