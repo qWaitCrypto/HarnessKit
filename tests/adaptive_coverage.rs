@@ -855,7 +855,7 @@ fn repository_dogfood_needs_no_init_or_schema_and_explains_every_mapping() {
             "agent-surfaces/skills/harnesskit/references/principles.md",
         ])
     );
-    assert_eq!(report["coverage"]["managed"], 7);
+    assert_eq!(report["coverage"]["managed"], 8);
     assert!(report["coverage"]["excluded"].as_u64().unwrap() > 0);
     assert_eq!(report["coverage"]["ratio"], 1.0);
     assert!(report["coverage"]["mappings"]
