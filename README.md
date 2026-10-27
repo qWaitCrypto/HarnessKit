@@ -4,18 +4,17 @@
 
 **A lightweight, file-first project engineering harness for coding agents.**
 
+Your repo is the system of record. &nbsp;·&nbsp; Your agent is the operator. &nbsp;·&nbsp; HarnessKit is the bridge.
+
+[![Version](https://img.shields.io/badge/version-0.2.0%20Weave-2ea44f.svg)](https://github.com/qWaitCrypto/HarnessKit/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Built with Rust](https://img.shields.io/badge/Built%20with-Rust-dea584.svg)](https://www.rust-lang.org/)
-[![Status: Alpha](https://img.shields.io/badge/Status-Alpha-orange.svg)]()
+[![Agents](https://img.shields.io/badge/agents-Codex%20%C2%B7%20Claude%20Code-6e56cf.svg)](agent-surfaces/skills/harnesskit/SKILL.md)
+[![Benchmark](https://img.shields.io/badge/task%20completion-%2B20%25-brightgreen.svg)](#benchmark)
 
-
-Your repo is the system of record.<br>
-Your agent is the operator.<br>
-HarnessKit is the bridge.
+[**Quick Start**](#quick-start) &nbsp;·&nbsp; [**What's New in 0.2.0**](#whats-new-in-020) &nbsp;·&nbsp; [**Benchmark**](#benchmark) &nbsp;·&nbsp; [Changelog](CHANGELOG.md) &nbsp;·&nbsp; [Migration guide](docs/migration-0.2.0.md) &nbsp;·&nbsp; [Commands](docs/commands.md)
 
 </div>
-
-Source version: **0.2.0** · [Changelog](CHANGELOG.md) · [Migration guide](docs/migration-0.2.0.md) · [Commands](docs/commands.md)
 
 ---
 
@@ -57,6 +56,45 @@ Users install a skill. Their agent handles everything else — initializing docs
 └─────────────────────────────────────────────────┘
 ```
 
+## What's New in 0.2.0
+
+**Weave** ties your documents to your code. Until now HarnessKit knew what the docs said; now it also knows *which code they are about* and tells the agent when the two drift apart.
+
+| | What you get |
+|:--|:--|
+| **Docs ↔ code anchors** | Chapters link to code files and symbols through explicit anchors, same-commit evidence and identifier mentions. Seals are stored in a committed `.harnesskit/knowledge.lock`. |
+| **Code-aware context** | `context --for <path\|symbol>` returns the decisions and specs that constrain a file *before* the agent edits it. `context --diff [rev]` lists the documents a change affects. |
+| **Mixed search** | `query` returns bundles of a primary node plus a few related docs and code symbols, with relevance floors, KWIC excerpts, paging and a shared token budget. |
+| **Drift you can act on** | `check` reports `code-drift`; `check --ack <doc>` confirms a doc is still accurate, `check --fix` repairs uniquely moved anchors. |
+| **Anchor suggestions** | `suggest-anchors <doc>` proposes the code a section is about, with evidence; the agent applies the ones that are right. |
+| **Safe migration** | `migrate --plan` reviews schema, layout, lifecycle and anchor work; `migrate --apply` performs only the safe, structured changes and snapshots first. |
+| **Opt-in edit hooks** | Hooks stay off unless you install them. |
+
+**A sharper agent.** The skill and entrypoint templates changed too:
+
+- **Decisions are honored.** Accepted decisions are treated as constraints: the agent follows their caller/boundary and names the decision in its reply, or stops and offers options. It never rewrites an accepted decision to fit a request.
+- **Engineering Principles in `AGENTS.md` / `CLAUDE.md`.** Five short rules keep agents from over-building: no speculative defensiveness, validate once at the boundary, no premature abstraction, keep complexity down, and look at proven open-source designs before building from scratch.
+- **One-sentence upgrades.** After updating the tool, tell your agent *"HarnessKit was upgraded — handle it."* The skill walks it through three steps: `migrate`, `check`, and appending the new principles to your existing entrypoints without overwriting anything.
+
+Existing projects keep working: `schema_version: 0` and zero-config repositories need no changes. See the [migration guide](docs/migration-0.2.0.md).
+
+## Benchmark
+
+We built a small benchmark of everyday project tasks on a synthetic multi-module service — honoring recorded design decisions, changes that must touch several consumers, keeping docs in step with code, initializing docs for an existing repo, and more. Each scenario is run 5 times per setup with the same agent (Codex) and model, and graded automatically by hidden tests and documentation checks.
+
+<div align="center">
+
+| | Without HarnessKit | With HarnessKit 0.2.0 |
+|:--|:--:|:--:|
+| **Task completion** | 83% (25 / 30) | **100% (30 / 30)** |
+| **Improvement** | | **+20%** (+17 points) |
+
+</div>
+
+The largest gain is in honoring recorded design decisions: **0 / 5 → 5 / 5**.
+
+The scenarios, graders and run reports live in [`evals/agent-ab/`](evals/agent-ab/README.md).
+
 ## Design Principles
 
 | Principle | What it means |
@@ -72,11 +110,10 @@ Users install a skill. Their agent handles everything else — initializing docs
 **Step 1** — Install the CLI and agent skill:
 
 ```bash
-# Public alpha install
 curl -fsSL https://raw.githubusercontent.com/qWaitCrypto/HarnessKit/main/install.sh | bash
 ```
 
-This installs the latest public release by default. Use `--version <tag>` only when you intentionally need a pinned release.
+This installs the latest release by default. Use `--version <tag>` only when you intentionally need a pinned release. The installer can be rerun with a newer tag to upgrade, and `harnesskit update` updates the CLI and installed skills from GitHub releases.
 
 If `~/.local/bin` is not on your `PATH`, add it:
 
@@ -92,15 +129,12 @@ scripts/install-claude-skill.sh        # Claude Code
 scripts/install-codex-skill.sh         # Codex
 ```
 
-Alpha notes:
+Good to know:
 
-- The public binary release currently supports Linux x86_64 and macOS x86_64/arm64.
-- The binary includes the default schema and templates, so `harnesskit init` works from ordinary project directories without a checked-out HarnessKit source tree.
-- SQLite is compiled into the binary. Indexing, search, checks, context, and history work without `sqlite3` or a SQLite shared library. Building from source requires Rust/Cargo and a C compiler for bundled SQLite.
-- Existing history snapshots and schemas remain compatible. `doctor` no longer probes or requires the system `sqlite3` command.
-- The installer writes the Codex skill directly; Codex plugin packaging is optional.
-- The installer can be rerun with a newer `--version` tag to upgrade.
-- After alpha.2, `harnesskit update` can update the CLI and already-installed skills from GitHub releases.
+- Prebuilt binaries cover Linux x86_64 and macOS x86_64/arm64.
+- The binary includes the default schema and templates, so `harnesskit init` works from ordinary project directories without a checked-out source tree.
+- SQLite is compiled in. Indexing, search, checks, context, and history work without `sqlite3`. Building from source requires Rust/Cargo and a C compiler.
+- The installer writes the Codex and Claude Code skills directly; Codex plugin packaging is optional.
 
 **Step 2** — Ask your agent to set up project docs:
 
@@ -124,6 +158,8 @@ By default, init uses **local mode**. In a git repository, generated docs are ad
 The agent calls the CLI behind the scenes. Commands record local usage metrics by
 default; `export HARNESSKIT_USAGE_LOG=off` disables logging. No metrics are uploaded.
 
+**Upgrading?** Update the tool, then tell your agent: *"HarnessKit was upgraded — handle it."*
+
 ## 30-Second Demo
 
 For a handoff, start with the current state packet. It includes entrypoint routes,
@@ -134,10 +170,11 @@ acceptance items:
 harnesskit context --current --json
 ```
 
-Then request focused context for the task:
+Then request focused context for the task, or for the file about to be edited:
 
 ```bash
 harnesskit context auth --json
+harnesskit context --for src/auth/session.rs
 ```
 
 Excerpt of the answer (JSON also includes `coverage` and `hints`):
@@ -468,17 +505,9 @@ invalid usage and are excluded from project aggregates.
 
 ## Upgrading to 0.2.0
 
-Existing schema files with `schema_version: 0` work unchanged; `migrate` can
-upgrade them to the compatible schema version 1. Incompatible derived
-`facts.sqlite` indexes rebuild automatically on the next indexed command.
-Keep `.harnesskit/history`: old snapshots still support list, diff and restore.
-New optional schema fields cover include/ignore globs, suppression globs and
-lifecycle thresholds; no document relocation or reinitialization is required.
+Existing schema files with `schema_version: 0` work unchanged; `migrate` can upgrade them to the compatible schema version 1. Incompatible derived `facts.sqlite` indexes rebuild automatically on the next indexed command. Keep `.harnesskit/history`: old snapshots still support list, diff and restore. New optional schema fields cover include/ignore globs, suppression globs and lifecycle thresholds; no document relocation or reinitialization is required.
 
-Review the [migration guide](docs/migration-0.2.0.md) before updating scripts:
-Weave adds code-aware bundles, bidirectional context, anchor suggestions, optional
-hooks, migrations and knowledge-lock drift checks. The [changelog](CHANGELOG.md)
-lists the user-visible changes.
+Review the [migration guide](docs/migration-0.2.0.md) before updating scripts, and see the [changelog](CHANGELOG.md) for the user-visible changes.
 
 ## How the Skill Works
 
@@ -486,8 +515,9 @@ The agent skill is a short, versioned shared file with an on-demand CLI referenc
 
 1. **When to trigger** — Any task involving project docs, architecture, design, plans, or specs
 2. **How to orient** — Read `AGENTS.md` or `CLAUDE.md` first, then follow progressive disclosure
-3. **When to use the CLI** — Start handoffs with `context --current`; use 1–3 keywords in `query` and follow zero-hit hints; run one `check` after edits and snapshot at phase boundaries
+3. **When to use the CLI** — Start handoffs with `context --current`; use 1–3 keywords in `query`; run `context --for <path|symbol>` before code edits; run one `check` after edits and snapshot at phase boundaries
 4. **How to update docs** — Edit the narrowest relevant doc, create from templates when needed, keep entrypoints thin
+5. **How to upgrade** — After a tool update: `migrate`, `check`, and append the Engineering Principles to existing entrypoints
 
 The source is `agent-surfaces/skills/harnesskit/SKILL.md`; install the entire
 directory, including `references/`. `doctor` detects installed version drift;
@@ -532,7 +562,7 @@ harnesskit context auth examples/web-app-with-auth --json
 
 <div align="center">
 
-**[Latest Release](https://github.com/qWaitCrypto/HarnessKit/releases/latest)** · **[Installer](install.sh)** · **[Schema Reference](schemas/file-first-v0.yaml)** · **[Agent Skill](agent-surfaces/skills/harnesskit/SKILL.md)**
+**[Latest Release](https://github.com/qWaitCrypto/HarnessKit/releases/latest)** · **[Installer](install.sh)** · **[Changelog](CHANGELOG.md)** · **[Schema Reference](schemas/file-first-v0.yaml)** · **[Agent Skill](agent-surfaces/skills/harnesskit/SKILL.md)**
 
 MIT License · Built by [qWait](https://github.com/qWaitCrypto)
 
