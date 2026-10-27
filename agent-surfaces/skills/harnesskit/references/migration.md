@@ -1,5 +1,13 @@
 # HarnessKit migration review
 
+## After upgrading HarnessKit
+
+When asked to handle an upgrade, do these three things and stop:
+
+1. `harnesskit migrate --plan`, then `harnesskit migrate --apply` for the safe items; review the rest as described below.
+2. `harnesskit check`; fix each `code-drift` by updating the owning document, or `check --ack <doc>` if it is still accurate.
+3. Entrypoints: if `AGENTS.md` or `CLAUDE.md` has no `Engineering Principles` section, append the one in [principles.md](principles.md) just above its `Update Rules` section (or at the end). Never overwrite or reorder existing text; `init --force` is not an upgrade path.
+
 `harnesskit migrate --plan --json` reports deterministic upgrades and items
 that need an agent or owner to decide. Read the `evidence` and `action` for
 each item; category names are `schema`, `layout`, `lifecycle`, `anchors`,

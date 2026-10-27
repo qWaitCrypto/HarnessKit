@@ -53,6 +53,20 @@ fn bundled_skill_is_short_and_versioned_with_the_cli() {
 }
 
 #[test]
+fn upgrade_principles_match_the_entrypoint_templates() {
+    let reference = include_str!("../agent-surfaces/skills/harnesskit/references/principles.md");
+    for template in [
+        include_str!("../templates/entrypoints/AGENTS.md.tpl"),
+        include_str!("../templates/entrypoints/CLAUDE.md.tpl"),
+    ] {
+        assert!(
+            template.contains(reference.trim_end()),
+            "entrypoint template and references/principles.md must carry the same section"
+        );
+    }
+}
+
+#[test]
 fn direct_installs_carry_references_and_doctor_detects_old_skills() {
     let repo = TestRepo::new(Some("flat"));
     let home = TestRepo::new(None);

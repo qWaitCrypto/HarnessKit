@@ -28,4 +28,4 @@ Files are project memory; the CLI retrieves, checks, migrates and checkpoints it
 - No tool installation or HarnessKit usage in product README/docs; one AGENTS routing line suffices.
 - Existing docs: follow inventory → plan → move → check in [references/adoption.md](references/adoption.md).
 
-Command options, hooks and version sync: [references/cli.md](references/cli.md). Upgrading an older project: [references/migration.md](references/migration.md).
+Command options, hooks and version sync: [references/cli.md](references/cli.md). Upgrading HarnessKit or an older project (follow "After upgrading"): [references/migration.md](references/migration.md).
